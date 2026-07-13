@@ -1,0 +1,50 @@
+[
+  {
+    "category": "network",
+    "category_label": "İnternet və şəbəkə",
+    "source": "Super Optik redaksiyası",
+    "title": "Fiber qoşulmada stabil sürət üçün ev daxilində 3 vacib yoxlama",
+    "summary": "Modem yeri, kabel vəziyyəti və Wi-Fi kanal seçimi istifadəçi təcrübəsinə birbaşa təsir edir. Müştərilər üçün sadə yoxlama siyahısı ayrıca paylaşılır.",
+    "date": "22.04.2026"
+  },
+  {
+    "category": "network",
+    "category_label": "İnternet və şəbəkə",
+    "source": "Super Optik redaksiyası",
+    "title": "FTTH və klassik qoşulma arasında fərq: hansı istifadəçiyə hansı model uyğundur?",
+    "summary": "Yeni lentdə müştərilər daha rahat seçim edə bilsin deyə fiber infrastrukturun praktik üstünlükləri sadə dildə izah olunur.",
+    "date": "20.04.2026"
+  },
+  {
+    "category": "systems",
+    "category_label": "Sistem və təhlükəsizlik",
+    "source": "Super Optik redaksiyası",
+    "title": "Ofis şəbəkəsində zəif nöqtələri azaltmaq üçün minimal təhlükəsizlik paketi",
+    "summary": "Güclü parol siyasəti, ehtiyat nüsxə intizamı və girişlərin məhdudlaşdırılması kiçik bizneslər üçün ilkin qoruma qatını formalaşdırır.",
+    "date": "21.04.2026"
+  },
+  {
+    "category": "systems",
+    "category_label": "Sistem və təhlükəsizlik",
+    "source": "Super Optik redaksiyası",
+    "title": "Kamera, server və şəbəkə cihazları üçün lisenziya və yeniləmə planı niyə vacibdir?",
+    "summary": "Dayanıqlı sistem işi üçün yalnız qurulum deyil, yenilənmə və lisenziya nəzarəti də ayrılmaz hissə kimi təqdim edilir.",
+    "date": "18.04.2026"
+  },
+  {
+    "category": "crypto",
+    "category_label": "Kripto bazar icmalı",
+    "source": "Bazar qeydi",
+    "title": "Kripto bazarda volatillik artanda risk idarəetməsi niyə birinci yerdə olmalıdır?",
+    "summary": "İcmal bölməsində qiymət proqnozu vermək əvəzinə, istifadəçilərə risk, xəbər axını və qərar intizamı kimi əsas prinsiplər xatırladılır.",
+    "date": "22.04.2026"
+  },
+  {
+    "category": "crypto",
+    "category_label": "Kripto bazar icmalı",
+    "source": "Bazar qeydi",
+    "title": "Makro xəbərlər kripto sentimentinə necə təsir edir?",
+    "summary": "Faiz dərəcələri, tənzimləmə xəbərləri və likvidlik mühiti qısa icmal şəklində izləyiciyə təqdim oluna bilər.",
+    "date": "19.04.2026"
+  }
+]

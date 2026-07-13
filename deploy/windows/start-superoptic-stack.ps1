@@ -1,0 +1,202 @@
+[CmdletBinding()]
+param(
+    [string]$XamppRoot = "D:\xampp",
+    [string]$WebRoot = "D:\xampp\htdocs\superopticnet",
+    [string]$MgsRoot = "D:\xampp\htdocs\oltidareetme",
+    [string]$WhatsappBridgeRoot = "D:\xampp\htdocs\superopticnet\whatsapp-bridge",
+    [int]$ApachePort = 80,
+    [int]$MysqlPort = 3306,
+    [int]$MgsPort = 3000,
+    [int]$WhatsappBridgePort = 4001,
+    [switch]$SkipMgs,
+    [switch]$SkipWhatsappBridge,
+    [switch]$SkipWorkers,
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+
+function Write-StackLog {
+    param([string]$Message)
+    $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
+    Write-Host $line
+    if (Test-Path -LiteralPath $WebRoot) {
+        $logDir = Join-Path $WebRoot "tmp"
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        Add-Content -LiteralPath (Join-Path $logDir "superoptic-stack-start.log") -Value $line
+    }
+}
+
+function Test-TcpOpen {
+    param([string]$HostName, [int]$Port, [int]$TimeoutMs = 800)
+    try {
+        $client = New-Object Net.Sockets.TcpClient
+        $async = $client.BeginConnect($HostName, $Port, $null, $null)
+        $ok = $async.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+        if ($ok) { $client.EndConnect($async) }
+        $client.Close()
+        return $ok
+    } catch {
+        return $false
+    }
+}
+
+function Start-ServiceOrBatch {
+    param(
+        [string]$Label,
+        [string[]]$ServiceNames,
+        [string]$BatchPath,
+        [int]$Port
+    )
+
+    if (Test-TcpOpen -HostName "127.0.0.1" -Port $Port) {
+        Write-StackLog "$Label already listens on port $Port"
+        return
+    }
+
+    foreach ($serviceName in $ServiceNames) {
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service) {
+            if ($DryRun) {
+                Write-StackLog "[DRY-RUN] Start-Service $serviceName"
+                return
+            }
+            if ($service.Status -ne "Running") {
+                Write-StackLog "Starting Windows service $serviceName"
+                Start-Service -Name $serviceName
+            } else {
+                Write-StackLog "$serviceName service already running"
+            }
+            return
+        }
+    }
+
+    if (Test-Path -LiteralPath $BatchPath) {
+        if ($DryRun) {
+            Write-StackLog "[DRY-RUN] Start-Process $BatchPath"
+            return
+        }
+        Write-StackLog "Starting $Label with $BatchPath"
+        Start-Process -FilePath $BatchPath -WorkingDirectory (Split-Path -Parent $BatchPath) -WindowStyle Hidden
+        return
+    }
+
+    Write-StackLog "$Label start source not found. Checked services and $BatchPath"
+}
+
+function Start-MgsNode {
+    if ($SkipMgs) {
+        Write-StackLog "MGS Node start skipped by flag"
+        return
+    }
+    if (Test-TcpOpen -HostName "127.0.0.1" -Port $MgsPort) {
+        Write-StackLog "MGS already listens on port $MgsPort"
+        return
+    }
+    if (!(Test-Path -LiteralPath $MgsRoot)) {
+        Write-StackLog "MGS root not found: $MgsRoot"
+        return
+    }
+
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    $node = Get-Command node.exe -ErrorAction SilentlyContinue
+    $startCmd = Join-Path $MgsRoot "start-mgs.cmd"
+    if ($DryRun) {
+        Write-StackLog "[DRY-RUN] Start MGS from $MgsRoot"
+        return
+    }
+    if (Test-Path -LiteralPath $startCmd) {
+        Write-StackLog "Starting MGS with start-mgs.cmd"
+        Start-Process -FilePath $startCmd -WorkingDirectory $MgsRoot -WindowStyle Hidden
+        return
+    }
+    if ($npm) {
+        Write-StackLog "Starting MGS with npm start"
+        Start-Process -FilePath "powershell.exe" -ArgumentList @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-Command",
+            "cd '$MgsRoot'; npm.cmd start"
+        ) -WindowStyle Hidden
+        return
+    }
+    if ($node -and (Test-Path -LiteralPath (Join-Path $MgsRoot "server.js"))) {
+        Write-StackLog "Starting MGS with node server.js"
+        Start-Process -FilePath $node.Source -ArgumentList "server.js" -WorkingDirectory $MgsRoot -WindowStyle Hidden
+        return
+    }
+    Write-StackLog "Node/npm not found; billing remains available through native fallback"
+}
+
+function Start-WhatsappBridge {
+    if ($SkipWhatsappBridge) {
+        Write-StackLog "WhatsApp bridge start skipped by flag"
+        return
+    }
+    if (Test-TcpOpen -HostName "127.0.0.1" -Port $WhatsappBridgePort) {
+        Write-StackLog "WhatsApp bridge already listens on port $WhatsappBridgePort"
+        return
+    }
+    if (!(Test-Path -LiteralPath $WhatsappBridgeRoot)) {
+        Write-StackLog "WhatsApp bridge root not found: $WhatsappBridgeRoot"
+        return
+    }
+
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    $node = Get-Command node.exe -ErrorAction SilentlyContinue
+    if ($DryRun) {
+        Write-StackLog "[DRY-RUN] Start WhatsApp bridge from $WhatsappBridgeRoot"
+        return
+    }
+    if (-not $node) {
+        Write-StackLog "Node.js not found; WhatsApp bridge cannot start"
+        return
+    }
+    if ($npm -and !(Test-Path -LiteralPath (Join-Path $WhatsappBridgeRoot "node_modules"))) {
+        Write-StackLog "Installing WhatsApp bridge npm dependencies"
+        Start-Process -FilePath "powershell.exe" -ArgumentList @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-Command",
+            "cd '$WhatsappBridgeRoot'; npm.cmd install --omit=dev"
+        ) -Wait -WindowStyle Hidden
+    }
+
+    Write-StackLog "Starting WhatsApp bridge on port $WhatsappBridgePort"
+    Start-Process -FilePath $node.Source -ArgumentList "server.js" -WorkingDirectory $WhatsappBridgeRoot -WindowStyle Hidden
+}
+
+function Start-WorkerSupervisor {
+    if ($SkipWorkers) {
+        Write-StackLog "Worker supervisor start skipped by flag"
+        return
+    }
+
+    $workerStarter = Join-Path $WebRoot "deploy\windows\start-superoptic-workers.ps1"
+    if (!(Test-Path -LiteralPath $workerStarter)) {
+        Write-StackLog "Worker supervisor script not found: $workerStarter"
+        return
+    }
+
+    if ($DryRun) {
+        Write-StackLog "[DRY-RUN] Start worker supervisor from $workerStarter"
+        return
+    }
+
+    Write-StackLog "Starting worker supervisor"
+    Start-Process -FilePath "powershell.exe" -ArgumentList @(
+        "-WindowStyle", "Hidden",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "`"$workerStarter`"",
+        "-WebRoot", "`"$WebRoot`""
+    ) -WindowStyle Hidden
+}
+
+Write-StackLog "SuperOptic stack autostart begin"
+Start-ServiceOrBatch -Label "Apache" -ServiceNames @("Apache2.4", "apache2.4") -BatchPath (Join-Path $XamppRoot "apache_start.bat") -Port $ApachePort
+Start-ServiceOrBatch -Label "MySQL" -ServiceNames @("mysql", "mysql80", "mariadb", "mysqlxampp") -BatchPath (Join-Path $XamppRoot "mysql_start.bat") -Port $MysqlPort
+Start-MgsNode
+Start-WhatsappBridge
+Start-WorkerSupervisor
+Write-StackLog "SuperOptic stack autostart end"

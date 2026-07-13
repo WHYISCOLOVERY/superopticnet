@@ -1,0 +1,16 @@
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(?:data|tmp|tools|deploy|db|docs)(?:/|$) - [F,L]
+</IfModule>
+
+<FilesMatch "(^\.|\.jsonl$|\.sql$|\.env$|\.ps1$|\.sh$|\.bat$|\.cmd$|\.md$|composer\.(json|lock)$|package(-lock)?\.json$)">
+    Require all denied
+</FilesMatch>
+
+<IfModule !mod_authz_core.c>
+    <FilesMatch "(^\.|\.jsonl$|\.sql$|\.env$|\.ps1$|\.sh$|\.bat$|\.cmd$|\.md$|composer\.(json|lock)$|package(-lock)?\.json$)">
+        Deny from all
+    </FilesMatch>
+</IfModule>

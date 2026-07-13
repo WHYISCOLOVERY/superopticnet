@@ -1,0 +1,12 @@
+[Unit]
+Description=SuperOptic RADIUS CoA/disconnect worker
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/superopticnet
+ExecStart=/usr/bin/php /opt/superopticnet/tools/process-radius-session-actions.php --limit=20 --json
+User=www-data
+Group=www-data
+Nice=5

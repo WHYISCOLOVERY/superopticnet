@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SuperOptic RADIUS CoA/disconnect worker every 20s
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=20s
+Unit=superoptic-radius-coa-worker.service
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,35 @@
+config.local.php
+data/legacy-billing/
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+whatsapp-bridge/.env
+
+# Runtime dependencies and browser sessions
+whatsapp-bridge/node_modules/
+whatsapp-bridge/.wwebjs_auth/
+whatsapp-bridge/.wwebjs_cache/
+
+# Generated QA, browser profiles, backups and local tool runtimes
+tmp/
+.tools/
+*.log
+*.pid
+
+# Runtime data that must not enter source control
+data/area-interest-log.jsonl
+data/db-bootstrap-ok.json
+data/portal-tickets.json
+data/portal-users.json
+data/rate-limits.json
+data/security-events.jsonl
+data/test-pppoe-users-*.csv
+data/legacy-billing-chunk-test/
+data/legacy-billing-profiles-sample/
+data/legacy-billing-test/
+
+# Stray command output files
+/0
+/tmp_plink_help.txt

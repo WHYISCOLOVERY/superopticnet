@@ -1,0 +1,38 @@
+services:
+  clickhouse-keeper:
+    image: clickhouse/clickhouse-keeper:24.8
+    container_name: superoptic-clickhouse-keeper
+    restart: unless-stopped
+    ports:
+      - "9181:9181"
+    volumes:
+      - ./config/keeper.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+      - clickhouse_keeper_data:/var/lib/clickhouse-keeper
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: superoptic-clickhouse
+    restart: unless-stopped
+    depends_on:
+      - clickhouse-keeper
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: superoptic_analytics
+      CLICKHOUSE_USER: superoptic
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change_me_clickhouse_password}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./config/config.xml:/etc/clickhouse-server/config.d/superoptic.xml:ro
+      - ./superoptic-cgnat.sql:/docker-entrypoint-initdb.d/01-superoptic-cgnat.sql:ro
+      - ./archive:/var/lib/superoptic-clickhouse-archive
+
+volumes:
+  clickhouse_data:
+  clickhouse_keeper_data:

@@ -1,0 +1,636 @@
+@media (max-width: 1260px) {
+    .header-inner {
+        gap: 14px;
+        min-height: 72px;
+    }
+
+    .main-nav {
+        gap: 10px;
+        font-size: 0.84rem;
+    }
+
+    .header-actions {
+        gap: 6px;
+    }
+
+    .header-link,
+    .language-button {
+        padding: 9px 12px;
+    }
+
+    .header-link-stack small {
+        font-size: 0.68rem;
+    }
+}
+
+@media (max-width: 1120px) {
+    .hero-section {
+        padding: 22px 0 18px;
+    }
+
+    .hero-grid,
+    .coverage-grid,
+    .contact-cta {
+        grid-template-columns: 1fr;
+        display: grid;
+    }
+
+    .tariff-grid {
+        grid-auto-columns: minmax(240px, 272px);
+    }
+
+    .modem-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .support-grid,
+    .news-grid,
+    .payment-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tv-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .news-card-featured {
+        grid-column: auto;
+    }
+}
+
+@media (max-width: 920px) {
+    .header-inner {
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+    }
+
+    .mobile-nav-toggle {
+        display: inline-flex;
+        justify-self: end;
+    }
+
+    .main-nav {
+        position: static;
+        grid-column: 1 / -1;
+        display: none;
+        flex-direction: column;
+        gap: 0;
+        margin-top: 12px;
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid rgba(16, 35, 63, 0.08);
+        border-radius: 24px;
+        padding: 12px;
+        box-shadow: 0 24px 44px rgba(16, 35, 63, 0.12);
+    }
+
+    .main-nav.is-open {
+        display: flex;
+    }
+
+    .main-nav a {
+        padding: 12px 10px;
+        text-align: center;
+    }
+
+    .header-actions {
+        position: static;
+        grid-column: 1 / -1;
+        display: none;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        margin-top: 12px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid rgba(16, 35, 63, 0.08);
+        border-radius: 24px;
+        box-shadow: 0 24px 44px rgba(16, 35, 63, 0.12);
+    }
+
+    .header-actions.is-open {
+        display: flex;
+    }
+
+    .header-link,
+    .language-button {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .header-link-stack {
+        flex: 1;
+    }
+
+    .language-dropdown {
+        width: 100%;
+    }
+
+    .language-button {
+        display: none;
+    }
+
+    .language-menu {
+        position: static;
+        margin-top: 0;
+        width: 100%;
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+    }
+
+    .language-menu a {
+        justify-content: center;
+        gap: 8px;
+        padding: 11px 10px;
+        border-radius: 16px;
+        border: 1px solid rgba(16, 35, 63, 0.08);
+        background: rgba(255, 255, 255, 0.82);
+    }
+
+    .hero-points,
+    .service-grid,
+    .two-columns,
+    .footer-inner {
+        grid-template-columns: 1fr;
+        display: grid;
+    }
+
+    .coverage-point span {
+        left: calc(100% + 8px);
+        top: 50%;
+        transform: translateY(-50%);
+    }
+}
+
+@media (max-width: 680px) {
+    .hero-section {
+        padding: 18px 0 24px;
+    }
+
+    .hero-copy,
+    .panel-content,
+    .support-card,
+    .tariff-card,
+    .coverage-note,
+    .news-note,
+    .disclaimer-card,
+    .promo-popup {
+        padding: 20px;
+        border-radius: 22px;
+    }
+
+    .hero-grid {
+        gap: 16px;
+    }
+
+    .hero-copy,
+    .section-heading,
+    .section-heading.left-aligned,
+    .order-flow-copy {
+        text-align: center;
+    }
+
+    .news-card {
+        padding: 0;
+    }
+
+    .news-media {
+        aspect-ratio: 16 / 11;
+    }
+
+    .news-media-overlay {
+        inset: auto 14px 14px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .news-body {
+        padding: 18px;
+        gap: 12px;
+    }
+
+    .hero-copy {
+        padding: 22px 18px;
+    }
+
+    .hero-panel {
+        padding: 10px;
+    }
+
+    .header-actions {
+        padding: 10px;
+        margin-top: 10px;
+    }
+
+    .hero-copy-note {
+        text-align: center;
+    }
+
+    .tariff-slider-track {
+        padding: 6px 8px 16px;
+        margin: 0;
+    }
+
+    .tariff-slider-btn {
+        display: none;
+    }
+
+    .tariff-grid {
+        grid-auto-columns: minmax(232px, 82vw);
+    }
+
+    .modem-strip {
+        grid-template-columns: 1fr;
+    }
+
+    .coverage-list-scroll {
+        max-height: 272px;
+        padding-right: 4px;
+    }
+
+    .coverage-stats-head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .hero-copy h1 {
+        max-width: none;
+        font-size: clamp(2.15rem, 10vw, 3.2rem);
+        line-height: 1.02;
+    }
+
+    .hero-text {
+        margin: 14px 0 18px;
+        font-size: 0.96rem;
+        line-height: 1.55;
+    }
+
+    .hero-point {
+        padding: 14px;
+        border-radius: 18px;
+    }
+
+    .hero-point strong {
+        font-size: 0.92rem;
+    }
+
+    .hero-point span {
+        font-size: 0.84rem;
+        line-height: 1.42;
+    }
+
+    .hero-actions {
+        gap: 10px;
+        justify-content: center;
+    }
+
+    .hero-actions .button {
+        width: 100%;
+    }
+
+    .featured-offers-grid,
+    .order-flow-grid,
+    .order-flow-steps {
+        grid-template-columns: 1fr;
+    }
+
+    .featured-offer-card,
+    .order-step-card,
+    .order-flow-copy {
+        padding: 20px;
+        border-radius: 22px;
+    }
+
+    .featured-offer-metrics {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .featured-offer-metrics strong {
+        font-size: 1.8rem;
+    }
+
+    .panel-tabs {
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .panel-tab {
+        min-height: 46px;
+        padding: 10px 12px;
+        font-size: 0.94rem;
+    }
+
+    .lead-box-title h2 {
+        font-size: 1.7rem;
+    }
+
+    .lead-box-title p {
+        font-size: 0.96rem;
+        line-height: 1.55;
+    }
+
+    .promo-popup-overlay {
+        place-items: start center;
+        padding: 12px 12px calc(14px + env(safe-area-inset-bottom));
+    }
+
+    .promo-popup {
+        width: min(calc(100vw - 20px), 332px);
+        max-height: calc(100vh - 24px - env(safe-area-inset-bottom));
+        margin-top: 2px;
+        padding: 18px;
+    }
+
+    .promo-popup h3 {
+        font-size: 1.34rem;
+        line-height: 1.12;
+        padding-right: 36px;
+    }
+
+    .promo-metrics {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        font-size: 0.98rem;
+        gap: 8px;
+        padding: 12px 14px;
+    }
+
+    .tv-card {
+        width: 192px;
+        min-height: 80px;
+        padding: 16px;
+    }
+
+    .tv-showcase,
+    .tv-search-panel {
+        padding: 18px;
+    }
+
+    .tv-card-logo,
+    .tv-result-logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        font-size: 0.88rem;
+    }
+
+    .tv-result-card {
+        padding: 14px;
+    }
+
+    .tv-results-list {
+        max-height: 324px;
+        padding-right: 4px;
+    }
+
+    .payment-card {
+        min-height: 132px;
+        padding: 20px;
+        gap: 14px;
+    }
+
+    .payment-card-brand {
+        width: min(100%, 188px);
+        min-height: 62px;
+    }
+
+    .payment-card-brand img {
+        max-height: 62px;
+    }
+
+    .payment-card-name {
+        font-size: 0.92rem;
+    }
+
+    .payment-card-note {
+        font-size: 0.75rem;
+    }
+
+    .payment-card-link {
+        min-height: 40px;
+        font-size: 0.88rem;
+    }
+
+    .info-card-grid,
+    .device-card-grid,
+    .footer-detailed-grid,
+    .order-flow-grid,
+    .order-flow-steps {
+        grid-template-columns: 1fr;
+    }
+
+    .info-card,
+    .device-card,
+    .policy-card,
+    .order-flow-copy,
+    .order-step-card {
+        padding: 20px;
+        border-radius: 22px;
+    }
+
+    .info-card h2,
+    .device-card h2,
+    .policy-card h2 {
+        font-size: 1.5rem;
+        margin-top: 18px;
+    }
+
+    .device-card strong,
+    .featured-offer-metrics strong {
+        font-size: 1.7rem;
+    }
+
+    .policy-table {
+        min-width: 640px;
+    }
+
+    .inner-page-hero {
+        padding: 22px 0 8px;
+    }
+
+    .inner-page-hero-content h1 {
+        font-size: clamp(1.95rem, 8vw, 2.7rem);
+    }
+
+    .inner-page-hero-content p {
+        font-size: 0.96rem;
+        line-height: 1.6;
+    }
+
+    .footer-brand-block p {
+        max-width: none;
+    }
+
+    .tariff-bottom,
+    .news-meta,
+    .contact-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .section {
+        padding: 32px 0;
+    }
+
+    .whatsapp-float {
+        right: max(18px, calc(env(safe-area-inset-right) + 10px));
+        bottom: calc(18px + env(safe-area-inset-bottom));
+        width: 56px;
+        min-height: 56px;
+        padding: 0;
+    }
+
+    .whatsapp-float-text {
+        display: none;
+    }
+
+    .audience-pills,
+    .filter-pills,
+    .news-tabs {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 10px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        margin-right: -2px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .audience-pills::-webkit-scrollbar,
+    .filter-pills::-webkit-scrollbar,
+    .news-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .audience-pill,
+    .filter-pill,
+    .news-tab {
+        flex: 0 0 auto;
+        min-width: max-content;
+        white-space: nowrap;
+        padding-inline: 18px;
+    }
+
+    .tariff-topline {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 420px) {
+    .container {
+        width: min(var(--container), calc(100% - 24px));
+    }
+
+    .hero-copy,
+    .panel-content,
+    .promo-popup {
+        padding: 18px 16px;
+    }
+
+    .hero-panel {
+        padding: 8px;
+    }
+
+    .recaptcha-row {
+        min-height: 66px;
+    }
+
+    .recaptcha-row .g-recaptcha {
+        transform: scale(0.84);
+        transform-origin: left top;
+    }
+
+    .promo-popup {
+        width: min(calc(100vw - 20px), 320px);
+    }
+
+    .promo-popup h3 {
+        font-size: 1.35rem;
+    }
+
+    .promo-type,
+    .promo-popup p {
+        font-size: 0.95rem;
+    }
+
+    .promo-theme-tag {
+        font-size: 0.75rem;
+        min-height: 28px;
+    }
+
+    .tv-card {
+        width: 174px;
+        min-height: 76px;
+        padding: 14px;
+    }
+
+    .tv-card-logo,
+    .tv-result-logo {
+        width: 42px;
+        height: 42px;
+    }
+
+    .tv-results-list {
+        max-height: 286px;
+    }
+
+    .payment-card {
+        min-height: 118px;
+        padding: 18px;
+        gap: 12px;
+    }
+
+    .news-media-overlay {
+        inset: auto 12px 12px;
+    }
+
+    .news-kicker,
+    .news-category-badge {
+        min-height: 30px;
+        padding: 6px 10px;
+        font-size: 0.72rem;
+    }
+
+    .news-body {
+        padding: 16px;
+    }
+
+    .payment-card-brand {
+        width: min(100%, 164px);
+        min-height: 54px;
+    }
+
+    .payment-card-brand img {
+        max-height: 54px;
+    }
+
+    .payment-card-name {
+        font-size: 0.86rem;
+    }
+
+    .payment-card-note {
+        font-size: 0.72rem;
+    }
+
+    .payment-card-link {
+        min-height: 38px;
+        font-size: 0.84rem;
+    }
+
+    .info-card,
+    .device-card,
+    .policy-card {
+        padding: 18px 16px;
+    }
+
+    .policy-table {
+        min-width: 560px;
+    }
+}
