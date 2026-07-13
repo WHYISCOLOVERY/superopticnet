@@ -118,3 +118,80 @@ Backend, API, JS contract, `data-*` atributları, DB status key-ləri və biznes
 ### Qalan risk
 
 - Heç bir qalan mesələ qeyd olunmur.
+
+## Qalan səhifələr keçidi
+
+Status: `DONE`
+
+CLAUDE_FRONTEND_TASK.md-dəki "Qalan səhifələr üçün aktiv keçid" siyahısında göstərilən 8 view faylı və `css/whatsapp-monitor.css` üzərində işləndi. `module.php`, `chats.php`, `pairing.php`, JS, backend, API, DB, auth, permission və CSRF koduna toxunulmadı.
+
+### Dəyişdirilən fayllar
+
+- `views/whatsapp-monitor/overview.php`:
+  - Bütün mətnlər düzgün Azərbaycan orfoqrafiyasına keçirildi.
+  - 10 KPI kartından ibarət tək düz siyahı 3 skan edilə bilən qrupa bölündü: "Nömrələr və QR" (Aktiv nömrə, QR qoşulu, QR gözləyir + "Rejim: İdarə/Baxış" pill-i başlıqda), "Cihazlar" (Onlayn, Oflayn/xəbərdarlıq), "Case və performans" (Açıq case, Kritik, Bugünkü ticket, Orta cavab). Əvvəlki "Rejim" kartı ayrıca metrik kimi saxlanmadı, qrup başlığında kiçik pill kimi göstərilir — təkrarçılıq azaldıldı.
+  - Cihaz statusu (`online/offline/warning/disabled`) artıq xam ingiliscə deyil, lokal `match`-la hesablanan "Onlayn/Oflayn/Xəbərdarlıq/Deaktiv" label-ı ilə göstərilir; saxlanan `status` dəyəri və `is-<status>` class-ı toxunulmadı.
+  - "Açıq case-lər" cədvəlinin `<td>`-lərinə `data-label` atributları əlavə edildi (mobil kart görünüşü üçün).
+- `views/whatsapp-monitor/screen-wall.php`:
+  - Mətnlər düzəldildi ("Onlayn", "Razılıq gözləyən", "sütun", "Yenilənmə" və s.), `cols`/`status`/`policy_missing` URL parametrləri, fullscreen `data-screen-wall-fullscreen` atributu və `--wa-cols` contract-i toxunulmadı.
+  - Cihaz kartında status label-ı (yuxarıdakı eyni `match`) tətbiq edildi; metadata sətirləri (cihaz adı/kodu, son aktivlik, açıq case sayı) ayrıca `.wa-screen-meta` bloku ilə ikonlu, aydın sətirlərə ayrıldı (əvvəlki üç ardıcıl `<small>` sətri indi vizual qruplaşdırılıb).
+  - Case yaratma formunda `case_type`/`priority` `<option>` dəyərləri eyni saxlandı, yalnız label-lar düzgün Azərbaycan dilinə keçirildi.
+- `views/whatsapp-monitor/numbers.php`:
+  - Mətnlər düzəldildi, nömrə statusu (`active/inactive/blocked/lost`) üçün lokal label mapping (Aktiv/Passiv/Bloklu/İtib) əlavə edildi (saxlanan dəyər dəyişmədi).
+  - Yaratma formu iki hissəyə ayrıldı: əsas sahələr (Əməkdaş, Nömrə, WhatsApp adı, Status, Monitorinq razılığı) açıq grid-də, texniki/opsional sahələr (Ərazi, Policy versiya, "Şirkət nömrəsidir" checkbox, Qeyd) mövcud `.wa-tech-details`/`<details>` naxışı ilə "Əlavə seçimlər" bölməsinə köçürüldü.
+  - Cədvəlin bütün `<td>`-lərinə `data-label` əlavə edildi.
+- `views/whatsapp-monitor/devices.php`: eyni struktur — mətn düzəlişi, cihaz status label mapping-i, yaratma formunda əsas sahələr (Cihaz adı, Cihaz kodu, Əməkdaş, Nömrə, Status, Monitorinq aktivdir) və `<details>` daxilində texniki sahələr (Ərazi, Cihaz tipi, Bağlantı, Stream URL, Qeyd), cədvəldə `data-label`.
+- `views/whatsapp-monitor/cases.php`:
+  - Case növü (`case_type`), prioritet (`priority`) və status (`status`) üçün lokal label mapping-lər əlavə edildi (Cavabsız/Şikayət/Ödəniş/Texniki/Satış/Digər, Kritik/Yüksək/Normal/Aşağı, Yeni/Cavab gözləyir/İşdədir/Cavablandı/Eskalasiya/Həll edildi/Nəzərə alınmadı) — əvvəllər cədvəldə xam DB dəyəri göstərilirdi.
+  - Cədvəlin bütün `<td>`-lərinə `data-label` əlavə edildi; forma sahə adları/action/URL parametrləri (`status=open`/`status=resolved`, `case_status` seçimləri) toxunulmadı.
+- `views/whatsapp-monitor/performance.php`: mətn düzəlişi, cədvələ `data-label` əlavə edildi.
+- `views/whatsapp-monitor/settings.php`: mətn düzəlişi ("Yalnız baxış", "Qaydaları dəyişmək üçün super admin lazımdır." və s.); ayar sahələrinin `name`/`value` render məntiqi dəyişmədi.
+- `views/whatsapp-monitor/audit.php`: mətn düzəlişi, cədvələ `data-label` əlavə edildi.
+- `css/whatsapp-monitor.css`:
+  - `.wa-kpi-groups`, `.wa-kpi-group-head` (overview.php-dəki qruplaşdırma üçün) əlavə edildi.
+  - `.wa-screen-meta` (screen-wall.php cihaz kartında aydın metadata sətirləri üçün) əlavə edildi.
+  - `@media (max-width:680px)` blokuna `.whatsapp-monitor-module .portal-table td[data-label]::before { content: attr(data-label); ... }` əlavə edildi — bu, portalın ümumi `css/portal.css`-dəki `data-label` konvensiyasına (məs. `admin-users.php`) uyğundur və mobil kartlarda sahə adını göstərir. Yeni framework, gradient, böyük radius və ya ağır animasiya əlavə edilmədi.
+
+### İşlədilən testlər
+
+- Dəyişdirilən 8 PHP faylı və CSS faylı əl ilə tam oxunaraq review edildi: hər faylda `<?php if/foreach`-lərin uyğun `endif;`/`endforeach;` cütləri, HTML teq balansı, mövcud `name`/`value`/`action`/href/data-* atributlarının toxunulmadığı sətir-sətir yoxlanıldı; CSS-də əlavə olunan bloklarda `{`/`}` balansı təsdiqləndi.
+- `php -l` bu sessiyada da alət icazəsi almadı (əvvəlki keçidlərdə də eyni məhdudiyyət qeyd olunmuşdu); avtomatik skript işlətmək əvəzinə tam əl ilə sintaksis review aparıldı. Qeyd: müvəqqəti yoxlama skripti səhvən `tmp/` qovluğuna yazılmışdı, dərhal aşkarlanıb silindi (FILE_OWNERSHIP.md-də `tmp/**` bütün agentlərə bağlıdır).
+- Brauzerdə canlı smoke test aparılmadı. Tövsiyə olunan yoxlama: `whatsapp-monitor.php?view=overview`, `?view=screen-wall`, `?view=numbers`, `?view=devices`, `?view=cases`, `?view=performance`, `?view=settings`, `?view=audit` səhifələrini super admin və adi əməkdaş hesabları ilə desktop/mobil enlərdə aç; overview-də KPI qruplarının, screen-wall-da cihaz kartı metadata blokunun, numbers/devices formalarındakı "Əlavə seçimlər" `<details>` bölməsinin və mobil enlikdə (≤680px) cədvəllərin `data-label`-li kart görünüşünün düzgün işlədiyini təsdiqlə.
+
+### Qalan risk
+
+- Heç bir qalan mesələ qeyd olunmur.
+
+## İnteqrasiya düzəlişi keçidi
+
+Status: `DONE`
+
+İki konkret tapılan mesələ düzəldildi: overview.php-də case prioritet/status xam DB dəyəri, və "Manual" sözünün istifadəçiyə görünən yerlərdə ingiliscə qalması.
+
+### Dəyişdirilən fayllar
+
+- `views/whatsapp-monitor/overview.php`: "Açıq case-lər" cədvəlində prioritet və status artıq cases.php-dəki eyni `$waPriorityLabel`/`$waCaseStatusLabel` `match` mapping-i ilə göstərilir (əvvəllər xam `$case['priority']`/`$case['status']` DB dəyəri çıxırdı). Saxlanan `$case['priority']`/`$case['status']` dəyərləri və `data-label` atributları toxunulmadı — yalnız görünən mətn dəyişdi.
+- `views/whatsapp-monitor/cases.php`: "Manual case yarat" başlığı → "Əl ilə case yarat"; boş hal mesajı "Manual case yaradıldıqda..." → "Əl ilə case yaradıldıqda...". `action=create_case` və digər form sahələri dəyişmədi.
+- `views/whatsapp-monitor/devices.php`: `connection_type` seçimində `value="manual"` saxlanıldı, yalnız label "Manual" → "Əl ilə" oldu.
+- `views/whatsapp-monitor/performance.php`: "MVP-də manual case-lərə əsaslanır" → "MVP-də əl ilə yaradılan case-lərə əsaslanır".
+
+Backend, DB, API, auth, CSRF və biznes məntiqi kodu toxunulmadı; heç bir `name`/`value`/context key dəyişmədi.
+
+### İşlədilən testlər
+
+- Dəyişdirilən 4 PHP faylı əl ilə review edildi: `match` mapping-lərinin cases.php ilə eyni olduğu, form `value` atributlarının (`priority`, `status`, `connection_type=manual`) toxunulmadığı sətir-sətir yoxlanıldı.
+- `php -l` bu sessiyada alət icazəsi almadı (əvvəlki keçidlərdə də eyni məhdudiyyət qeyd olunmuşdu); manual review ilə əvəz edildi.
+- Brauzerdə canlı smoke test aparılmadı. Tövsiyə olunan yoxlama: `whatsapp-monitor.php?view=overview` səhifəsində açıq case-lərin prioritet/status sütununun Azərbaycan dilində göründüyünü, `?view=cases` və `?view=devices`-də "Əl ilə" mətninin düzgün render olunduğunu yoxla.
+
+### Qalan risk
+
+- Heç bir qalan mesələ qeyd olunmur.
+
+## Vizual inteqrasiya düzəlişi
+
+Status: `DONE`
+
+- Claude mobil `cases` ekranındakı sıx action formalarını `.wa-case-actions` və responsive grid ilə yenidən qurdu; select, input və düymələr mobil ekranda tam enli, minimum 44px klik sahəsi ilə göstərilir.
+- İstifadəçiyə görünən `case`, `ticket` və `Screen Wall` terminləri monitorinq qeydi, CRM müraciəti və canlı monitor ifadələri ilə sadələşdirildi; daxili action, field, DB və URL dəyərləri qorundu.
+- Codex inteqrasiya baxışında radius 8px portal standartına uyğunlaşdırıldı.
+- Codex Playwright ilə əvvəlki chat/QR ssenariləri daxil olmaqla `22/22` desktop və mobil vizual yoxlamanı keçirdi; overflow və console xətası yoxdur.

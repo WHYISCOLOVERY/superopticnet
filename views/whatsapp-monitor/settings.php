@@ -4,9 +4,9 @@ declare(strict_types=1);
 $settings = (array) ($context['settings'] ?? []);
 ?>
 <section class="portal-muted-card portal-section-gap">
-    <div class="portal-card-head"><h3>Monitorinq qaydalari</h3><small>Bu ayarlari yalniz super admin deyise biler.</small></div>
+    <div class="portal-card-head"><h3>Monitorinq qaydaları</h3><small>Bu ayarları yalnız super admin dəyişə bilər.</small></div>
     <?php if (empty($context['can_manage'])): ?>
-        <?php billing_render_empty_state('Yalniz baxış', 'Qaydalari deyismek ucun super admin lazimdir.', 'fa-lock'); ?>
+        <?php billing_render_empty_state('Yalnız baxış', 'Qaydaları dəyişmək üçün super admin lazımdır.', 'fa-lock'); ?>
     <?php else: ?>
         <form method="post" class="portal-stacked-form">
             <input type="hidden" name="action" value="save_settings">
@@ -20,7 +20,7 @@ $settings = (array) ($context['settings'] ?? []);
                     </label>
                 <?php endforeach; ?>
             </div>
-            <button class="portal-primary-btn portal-section-gap" type="submit">Qaydalari saxla</button>
+            <button class="portal-primary-btn portal-section-gap" type="submit">Qaydaları saxla</button>
         </form>
     <?php endif; ?>
 </section>
