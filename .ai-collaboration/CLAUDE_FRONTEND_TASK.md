@@ -1,6 +1,6 @@
 # Claude frontend tapsirigi
 
-Status: `READY`
+Status: `SECOND_PASS_READY`
 
 Islemeye baslamazdan evvel:
 
@@ -31,3 +31,16 @@ Islemeye baslamazdan evvel:
 - Movcud portal dizayn tokenlerini istifade et, yeni agır framework elave etme.
 
 Real frontend fayl deyisikliyi ve test subutu yoxdursa merhele tamamlanmis sayilmir.
+
+## Ikinci kecid ucun konkret duzelisler
+
+Codex inteqrasiya yoxlamasindan sonra yalniz asagidaki frontend meselelerini duzelt:
+
+1. Context-deki `chat_selection_explicit` deyerini istifade et. Desktop-da default ilk cat gorune biler, mobilde URL secimi yoxdursa siyahi gorunmelidir. `Siyahiya qayit` yeniden ilk cati acmamalidir.
+2. Bos cat aciq iken polling ile ilk mesaj gelirse `.mgs-empty-state` blokunu mesaj elave edilmezden evvel sil.
+3. `GET api/whatsapp-monitor/chat-list.php` endpoint-ini 5 saniyelik yüngül polling ile istifade et. Movcud setirlerin preview, tarix ve mesaj sayini yenile; yeni cat gelirse sehifeni reload etmeden siyahiya elave et.
+4. Cat basliginda sade canli status elementi yarat: `Canli`, `Yenilenir`, `Baglanti zeifdir`. Texniki endpoint ve xeta metni gosterme.
+5. Sehife arxa planda olanda lazimsiz polling-i azalt ve yeniden aktiv olanda derhal yenile.
+6. Axtarisde Azerbaycan herfleri ucun locale-aware kiciltme istifade et.
+7. Backend, API, PHP context, auth, CSRF ve permission kodunu deyisme.
+8. Neticeni eyni `CLAUDE_FRONTEND_RESULT.md` faylinda `Ikinci kecid` bolmesi ile tamamla.

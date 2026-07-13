@@ -50,8 +50,15 @@ try {
         $errors[] = 'chat_message_missing';
     }
     $chats = whatsapp_monitor_chat_rows($db, $actor);
-    if (!array_filter($chats, static fn (array $row): bool => (string) ($row['chat_id'] ?? '') === $chatId)) {
+    $matchedChats = array_values(array_filter(
+        $chats,
+        static fn (array $row): bool => (int) ($row['number_id'] ?? 0) === $numberId
+            && (string) ($row['chat_id'] ?? '') === $chatId
+    ));
+    if ($matchedChats === []) {
         $errors[] = 'chat_summary_missing';
+    } elseif ((int) ($matchedChats[0]['last_message_id'] ?? 0) <= 0) {
+        $errors[] = 'chat_last_message_id_missing';
     }
     $selectedChat = null;
     foreach ($chats as $chatRow) {

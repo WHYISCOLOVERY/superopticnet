@@ -776,7 +776,8 @@ function whatsapp_monitor_chat_rows(PDO $db, array $actor): array
     $statement = $db->prepare(
         'SELECT m.number_id, m.chat_id, MAX(m.contact_name) AS contact_name, MAX(m.occurred_at) AS last_message_at,
                 SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(NULLIF(m.message_body,""),CONCAT("[",m.message_type,"]")) ORDER BY m.occurred_at DESC, m.id DESC SEPARATOR "\n"), "\n", 1) AS last_message,
-                COUNT(*) AS message_count, MAX(n.phone_number) AS company_number, MAX(e.full_name) AS employee_name
+                COUNT(*) AS message_count, MAX(m.id) AS last_message_id,
+                MAX(n.phone_number) AS company_number, MAX(e.full_name) AS employee_name
          FROM whatsapp_monitor_messages m
          LEFT JOIN whatsapp_employee_numbers n ON n.id = m.number_id
          LEFT JOIN portal_accounts e ON e.id = m.employee_id
@@ -1323,6 +1324,7 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
     $chatRows = $view === 'chats' ? whatsapp_monitor_chat_rows($db, $actor) : [];
     $selectedChatId = clean_text((string) ($_GET['chat_id'] ?? ''));
     $selectedNumberId = max(0, (int) ($_GET['number_id'] ?? 0));
+    $chatSelectionExplicit = $selectedChatId !== '' && $selectedNumberId > 0;
     $selectedChat = null;
     foreach ($chatRows as $chatRow) {
         if ((string) ($chatRow['chat_id'] ?? '') === $selectedChatId
@@ -1352,6 +1354,7 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
         'selected_number_id' => $selectedNumberId,
         'selected_chat_id' => $selectedChatId,
         'selected_chat' => $selectedChat,
+        'chat_selection_explicit' => $chatSelectionExplicit,
         'chat_messages' => $view === 'chats' && $selectedChatId !== '' && $selectedNumberId > 0
             ? whatsapp_monitor_chat_messages($db, $actor, $selectedChatId, 0, $selectedNumberId)
             : [],

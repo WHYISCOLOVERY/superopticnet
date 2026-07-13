@@ -13,10 +13,11 @@ Status: `READY_FOR_FRONTEND`
 
 View context:
 
-- `chat_rows`: cat xulasesi; her setirde `number_id`, `chat_id`, `contact_name`, `company_number`, `employee_name`, `last_message`, `last_message_at`, `message_count`.
+- `chat_rows`: cat xulasesi; her setirde `number_id`, `chat_id`, `contact_name`, `company_number`, `employee_name`, `last_message`, `last_message_at`, `last_message_id`, `message_count`.
 - `selected_number_id`: secilmis sirket nomresinin DB ID-si.
 - `selected_chat_id`: WhatsApp chat ID-si.
 - `selected_chat`: secilmis xulase setri.
+- `chat_selection_explicit`: URL-de istifadeci secimi varsa `true`; mobil geri kecid bunu istifade edir.
 - `chat_messages`: son 300 mesaj, kohne -> yeni ardicilliqda.
 - `can_manage`: yalniz super admin.
 - `can_view_all`: admin ve monitorinq rollari.
@@ -43,6 +44,14 @@ Ugurlu cavab:
 ```
 
 Validation xetasi `422`, icaze xetasi movcud session/permission qati ile `403` qaytarir.
+
+## Real-time cat siyahisi endpoint-i
+
+`GET /api/whatsapp-monitor/chat-list.php`
+
+- Employee session ve modul icazesi teleb olunur.
+- Eyni rol scope-u ile `chat_rows` massivini qaytarir.
+- Sehifeni reload etmeden yeni cat, son mesaj metni, tarix ve say yenilenmesi ucundur.
 
 ## QR status endpoint-i
 
