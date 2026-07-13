@@ -94,3 +94,27 @@ Backend, API, PHP context, auth, CSRF ve permission kodu deyismedi; yalniz `view
 ### Qalan risk
 
 - Hec bir qalan mesele qeyd olunmur; ikinci kecidin qalan riski (tam bos hal ucun chat-list shell-inin aktiv olmamasi) bu kecidde aradan qaldirildi.
+
+## Dördüncü keçid (dil və texniki mətn cilası)
+
+Status: `DONE`
+
+Yalniz dil polish tapsirigi: `views/whatsapp-monitor/module.php`, `views/whatsapp-monitor/chats.php`, `views/whatsapp-monitor/pairing.php`, `css/whatsapp-monitor.css`.
+
+### Deyisdirilen fayllar
+
+- `views/whatsapp-monitor/module.php`, `views/whatsapp-monitor/chats.php`, `views/whatsapp-monitor/pairing.php`: bütün istifadəçiyə görünən mətnlər düzgün Azərbaycan orfoqrafiyasına (ə, ı, ö, ü, ş, ç, ğ) keçirildi — məs. `cat`→`çat`, `nomre`→`nömrə`, `emekdas`→`əməkdaş`, `qosulub`→`Qoşulub`, `siyahi`→`siyahı`, `Baglanti`→`Bağlantı`, `gorunecek`→`görünəcək`. Texniki identifikatorlar (`data-*` atributları, DB status key-ləri: `requested`, `qr_ready`, `connected` və s., URL parametrləri) toxunulmadı.
+- `views/whatsapp-monitor/pairing.php`: "Son QR sessiyası" kartında `Session key` və `Worker ID` əsas görünüşdən çıxarılıb, açılıb-bağlana bilən `<details class="wa-tech-details"><summary>Texniki məlumat</summary>…</details>` bloku daxilinə köçürüldü (defolt bağlı). Bitmə vaxtı və xəta mesajı istifadəçi üçün faydalı olduğundan əsas kartda saxlanıldı.
+- `css/whatsapp-monitor.css`: `.wa-tech-details` üçün minimal stil (summary — muted, kiçik, cursor:pointer) əlavə edildi; mövcud Azərbaycan dilində olan kod şərhləri də düzgün orfoqrafiyaya keçirildi.
+
+Backend, API, JS contract, `data-*` atributları, DB status key-ləri və biznes məntiqi dəyişmədi.
+
+### İşlədilən testlər
+
+- Dəyişdirilən üç PHP faylı və CSS faylı əl ilə sintaksis review edildi (PHP `if/foreach/endif/endforeach` cütləri, HTML/`<details>` teq balansı, CSS `{`/`}` balansı yoxlanıldı); struktur dəyişməyib, yalnız mətn məzmunu və bir `<details>` sarğısı əlavə olunub.
+- `php -l` bu sessiyada alət icazəsi təsdiqlənmədi (əvvəlki keçidlərdə də eyni məhdudiyyət qeyd olunmuşdu); manual review ilə əvəz edildi.
+- Brauzerdə canlı smoke test aparılmadı. Tövsiyə olunan yoxlama: `whatsapp-monitor.php?view=chats` və `?view=pairing` səhifələrini aç, bütün mətnlərin düzgün Azərbaycan dilində göründüyünü, QR kartında "Texniki məlumat" bölməsinin defolt bağlı olduğunu və açılanda Session key/Worker ID-ni göstərdiyini yoxla.
+
+### Qalan risk
+
+- Heç bir qalan mesələ qeyd olunmur.

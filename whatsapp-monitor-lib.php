@@ -426,15 +426,15 @@ function whatsapp_monitor_numbers(PDO $db, array $actor): array
 function whatsapp_monitor_pairing_status_label(string $status): string
 {
     return [
-        'not_connected' => 'QR qosulmayib',
-        'requested' => 'QR gozleyir',
-        'qr_requested' => 'QR gozleyir',
-        'qr_ready' => 'QR hazirdir',
+        'not_connected' => 'QR qoşulmayıb',
+        'requested' => 'QR gözləyir',
+        'qr_requested' => 'QR gözləyir',
+        'qr_ready' => 'QR hazırdır',
         'scanned' => 'QR oxundu',
-        'connected' => 'Qosulub',
+        'connected' => 'Qoşulub',
         'expired' => 'Vaxt bitib',
-        'failed' => 'Xeta var',
-        'revoked' => 'Legv edilib',
+        'failed' => 'Xəta var',
+        'revoked' => 'Ləğv edilib',
     ][$status] ?? $status;
 }
 

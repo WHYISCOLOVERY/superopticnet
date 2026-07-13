@@ -1,4 +1,4 @@
-/* WhatsApp Monitorinq modulu ucun gorunus stilleri. */
+/* WhatsApp Monitorinq modulu üçün görünüş stilləri. */
 
 .whatsapp-monitor-module {
     position: relative;
@@ -251,7 +251,7 @@
     font-size: .76rem;
 }
 
-/* QR baglanti paneli */
+/* QR bağlantı paneli */
 
 .wa-qr-panel {
     display: grid;
@@ -303,6 +303,21 @@
     padding: 10px;
 }
 
+.wa-tech-details {
+    margin-top: 6px;
+}
+
+.wa-tech-details summary {
+    cursor: pointer;
+    color: var(--portal-muted);
+    font-size: .82rem;
+    font-weight: 700;
+}
+
+.wa-tech-details[open] summary {
+    margin-bottom: 8px;
+}
+
 .wa-process-steps {
     display: grid;
     gap: 6px;
@@ -344,7 +359,7 @@
     font-weight: 700;
 }
 
-/* Cat monitoru: iki panelli is axini */
+/* Çat monitoru: iki panelli iş axını */
 
 .wa-chat-layout {
     display: grid;
@@ -666,7 +681,7 @@
         padding: 6px 8px;
     }
 
-    /* Mobil: cat siyahisi ve yazisma arasinda tam ekran kecid, ic-ice scroll yoxdur */
+    /* Mobil: çat siyahısı və yazışma arasında tam ekran keçid, iç-içə scroll yoxdur */
     .wa-chat-layout {
         grid-template-columns: 1fr;
         min-height: 0;

@@ -10,28 +10,28 @@ $canManage = !empty($context['can_manage']);
 <section class="portal-muted-card portal-section-gap">
     <div class="portal-card-head">
         <div>
-            <h3>QR ile WhatsApp baglantisi</h3>
-            <small>Her sirket nomresi ayri QR sessiyasi ile qosulur. QR oxunmadan nomre monitorinqe qosulmus sayilmir.</small>
+            <h3>QR ilə WhatsApp bağlantısı</h3>
+            <small>Hər şirkət nömrəsi ayrı QR sessiyası ilə qoşulur. QR oxudulmadan nömrə monitorinqə qoşulmuş sayılmır.</small>
         </div>
-        <span class="portal-pill">Status avtomatik yenilenir</span>
+        <span class="portal-pill">Status avtomatik yenilənir</span>
     </div>
     <ol class="wa-process-steps">
-        <li>Sessiya yaradilir: super admin nomre ucun yeni QR sessiyasi acir, evvelki aciq sessiya legv olunur.</li>
-        <li>QR hazirlanir: sistem bir necə saniye erzinde QR kodu ekrana gonderir.</li>
-        <li>Nomre qosulur: telefon WhatsApp-da QR oxudulur ve status "Qosulub" olur.</li>
+        <li>Sessiya yaradılır: super admin nömrə üçün yeni QR sessiyası açır, əvvəlki açıq sessiya ləğv olunur.</li>
+        <li>QR hazırlanır: sistem bir neçə saniyə ərzində QR kodu ekrana göndərir.</li>
+        <li>Nömrə qoşulur: telefon WhatsApp-da QR oxudulur və status "Qoşulub" olur.</li>
     </ol>
 </section>
 
 <?php if ($canManage): ?>
     <section class="portal-muted-card portal-section-gap">
-        <div class="portal-card-head"><h3>Yeni QR sessiyasi</h3><small>Policy raziligi olan aktiv nomre secin.</small></div>
+        <div class="portal-card-head"><h3>Yeni QR sessiyası</h3><small>Policy razılığı olan aktiv nömrə seçin.</small></div>
         <form method="post" class="portal-stacked-form">
             <input type="hidden" name="action" value="start_pairing">
             <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
             <div class="wa-form-grid">
-                <label>Nomre
+                <label>Nömrə
                     <select name="number_id" required>
-                        <option value="">Secin</option>
+                        <option value="">Seçin</option>
                         <?php foreach ($numbers as $number): ?>
                             <option value="<?= e((string) ($number['id'] ?? 0)); ?>">
                                 <?= e((string) ($number['phone_number'] ?? '-')); ?> / <?= e((string) ($number['employee_name'] ?? '')); ?>
@@ -41,7 +41,7 @@ $canManage = !empty($context['can_manage']);
                 </label>
                 <label>Cihaz
                     <select name="device_id">
-                        <option value="">Secilmeyib</option>
+                        <option value="">Seçilməyib</option>
                         <?php foreach ($devices as $device): ?>
                             <option value="<?= e((string) ($device['id'] ?? 0)); ?>">
                                 <?= e((string) ($device['device_name'] ?? '-')); ?> / <?= e((string) ($device['phone_number'] ?? '')); ?>
@@ -49,7 +49,7 @@ $canManage = !empty($context['can_manage']);
                         <?php endforeach; ?>
                     </select>
                 </label>
-                <button class="portal-primary-btn" type="submit"><i class="fa-solid fa-qrcode"></i> QR sessiyasi yarat</button>
+                <button class="portal-primary-btn" type="submit"><i class="fa-solid fa-qrcode"></i> QR sessiyası yarat</button>
             </div>
         </form>
     </section>
@@ -64,7 +64,7 @@ $canManage = !empty($context['can_manage']);
     <section class="portal-muted-card portal-section-gap" data-wa-pairing-live data-session-key="<?= e((string) ($latestPairing['session_key'] ?? '')); ?>" data-pairing-status="<?= e($pairingStatus); ?>">
         <div class="portal-card-head">
             <div>
-                <h3>Son QR sessiyasi</h3>
+                <h3>Son QR sessiyası</h3>
                 <small><?= e((string) ($latestPairing['phone_number'] ?? '-')); ?> / <?= e((string) ($latestPairing['employee_name'] ?? '-')); ?></small>
             </div>
             <span class="wa-status <?= e($pairingStatus); ?>" data-wa-pairing-status><?= e(whatsapp_monitor_pairing_status_label($pairingStatus)); ?></span>
@@ -76,25 +76,28 @@ $canManage = !empty($context['can_manage']);
                 <?php else: ?>
                     <div>
                         <i class="fa-solid fa-qrcode wa-qr-icon" aria-hidden="true"></i>
-                        <strong>QR kodu hazirlanir</strong>
-                        <small class="wa-muted">Bir necə saniyeye QR kodu bu bloka avtomatik gorunecek.</small>
+                        <strong>QR kodu hazırlanır</strong>
+                        <small class="wa-muted">Bir neçə saniyəyə QR kodu bu bloka avtomatik görünəcək.</small>
                     </div>
                 <?php endif; ?>
             </div>
             <div class="wa-card">
-                <strong>Session key</strong>
-                <div class="wa-session-key"><?= e((string) ($latestPairing['session_key'] ?? '')); ?></div>
-                <small>Bitme vaxti: <?= e((string) ($latestPairing['expires_at'] ?? '-')); ?></small>
-                <small>Baglanti nomresi: <span data-wa-worker><?= e((string) ($latestPairing['worker_id'] ?? '-')); ?></span></small>
+                <small>Bitmə vaxtı: <?= e((string) ($latestPairing['expires_at'] ?? '-')); ?></small>
                 <?php if (!empty($latestPairing['failure_reason'])): ?>
-                    <small>Xeta: <?= e((string) ($latestPairing['failure_reason'] ?? '')); ?></small>
+                    <small>Xəta: <?= e((string) ($latestPairing['failure_reason'] ?? '')); ?></small>
                 <?php endif; ?>
+                <details class="wa-tech-details">
+                    <summary>Texniki məlumat</summary>
+                    <strong>Session key</strong>
+                    <div class="wa-session-key"><?= e((string) ($latestPairing['session_key'] ?? '')); ?></div>
+                    <small>Worker ID: <span data-wa-worker><?= e((string) ($latestPairing['worker_id'] ?? '-')); ?></span></small>
+                </details>
                 <?php if ($canManage && in_array($pairingStatus, ['requested', 'qr_ready', 'scanned', 'connected'], true)): ?>
                     <form method="post" class="portal-section-gap">
                         <input type="hidden" name="action" value="revoke_pairing">
                         <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                         <input type="hidden" name="number_id" value="<?= e((string) ($latestPairing['number_id'] ?? 0)); ?>">
-                        <button class="portal-ghost-btn" type="submit">Baglantini legv et</button>
+                        <button class="portal-ghost-btn" type="submit">Bağlantını ləğv et</button>
                     </form>
                 <?php endif; ?>
             </div>
@@ -103,13 +106,13 @@ $canManage = !empty($context['can_manage']);
 <?php endif; ?>
 
 <section class="portal-muted-card portal-section-gap">
-    <div class="portal-card-head"><h3>Nomrelerin QR veziyyeti</h3><small>Connected olmayan nomreler monitorinqde tam aktiv sayilmir.</small></div>
+    <div class="portal-card-head"><h3>Nömrələrin QR vəziyyəti</h3><small>Qoşulmamış nömrələr monitorinqdə tam aktiv sayılmır.</small></div>
     <?php if ($numbers === []): ?>
-        <?php billing_render_empty_state('Nomre yoxdur', 'Evvel sirket WhatsApp nomresini elave edin.', 'fa-brands fa-whatsapp'); ?>
+        <?php billing_render_empty_state('Nömrə yoxdur', 'Əvvəl şirkət WhatsApp nömrəsini əlavə edin.', 'fa-brands fa-whatsapp'); ?>
     <?php else: ?>
         <div class="portal-table-wrap">
             <table class="portal-table">
-                <thead><tr><th>Nomre</th><th>Emekdas</th><th>QR status</th><th>Son sessiya</th><th>Policy</th><th>Emeliyyat</th></tr></thead>
+                <thead><tr><th>Nömrə</th><th>Əməkdaş</th><th>QR status</th><th>Son sessiya</th><th>Policy</th><th>Əməliyyat</th></tr></thead>
                 <tbody>
                     <?php foreach ($numbers as $number): ?>
                         <?php
@@ -121,7 +124,7 @@ $canManage = !empty($context['can_manage']);
                             <td><?= e((string) ($number['employee_name'] ?? '-')); ?></td>
                             <td><span class="wa-status <?= e($qrStatus); ?>"><?= e(whatsapp_monitor_pairing_status_label($qrStatus)); ?></span></td>
                             <td><?= e((string) ($number['qr_last_requested_at'] ?? '-')); ?><br><small><?= e((string) ($number['qr_session_key'] ?? '')); ?></small></td>
-                            <td><?= !empty($number['monitoring_policy_accepted']) ? 'Raziliq var' : 'Raziliq yoxdur'; ?></td>
+                            <td><?= !empty($number['monitoring_policy_accepted']) ? 'Razılıq var' : 'Razılıq yoxdur'; ?></td>
                             <td class="wa-table-actions">
                                 <a class="portal-ghost-btn portal-inline-link" href="<?= e(whatsapp_monitor_url('pairing', ['number_id' => $numberId], $monitorLang)); ?>">Sessiyalar</a>
                                 <?php if ($canManage): ?>
@@ -142,13 +145,13 @@ $canManage = !empty($context['can_manage']);
 </section>
 
 <section class="portal-muted-card portal-section-gap">
-    <div class="portal-card-head"><h3>QR sessiya jurnali</h3><small>Worker ve admin emeliyyatlari audit ucun saxlanir.</small></div>
+    <div class="portal-card-head"><h3>QR sessiya jurnalı</h3><small>Worker və admin əməliyyatları audit üçün saxlanır.</small></div>
     <?php if ($pairings === []): ?>
-        <?php billing_render_empty_state('Sessiya yoxdur', 'QR sessiyasi yaradilanda burada gorunecek.', 'fa-qrcode'); ?>
+        <?php billing_render_empty_state('Sessiya yoxdur', 'QR sessiyası yaradılanda burada görünəcək.', 'fa-qrcode'); ?>
     <?php else: ?>
         <div class="portal-table-wrap">
             <table class="portal-table">
-                <thead><tr><th>Nomre</th><th>Status</th><th>Cihaz</th><th>Worker</th><th>Tarix</th></tr></thead>
+                <thead><tr><th>Nömrə</th><th>Status</th><th>Cihaz</th><th>Worker</th><th>Tarix</th></tr></thead>
                 <tbody>
                     <?php foreach ($pairings as $pairing): ?>
                         <?php $status = (string) ($pairing['pairing_status'] ?? 'requested'); ?>

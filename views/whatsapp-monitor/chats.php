@@ -13,21 +13,21 @@ $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
 ?>
 <section class="portal-muted-card portal-section-gap wa-chat-monitor" data-wa-chat-monitor data-wa-monitor-lang="<?= e($monitorLang); ?>" data-has-selection="<?= $chatSelectionExplicit ? '1' : '0'; ?>">
     <div class="portal-card-head">
-        <div><h3>WhatsApp cat monitoru</h3><small>Bagli sirket nomrelerine gelen ve gonderilen mesajlar real vaxtda gosterilir.</small></div>
-        <span class="portal-pill" data-wa-chat-count-total><?= e((string) count($chatRows)); ?> aktiv cat</span>
+        <div><h3>WhatsApp çat monitoru</h3><small>Bağlı şirkət nömrələrinə gələn və göndərilən mesajlar real vaxtda göstərilir.</small></div>
+        <span class="portal-pill" data-wa-chat-count-total><?= e((string) count($chatRows)); ?> aktiv çat</span>
     </div>
     <div class="wa-chat-layout" data-wa-chat-layout>
-        <aside class="wa-chat-list" aria-label="Cat siyahisi">
+        <aside class="wa-chat-list" aria-label="Çat siyahısı">
             <div class="wa-chat-search">
                 <label class="wa-chat-search-label" for="wa-chat-search-input">
                     <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-                    <span class="wa-visually-hidden">Cat axtar</span>
+                    <span class="wa-visually-hidden">Çat axtar</span>
                 </label>
-                <input type="search" id="wa-chat-search-input" placeholder="Ad, nomre ve ya emekdas axtar" data-wa-chat-search autocomplete="off">
+                <input type="search" id="wa-chat-search-input" placeholder="Ad, nömrə və ya əməkdaş axtar" data-wa-chat-search autocomplete="off">
             </div>
             <div class="wa-chat-list-scroll" data-wa-chat-list>
                 <?php if ($chatRows === []): ?>
-                    <?php billing_render_empty_state('Hele mesaj yoxdur', 'Nomre connected olduqdan sonra yeni gelen ve gonderilen mesajlar burada avtomatik gorunecek.', 'fa-comments'); ?>
+                    <?php billing_render_empty_state('Hələ mesaj yoxdur', 'Nömrə qoşulduqdan sonra yeni gələn və göndərilən mesajlar burada avtomatik görünəcək.', 'fa-comments'); ?>
                 <?php else: ?>
                     <?php foreach ($chatRows as $chat): ?>
                         <?php
@@ -49,24 +49,24 @@ $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
                         </a>
                     <?php endforeach; ?>
                 <?php endif; ?>
-                <p class="wa-chat-empty-filter" data-wa-chat-empty-filter hidden>Axtarisa uygun cat tapilmadi.</p>
+                <p class="wa-chat-empty-filter" data-wa-chat-empty-filter hidden>Axtarışa uyğun çat tapılmadı.</p>
             </div>
         </aside>
         <div class="wa-chat-thread" data-wa-chat-thread data-number-id="<?= e((string) $selectedNumberId); ?>" data-chat-id="<?= e($selectedChatId); ?>" data-last-message-id="<?= e((string) $lastMessageId); ?>">
             <?php if ($hasSelection): ?>
                 <div class="wa-chat-thread-head">
-                    <a class="wa-chat-back" href="<?= e($backUrl); ?>"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Siyahiya qayit</a>
+                    <a class="wa-chat-back" href="<?= e($backUrl); ?>"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Siyahıya qayıt</a>
                     <div class="wa-chat-thread-head-main">
                         <strong><?= e((string) ($selectedChat['contact_name'] ?? $selectedChatId)); ?></strong>
                         <small><?= e((string) ($selectedChat['company_number'] ?? '-')); ?> &middot; <?= e((string) ($selectedChat['employee_name'] ?? '-')); ?></small>
                     </div>
-                    <span class="wa-live-status" data-wa-live-status data-state="live"><i class="fa-solid fa-circle" aria-hidden="true"></i> Canli</span>
+                    <span class="wa-live-status" data-wa-live-status data-state="live"><i class="fa-solid fa-circle" aria-hidden="true"></i> Canlı</span>
                     <span class="wa-chat-new-badge" data-wa-new-badge hidden>Yeni mesaj</span>
                 </div>
-                <p class="wa-chat-thread-note">Yalniz monitorinq goruntusudur; buradan mesaj gonderilmir.</p>
+                <p class="wa-chat-thread-note">Yalnız monitorinq görüntüsüdür; buradan mesaj göndərilmir.</p>
                 <div class="wa-chat-messages" data-wa-chat-messages role="log" aria-live="polite">
                     <?php if ($chatMessages === []): ?>
-                        <?php billing_render_empty_state('Bu catda hele mesaj yoxdur', 'Yeni mesaj gelende burada avtomatik gorunecek.', 'fa-comment-dots'); ?>
+                        <?php billing_render_empty_state('Bu çatda hələ mesaj yoxdur', 'Yeni mesaj gələndə burada avtomatik görünəcək.', 'fa-comment-dots'); ?>
                     <?php else: ?>
                         <?php foreach ($chatMessages as $message): ?>
                             <?php $direction = (string) ($message['direction'] ?? 'inbound'); ?>
@@ -78,7 +78,7 @@ $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
                     <?php endif; ?>
                 </div>
             <?php else: ?>
-                <?php billing_render_empty_state('Cat secin', 'Sol terefden bir yazisma secin ki, mesajlar burada gorunsun.', 'fa-comments'); ?>
+                <?php billing_render_empty_state('Çat seçin', 'Sol tərəfdən bir yazışma seçin ki, mesajlar burada görünsün.', 'fa-comments'); ?>
             <?php endif; ?>
         </div>
     </div>

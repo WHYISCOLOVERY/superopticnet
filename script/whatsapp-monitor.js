@@ -95,7 +95,7 @@
     const numberId = thread?.dataset.numberId || '';
     const chatId = thread?.dataset.chatId || '';
     const liveStatus = chatMonitor?.querySelector('[data-wa-live-status]');
-    const LIVE_STATUS_LABELS = {live: 'Canli', refreshing: 'Yenilenir', weak: 'Baglanti zeifdir'};
+    const LIVE_STATUS_LABELS = {live: 'Canlı', refreshing: 'Yenilənir', weak: 'Bağlantı zəifdir'};
 
     const setLiveStatus = state => {
         if (!liveStatus) return;
@@ -196,7 +196,7 @@
     const chatCountTotal = chatMonitor?.querySelector('[data-wa-chat-count-total]');
 
     const updateChatCountTotal = count => {
-        if (chatCountTotal) chatCountTotal.textContent = `${count} aktiv cat`;
+        if (chatCountTotal) chatCountTotal.textContent = `${count} aktiv çat`;
     };
 
     const applyChatSearchFilter = () => {
