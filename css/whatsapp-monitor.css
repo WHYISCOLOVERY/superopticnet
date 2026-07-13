@@ -523,6 +523,40 @@
     display: none;
 }
 
+.wa-live-status {
+    flex: none;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 999px;
+    padding: 5px 10px;
+    background: #e2e8f0;
+    color: #334155;
+    font-weight: 800;
+    font-size: .72rem;
+    white-space: nowrap;
+}
+
+.wa-live-status i {
+    font-size: .5rem;
+}
+
+.wa-live-status[data-state="live"] {
+    background: #dff7ef;
+    color: #07745f;
+}
+
+.wa-live-status[data-state="refreshing"] {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+.wa-live-status[data-state="weak"] {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
 .wa-chat-messages {
     display: flex;
     flex-direction: column;
@@ -656,5 +690,13 @@
 
     .wa-chat-monitor[data-has-selection="1"] .wa-chat-back {
         display: inline-flex;
+    }
+
+    .wa-chat-thread-head {
+        flex-wrap: wrap;
+    }
+
+    .wa-live-status {
+        order: 1;
     }
 }

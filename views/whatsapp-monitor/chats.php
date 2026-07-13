@@ -8,9 +8,10 @@ $selectedChat = is_array($context['selected_chat'] ?? null) ? $context['selected
 $chatMessages = (array) ($context['chat_messages'] ?? []);
 $lastMessageId = (int) ($chatMessages !== [] ? ($chatMessages[array_key_last($chatMessages)]['id'] ?? 0) : 0);
 $hasSelection = $selectedChatId !== '' && $selectedNumberId > 0;
+$chatSelectionExplicit = !empty($context['chat_selection_explicit']);
 $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
 ?>
-<section class="portal-muted-card portal-section-gap wa-chat-monitor" data-wa-chat-monitor data-has-selection="<?= $hasSelection ? '1' : '0'; ?>">
+<section class="portal-muted-card portal-section-gap wa-chat-monitor" data-wa-chat-monitor data-wa-monitor-lang="<?= e($monitorLang); ?>" data-has-selection="<?= $chatSelectionExplicit ? '1' : '0'; ?>">
     <div class="portal-card-head">
         <div><h3>WhatsApp cat monitoru</h3><small>Bagli sirket nomrelerine gelen ve gonderilen mesajlar real vaxtda gosterilir.</small></div>
         <span class="portal-pill"><?= e((string) count($chatRows)); ?> aktiv cat</span>
@@ -33,20 +34,18 @@ $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
                         $chatId = (string) ($chat['chat_id'] ?? '');
                         $chatNumberId = (int) ($chat['number_id'] ?? 0);
                         $isActive = $selectedChatId === $chatId && $selectedNumberId === $chatNumberId;
-                        $searchBlob = mb_strtolower(
-                            ((string) ($chat['contact_name'] ?? '')) . ' ' .
+                        $searchBlob = ((string) ($chat['contact_name'] ?? '')) . ' ' .
                             ((string) ($chat['company_number'] ?? '')) . ' ' .
-                            ((string) ($chat['employee_name'] ?? ''))
-                        );
+                            ((string) ($chat['employee_name'] ?? ''));
                         ?>
-                        <a class="wa-chat-link<?= $isActive ? ' is-active' : ''; ?>" data-wa-chat-search-item data-wa-chat-search-text="<?= e($searchBlob); ?>" href="<?= e(whatsapp_monitor_url('chats', ['number_id' => $chatNumberId, 'chat_id' => $chatId], $monitorLang)); ?>"<?= $isActive ? ' aria-current="true"' : ''; ?>>
+                        <a class="wa-chat-link<?= $isActive ? ' is-active' : ''; ?>" data-wa-chat-search-item data-wa-chat-search-text="<?= e($searchBlob); ?>" data-number-id="<?= e((string) $chatNumberId); ?>" data-chat-id="<?= e($chatId); ?>" href="<?= e(whatsapp_monitor_url('chats', ['number_id' => $chatNumberId, 'chat_id' => $chatId], $monitorLang)); ?>"<?= $isActive ? ' aria-current="true"' : ''; ?>>
                             <span class="wa-chat-link-top">
-                                <strong><?= e((string) ($chat['contact_name'] ?? $chatId)); ?></strong>
-                                <time><?= e((string) ($chat['last_message_at'] ?? '')); ?></time>
+                                <strong data-wa-chat-name><?= e((string) ($chat['contact_name'] ?? $chatId)); ?></strong>
+                                <time data-wa-chat-time><?= e((string) ($chat['last_message_at'] ?? '')); ?></time>
                             </span>
                             <small><?= e((string) ($chat['company_number'] ?? '-')); ?> &middot; <?= e((string) ($chat['employee_name'] ?? '-')); ?></small>
-                            <span class="wa-chat-link-preview"><?= e(mb_substr((string) ($chat['last_message'] ?? ''), 0, 80)); ?></span>
-                            <span class="wa-chat-link-count"><?= e((string) ($chat['message_count'] ?? 0)); ?> mesaj</span>
+                            <span class="wa-chat-link-preview" data-wa-chat-preview><?= e(mb_substr((string) ($chat['last_message'] ?? ''), 0, 80)); ?></span>
+                            <span class="wa-chat-link-count" data-wa-chat-count><?= e((string) ($chat['message_count'] ?? 0)); ?> mesaj</span>
                         </a>
                     <?php endforeach; ?>
                     <p class="wa-chat-empty-filter" data-wa-chat-empty-filter hidden>Axtarisa uygun cat tapilmadi.</p>
@@ -60,6 +59,7 @@ $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
                             <strong><?= e((string) ($selectedChat['contact_name'] ?? $selectedChatId)); ?></strong>
                             <small><?= e((string) ($selectedChat['company_number'] ?? '-')); ?> &middot; <?= e((string) ($selectedChat['employee_name'] ?? '-')); ?></small>
                         </div>
+                        <span class="wa-live-status" data-wa-live-status data-state="live"><i class="fa-solid fa-circle" aria-hidden="true"></i> Canli</span>
                         <span class="wa-chat-new-badge" data-wa-new-badge hidden>Yeni mesaj</span>
                     </div>
                     <p class="wa-chat-thread-note">Yalniz monitorinq goruntusudur; buradan mesaj gonderilmir.</p>
