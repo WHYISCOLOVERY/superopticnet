@@ -518,9 +518,12 @@ $stats = app_message_stats();
 $messageStatusFilter = clean_text((string) ($_GET['message_status'] ?? 'all'));
 $messageChannelFilter = clean_text((string) ($_GET['message_channel'] ?? 'all'));
 $messageSearch = clean_text((string) ($_GET['message_q'] ?? ''));
-$messageView = in_array((string) ($_GET['view'] ?? 'overview'), ['overview', 'single', 'group', 'templates', 'history', 'audit', 'test'], true)
+$messageView = in_array((string) ($_GET['view'] ?? 'overview'), ['overview', 'single', 'group', 'templates', 'history', 'audit', 'test', 'settings'], true)
     ? (string) ($_GET['view'] ?? 'overview')
     : 'overview';
+if (in_array($messageView, ['group', 'test', 'settings'], true) && !app_portal_is_admin($user)) {
+    $messageView = 'overview';
+}
 $messagePageSize = 20;
 $messagePage = max(1, (int) ($_GET['message_page'] ?? 1));
 $messageTotal = 0;
@@ -563,7 +566,9 @@ $smsProviderSettings = app_communication_provider_config('sms', '994000000000');
 $smsProviderUsername = (string) ($smsProviderSettings['user'] ?? '');
 $smsProviderHasPassword = (string) ($smsProviderSettings['password'] ?? '') !== '';
 $whatsappBridge = is_array($providerReadiness['whatsapp']['bridge'] ?? null) ? $providerReadiness['whatsapp']['bridge'] : [];
-$whatsappQr = app_portal_is_admin($user) ? app_communication_whatsapp_bridge_qr() : ['ok' => false, 'status' => 'not_allowed', 'qr' => ''];
+$whatsappQr = app_portal_is_admin($user) && $messageView === 'settings'
+    ? app_communication_whatsapp_bridge_qr()
+    : ['ok' => false, 'status' => 'not_requested', 'qr' => ''];
 $whatsappGuardLimits = app_communication_whatsapp_guard_limits();
 $whatsappGuardStats = message_center_whatsapp_guard_stats($db);
 if ($db instanceof PDO) {
@@ -917,7 +922,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
 
         <?php
         $messageHref = static fn (string $view): string => 'message-center.php?view=' . rawurlencode($view) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
-        $smsProviderSettingsHref = $messageHref('overview') . '#sms-provider-settings';
+        $smsProviderSettingsHref = $messageHref('settings') . '#sms-provider-settings';
         $messageLink = static fn (string $key, string $label): array => ['key'=>$key,'label'=>$label,'href'=>$messageHref($key)];
         $messageSendLinks = [$messageLink('single','Ferdi mesaj')];
         if (app_portal_is_admin($user)) $messageSendLinks[] = $messageLink('group','Qrup mesaj');
@@ -927,7 +932,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
             ['label'=>'Mezmun','icon'=>'fa-file-lines','links'=>[$messageLink('templates','Sablonlar')]],
             ['label'=>'Tarixce ve audit','icon'=>'fa-clock-rotate-left','links'=>[$messageLink('history','Tarixce'),$messageLink('audit','Gonderim auditi')]],
         ];
-        if (app_portal_is_admin($user)) $moduleNavGroups[] = ['label'=>'Ayarlar','icon'=>'fa-sliders','links'=>[['key'=>'overview','label'=>'SMS provider ayari','href'=>$smsProviderSettingsHref]]];
+        if (app_portal_is_admin($user)) $moduleNavGroups[] = ['label'=>'Ayarlar','icon'=>'fa-sliders','links'=>[['key'=>'settings','label'=>'Kanal ve provider ayarlari','href'=>$smsProviderSettingsHref]]];
         if (app_portal_is_admin($user)) $moduleNavGroups[] = ['label'=>'Provider testi','icon'=>'fa-vial','links'=>[$messageLink('test','Provider testi')]];
         $moduleNavActive = $messageView;
         $moduleNavAria = 'Mesaj merkezi bolmeleri';
@@ -948,7 +953,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                 <?php endif; ?>
                 <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="history" href="<?= e($messageHref('history')); ?>"><i class="fa-solid fa-clock-rotate-left"></i> Tarixce</a>
                 <?php if (app_portal_is_admin($user)): ?>
-                    <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="overview" href="<?= e($smsProviderSettingsHref); ?>"><i class="fa-solid fa-sliders"></i> SMS ayari</a>
+                    <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="settings" href="<?= e($smsProviderSettingsHref); ?>"><i class="fa-solid fa-sliders"></i> Kanal ayarlari</a>
                     <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="test" href="<?= e($messageHref('test')); ?>"><i class="fa-solid fa-vial"></i> Provider test</a>
                 <?php endif; ?>
             </div>
