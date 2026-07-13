@@ -26,7 +26,11 @@ Status: `COMPLETE`
 - Funksional smoke: chat ingest/render, modul və WhatsApp guard keçdi.
 - Bridge health: `http://127.0.0.1:4001/health` cavabı `ok` oldu.
 - Vizual smoke: 6/6 desktop və mobil ssenari keçdi; horizontal overflow və console xətası yoxdur.
-- Tam sistem regressiyası: `109 pass`, `0 fail`, `0 timeout`, `4 skip`.
+- Qalan səkkiz WhatsApp səhifəsi Claude ilə eyni dil və responsive standartına gətirildi.
+- Ümumi baxış KPI-ləri qruplaşdırıldı; nömrə/cihaz formalarında texniki sahələr `Əlavə seçimlər` bölməsinə keçirildi.
+- Uzun cədvəllər mobil ekranda label-li kartlara çevrildi; monitorinq qeydi action formaları minimum 44px klik sahəsi ilə yenidən quruldu.
+- Vizual smoke: `22/22` desktop və mobil ssenari keçdi; horizontal overflow və console xətası yoxdur.
+- Tam sistem regressiyası: `117 pass`, `0 fail`, `0 timeout`, `4 skip`.
 
 ## Qalan xarici asılılıqlar
 

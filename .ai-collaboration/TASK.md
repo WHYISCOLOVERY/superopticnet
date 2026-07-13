@@ -1,6 +1,6 @@
 # Aktiv tapsiriq
 
-Status: `READY`
+Status: `COMPLETE`
 
 ## Cari məqsəd
 
@@ -56,3 +56,11 @@ Ilkin Git checkpoint: `6d8838a` (`chore: create local baseline checkpoint`).
 - Mövcud field name, hidden input, action, URL parametri, endpoint və rol şərtləri dəyişməməlidir.
 - Loading, empty, readonly və permission halları sadə istifadəçi dili ilə görünməlidir.
 - Desktop və mobil vizual smoke, PHP lint və tam sistem regressiyası keçməlidir.
+
+## İkinci mərhələ nəticəsi
+
+- Ümumi baxış, canlı monitor, nömrələr, cihazlar, monitorinq qeydləri, performans, ayarlar və audit səhifələri tamamlandı.
+- Form/action/field/data contract müqayisəsi keçdi; silinmiş və ya dəyişmiş backend atributu yoxdur.
+- Desktop və mobil vizual smoke: `22/22`, overflow `0`, console xətası `0`.
+- Təmiz tam sistem regressiyası: `117 pass`, `0 fail`, `0 timeout`, `4 skip`.
+- Hesabat: `tmp/full-system-regression-20260713-090235.json`.
