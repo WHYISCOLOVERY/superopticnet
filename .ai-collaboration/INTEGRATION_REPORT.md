@@ -1,33 +1,34 @@
-# Inteqrasiya hesabati
+# İnteqrasiya hesabatı
 
-Status: `SECOND_FRONTEND_PASS_REQUIRED`
+Status: `COMPLETE`
 
-## Isleyen inteqrasiyalar
+## İnteqrasiya nəticəsi
 
-- Claude birinci frontend kecidinde inline CSS/JS-i modul assetlerine ayirib.
-- Cat secimi `number_id + chat_id` ile backend scope-a salinib.
-- PHP lint, JavaScript syntax, chat ingest, monitor module ve WhatsApp guard smoke testleri kecib.
-- WhatsApp bridge health endpoint-i `ok` qaytarib.
+- Çat seçimi və mesaj sorğuları `number_id + chat_id` ilə şirkət nömrəsinə görə izolyasiya olunur.
+- İlkin açılışda son 300 mesaj xronoloji ardıcıllıqla göstərilir.
+- Çat siyahısı, yeni mesajlar və QR statusu tam səhifə yenilənmədən AJAX polling ilə təzələnir.
+- Tam boş monitor ilk mesaj gəldikdə səhifə yenilənmədən çat siyahısına keçir.
+- Mobil görünüşdə siyahı və seçilmiş çat ayrı ekran kimi işləyir; lazımsız iç-içə scroll yoxdur.
+- QR sessiya açarı və Worker ID əsas istifadəçi görünüşündən yığcam `Texniki məlumat` bölməsinə keçirilib.
+- Worker token-i yalnız `X-WhatsApp-Monitor-Token` header-i ilə qəbul edilir.
+- Mövcud session, rol scope-u, CSRF, audit və super admin idarəetmə qaydaları qorunub.
 
-## Islemeyen inteqrasiyalar
+## Agent bölgüsü
 
-- Mobil `Siyahiya qayit` davranisi explicit secim bayragina kecirilmelidir.
-- Bos catda ilk polling mesaji gelende movcud empty-state DOM-dan silinmelidir.
-- Cat siyahisi yeni `api/whatsapp-monitor/chat-list.php` endpoint-i ile reload-suz yenilenmelidir.
-- Polling xetasi istifadeciye sessiz qalmaq evezine sade canli-status kimi gosterilmelidir.
+- Codex: backend contract, API, DB scope, təhlükəsizlik inteqrasiyası və testlər.
+- Claude Code: view, CSS, responsive quruluş, accessibility və Azərbaycan dili cilası.
+- Son Codex inteqrasiyası: canlı status mətnləri, QR status label-ları və regressiya müqavilələri.
 
-## Backend deyisiklikleri
+## Yoxlamalar
 
-- Cat mesaji sorğusu sirket nomresi ve chat ID ile izolyasiya edilib.
-- Ilkin mesaj sorğusu en son 300 setri xronoloji qaytarir.
-- Worker queue token-i URL query-den cixarilib; header contract-i qorunub.
-- Chat list endpoint-i ve explicit mobil secim context-i elave edilib.
+- PHP lint: WhatsApp kitabxanası, səhifə, view-lar, API-lər və test alətləri keçdi.
+- JavaScript syntax: monitor skripti və Playwright smoke skripti keçdi.
+- Funksional smoke: chat ingest/render, modul və WhatsApp guard keçdi.
+- Bridge health: `http://127.0.0.1:4001/health` cavabı `ok` oldu.
+- Vizual smoke: 6/6 desktop və mobil ssenari keçdi; horizontal overflow və console xətası yoxdur.
+- Tam sistem regressiyası: `109 pass`, `0 fail`, `0 timeout`, `4 skip`.
 
-## Claude-a qaytarilacaq frontend meseleleri
+## Qalan xarici asılılıqlar
 
-- Yuxaridaki dord frontend meselesi ikinci Claude kecidine qaytarilir.
-
-## Qalan riskler
-
-- In-app browser runtime lokal kernel asset xetasi verdiyi ucun vizual yoxlama hele tamamlanmayib.
-- CLI syntax ve funksional smoke testleri ugurludur; ikinci kecidden sonra vizual smoke alternativ lokal Playwright yolu ile yoxlanacaq.
+- Real router CoA, real OLT/ONT restart, ödənişli SMS göndərişi və canlı Telegram polling təhlükəsizlik səbəbi ilə kontrollu skip edilib.
+- Bu skip-lər WhatsApp Monitoring modulunun qəbul meyarlarına mane olmur.

@@ -1,23 +1,32 @@
 # Yekun hesabat
 
-Status: `SETUP_COMPLETE_TASK_PENDING`
+Status: `COMPLETE`
 
-## Cari netice
+## Nəticə
 
-- `mcp-cli@1.0.5` global qurasdirilib.
-- Claude Code `2.1.207` non-interactive rejimde `CLAUDE_READY` cavabi ile yoxlanilib.
-- Canli layihe yolu tesdiqlenib: `D:\xampp\htdocs\superopticnet`.
-- Lokal Git repository yaradilib.
-- Ilkin checkpoint: `6d8838a`.
-- Runtime, browser sessiyasi, node_modules ve mexfi `.env` fayllari Git xaricinde saxlanilib.
-- Tetbiq kodunda bu setup merhelesinde funksional deyisiklik edilmeyib.
+WhatsApp Monitoring modulunun çat və QR axını Codex + Claude bölgüsü ilə tamamlandı. Eyni kontaktın fərqli şirkət nömrələrindəki yazışmaları qarışmır, çat siyahısı və mesajlar canlı yenilənir, mobil görünüşdə siyahı/çat keçidi aydındır və QR ekranındakı texniki detallar əsas əməliyyatdan ayrılıb.
 
-## Novbeti merhele
+## Əsas checkpoint-lər
 
-Konkret modul ve qebul meyarlari `TASK.md` faylinda yazildiqdan sonra ardicilliq:
+- `809b990` - şirkət nömrəsinə görə çat scope-u.
+- `00d38c6` - sadələşdirilmiş monitor interfeysi.
+- `6aa1ce8` - canlı çat siyahısı API contract-i.
+- `8d644f1` - reload-suz mesaj və siyahı yenilənməsi.
+- `885863f` - tam boş monitorun canlı qalması.
+- `015a66c` - Azərbaycan dili və QR ekranı cilası.
+- `51aed25` - desktop/mobile vizual regressiya alətləri.
 
-1. Codex backend hazirligi.
-2. Claude frontend icrasi.
-3. Codex inteqrasiya ve tehlukesizlik yoxlamasi.
-4. Claude vizual son kecidi.
-5. Codex tam regression testi.
+## Test nəticəsi
+
+- Hədəf smoke-lar: hamısı keçdi.
+- Vizual smoke: 6/6 keçdi.
+- Tam sistem regressiyası: `109 pass`, `0 fail`, `0 timeout`, `4 skip`.
+- Hesabat: `tmp/full-system-regression-20260713-082033.json`.
+
+Kontrollu skip-lər canlı şəbəkə və ödəniş yarada biləcək əməliyyatlardır: router CoA, OLT/ONT restart, real SMS və Telegram live polling.
+
+## Alət vəziyyəti
+
+- `mcp-cli@1.0.5` global quraşdırılıb.
+- Claude Code `2.1.207` koordinasiya axınında istifadə olunub.
+- Vizual testlər lokal Edge üzərində Playwright ilə aparılıb.
