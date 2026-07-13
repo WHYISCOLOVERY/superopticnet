@@ -1,12 +1,13 @@
 # Aktiv tapsiriq
 
-Status: `COMPLETE`
+Status: `READY`
 
-## Cari meqsed
+## Cari məqsəd
 
-WhatsApp Monitoring modulunda catlar, QR qosulmasi ve monitor ekranini sade,
-aydın, suretli ve responsiv etmek. Movcud worker, audit, permission ve real-time
-polling mentiqi qorunmalidir.
+WhatsApp Monitoring modulunun qalan səhifələrini eyni sadə, aydın və responsive
+standarta gətirmək: ümumi baxış, canlı monitor, nömrələr, cihazlar, case-lər,
+performans, ayarlar və audit. Mövcud worker, audit, permission, POST/CSRF və
+real-time məntiqi qorunmalıdır.
 
 Ilkin Git checkpoint: `6d8838a` (`chore: create local baseline checkpoint`).
 
@@ -43,3 +44,15 @@ Ilkin Git checkpoint: `6d8838a` (`chore: create local baseline checkpoint`).
 - Hədəf funksional və vizual testlər keçdi.
 - Təmiz tam sistem regressiyası: `109 pass`, `0 fail`, `0 timeout`, `4 skip`.
 - Hesabat: `tmp/full-system-regression-20260713-082033.json`.
+
+## Aktiv ikinci mərhələ qəbul meyarları
+
+- Bütün görünən mətnlər təbii və düzgün Azərbaycan dilində olmalıdır.
+- Əsas əməliyyatlar dərhal görünməli, ikinci dərəcəli texniki məlumat yığcam təqdim edilməlidir.
+- Cədvəllər desktop-da skan edilə bilən, mobil ekranda daşmayan kart/sətir görünüşündə olmalıdır.
+- Form input, select, textarea və düymələri üst-üstə düşməməli, tam enli mobil düzülüşə keçməlidir.
+- Online, offline, warning, disabled və case statusları həm rəng, həm mətnlə seçilməlidir.
+- Canlı monitorun grid və tam ekran davranışı qorunmalıdır.
+- Mövcud field name, hidden input, action, URL parametri, endpoint və rol şərtləri dəyişməməlidir.
+- Loading, empty, readonly və permission halları sadə istifadəçi dili ilə görünməlidir.
+- Desktop və mobil vizual smoke, PHP lint və tam sistem regressiyası keçməlidir.

@@ -1,6 +1,6 @@
 # Claude frontend tapsirigi
 
-Status: `SECOND_PASS_READY`
+Status: `REMAINING_PAGES_READY`
 
 Islemeye baslamazdan evvel:
 
@@ -44,3 +44,31 @@ Codex inteqrasiya yoxlamasindan sonra yalniz asagidaki frontend meselelerini duz
 6. Axtarisde Azerbaycan herfleri ucun locale-aware kiciltme istifade et.
 7. Backend, API, PHP context, auth, CSRF ve permission kodunu deyisme.
 8. Neticeni eyni `CLAUDE_FRONTEND_RESULT.md` faylinda `Ikinci kecid` bolmesi ile tamamla.
+
+## Qalan səhifələr üçün aktiv keçid
+
+Yalnız aşağıdakı frontend fayllarında işləyin:
+
+- `views/whatsapp-monitor/overview.php`
+- `views/whatsapp-monitor/screen-wall.php`
+- `views/whatsapp-monitor/numbers.php`
+- `views/whatsapp-monitor/devices.php`
+- `views/whatsapp-monitor/cases.php`
+- `views/whatsapp-monitor/performance.php`
+- `views/whatsapp-monitor/settings.php`
+- `views/whatsapp-monitor/audit.php`
+- `css/whatsapp-monitor.css`
+- nəticə qeydi üçün `.ai-collaboration/CLAUDE_FRONTEND_RESULT.md`
+
+Tələblər:
+
+1. Görünən bütün mətnləri düzgün və təbii Azərbaycan dilinə çevir; DB status key, form name/value, action, URL və data atributlarını dəyişmə.
+2. İngiliscə texniki statusları istifadəçi label-ları ilə göstər, lakin saxlanan dəyərləri eyni saxla.
+3. Overview KPI-lərini skan edilə bilən qruplara sal; eyni məlumatı təkrarlama.
+4. Screen wall grid, `cols` filtri və fullscreen contract-ini qoru; cihaz kartlarını daha aydın status, metadata və case formu ilə düzəlt.
+5. Numbers/devices/cases/audit cədvəllərini desktop-da cədvəl, mobil ekranda label-li kart kimi oxunaqlı et. Mövcud form və action-ları qoru.
+6. Yaratma formalarını aydın başlıq, qısa izah və responsive input grid ilə qur; texniki opsional sahələri əsas axından ayır.
+7. Performance və settings boş/readonly hallarını sadə dildə göstər.
+8. Böyük radius, yeni framework, gradient, dekorativ orb və ağır animasiya əlavə etmə; mövcud portal tokenlərindən istifadə et.
+9. `module.php`, `chats.php`, `pairing.php`, JavaScript, backend, API, DB, auth, permission və CSRF koduna toxunma.
+10. Dəyişiklikləri manual review et və nəticəni `CLAUDE_FRONTEND_RESULT.md` daxilində `Qalan səhifələr keçidi` bölməsinə yaz.
