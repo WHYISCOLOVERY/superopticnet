@@ -1098,7 +1098,7 @@ function app_portal_module_catalog(string $lang = 'az'): array
         'statistics' => [
             'label' => 'Statistika',
             'description' => 'Gelir, xerc, borc, musteri, terminal ve sebeke chartlari',
-            'href' => $appendLang('operations-center.php?section=reports'),
+            'href' => $appendLang('statistics-center.php'),
             'icon' => 'fa-chart-line',
         ],
         'network' => [
@@ -1199,6 +1199,8 @@ function app_portal_request_module(string $scriptName, array $query = []): ?stri
         'ai-automations.php' => 'ai',
         'ai-audit.php' => 'ai',
         'ai-model-status.php' => 'ai',
+        'statistics-center.php' => 'statistics',
+        'statistics-center-partial.php' => 'statistics',
     ];
 
     return $scriptModules[$script] ?? null;
@@ -2541,7 +2543,7 @@ function app_mgs_bridge_shell_path(string $moduleKey): string
         'finance' => '/superopticnet/operations-center.php?section=finance',
         'technical' => '/superopticnet/operations-center.php?section=technical',
         'kpi' => '/superopticnet/operations-center.php?section=hr&focus=kpi',
-        'reports' => '/superopticnet/operations-center.php?section=reports',
+        'reports' => '/superopticnet/statistics-center.php',
         'stats' => '/superopticnet/billing-statistics.php',
         'logs' => '/superopticnet/noc-devices.php?view=devices',
         'backup' => '/superopticnet/noc-devices.php?view=backups',
@@ -3133,7 +3135,7 @@ function app_mgs_native_module_url(string $moduleKey): string
         'finance' => 'operations-center.php?section=finance',
         'technical' => 'operations-center.php?section=technical',
         'kpi' => 'operations-center.php?section=hr&focus=kpi',
-        'reports' => 'operations-center.php?section=reports',
+        'reports' => 'statistics-center.php',
         'stats' => 'billing-statistics.php',
         'logs' => 'noc-devices.php?view=devices',
         'backup' => 'operations-center.php?section=reports&focus=backup',

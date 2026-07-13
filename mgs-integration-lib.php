@@ -9217,7 +9217,7 @@ function app_mgs_bridge_modules(): array
         ['key' => 'finance', 'title' => 'Maliyye', 'module' => 'finance', 'url' => 'operations-center.php?section=finance'],
         ['key' => 'technical', 'title' => 'Texniki isler', 'module' => 'technical', 'url' => 'operations-center.php?section=technical'],
         ['key' => 'kpi', 'title' => 'KPI', 'module' => 'kpi', 'url' => 'operations-center.php?section=hr&focus=kpi'],
-        ['key' => 'reports', 'title' => 'Hesabatlar', 'module' => 'reports', 'url' => 'operations-center.php?section=reports'],
+        ['key' => 'reports', 'title' => 'Statistika', 'module' => 'reports', 'url' => 'statistics-center.php'],
         ['key' => 'backup', 'title' => 'Loglar / backup', 'module' => 'backup', 'url' => 'noc-devices.php'],
         ['key' => 'hr', 'title' => 'HR / istifadeciler', 'module' => 'hr', 'url' => 'operations-center.php?section=hr'],
     ];

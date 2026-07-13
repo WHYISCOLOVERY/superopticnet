@@ -1755,7 +1755,7 @@ $legacyModuleMap = [
         'title' => 'Hesabat / backup',
         'source' => 'GET /api/service/reports',
         'target' => 'Hesabat ve backup',
-        'href' => spog_operations_url('reports', $lang),
+        'href' => 'statistics-center.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''),
         'status' => $serviceHealth['reports'] ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-file-lines',
     ],
@@ -3370,7 +3370,7 @@ if (app_portal_is_admin($user)) {
                 <div class="portal-report-action-panel" data-report-action-panel>
                     <div class="portal-report-action-group" data-report-action-group="primary">
                         <span class="portal-report-action-title">Esas kecidler</span>
-                        <a class="portal-primary-btn portal-inline-link" href="<?= e(spog_operations_url('reports', $lang)); ?>"><i class="fa-solid fa-file-lines"></i> Hesabat paneli</a>
+                        <a class="portal-primary-btn portal-inline-link" href="statistics-center.php<?= $lang !== 'az' ? '?lang=' . e(rawurlencode($lang)) : ''; ?>"><i class="fa-solid fa-chart-line"></i> Statistika merkezi</a>
                         <?php if ($reportStatisticsUrl !== null): ?>
                             <a class="portal-ghost-btn portal-inline-link" data-statistics-context="<?= e($reportModule . ':' . $reportType); ?>" href="<?= e($reportStatisticsUrl); ?>"><i class="fa-solid fa-chart-line"></i> Statistika</a>
                         <?php endif; ?>
