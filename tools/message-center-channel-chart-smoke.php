@@ -4,6 +4,8 @@ declare(strict_types=1);
 require __DIR__ . '/../config.php';
 
 $page = (string) file_get_contents(__DIR__ . '/../message-center.php');
+$script = (string) file_get_contents(__DIR__ . '/../script/message-center.js');
+$style = (string) file_get_contents(__DIR__ . '/../css/message-center.css');
 $errors = [];
 
 foreach ([
@@ -15,24 +17,42 @@ foreach ([
     'message_center_status_label',
     'message_center_mode_label',
     'message_center_reason_label',
-    'Novbe worker ve provider hazirligi',
-    'Namelum nomre gunluk limit',
+    'Kanal ve novbe veziyyeti',
+    'Yeni nomre ucun gunluk limit',
     'data-message-shell',
     'data-message-content',
     'data-message-command-strip',
     'data-message-status',
-    'history.pushState',
-    'popstate',
-    'new DOMParser()',
-    'String(form.method || \'get\').toLowerCase() !== \'get\'',
     'Mesaj emeliyyatlari',
     'Ferdi mesaj',
-    'SMS ayari',
+    'Kanal ayarlari',
     'sms-provider-settings',
     'Provider test',
+    "app_asset('css/message-center.css')",
+    "app_asset('script/message-center.js')",
 ] as $marker) {
     if (!str_contains($page, $marker)) {
         $errors[] = $marker . '_missing';
+    }
+}
+
+foreach ([
+    'history.pushState',
+    'popstate',
+    'new DOMParser()',
+    "String(form.method || 'get').toLowerCase() !== 'get'",
+    'data-message-auto-filter',
+    'data-message-customer-code',
+    'initializeContent',
+] as $marker) {
+    if (!str_contains($script, $marker)) {
+        $errors[] = 'script:' . $marker . '_missing';
+    }
+}
+
+foreach (['message-settings-section', 'message-details', '@media (max-width: 560px)'] as $marker) {
+    if (!str_contains($style, $marker)) {
+        $errors[] = 'style:' . $marker . '_missing';
     }
 }
 

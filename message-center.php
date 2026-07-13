@@ -42,12 +42,12 @@ function message_center_text_preview(string $value, int $limit = 180): string
 function message_center_channel_label(string $channel): string
 {
     static $labels = [
-        'auto' => 'Avto fallback',
+        'auto' => 'Avtomatik secim',
         'whatsapp' => 'WhatsApp',
-        'app' => 'Oz app / portal',
+        'app' => 'Tetbiq / portal',
         'telegram' => 'Telegram',
         'sms' => 'SMS provider',
-        'other' => 'Diger',
+        'other' => 'Diger kanal',
     ];
 
     $key = strtolower(trim($channel));
@@ -798,96 +798,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
     <title>Mesaj merkezi</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
-    <style>
-        .message-center-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
-        .message-center-layout>*{min-width:0}
-        .message-center-layout .portal-hero,
-        .message-center-layout .portal-grid,
-        .message-center-layout .mgs-command-actions,
-        .message-center-layout .portal-card,
-        .message-center-layout .message-tab-shell,
-        .message-center-layout .message-layout{width:100%;max-width:none}
-        .message-center-layout .portal-table-wrap{max-width:100%;overflow-x:auto}
-        .message-center-layout>section,
-        .message-center-layout>.portal-card,
-        .message-center-layout>.mgs-data-card{width:100%;max-width:none;min-width:0}
-        .message-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px}
-        .message-tab-shell{display:block}
-        .message-tab-shell>.portal-card{width:100%;max-width:none}
-        .message-template-body{max-width:520px;white-space:normal}
-        .message-history-table{table-layout:fixed;width:100%}
-        .message-history-table th,
-        .message-history-table td{overflow-wrap:anywhere;vertical-align:top}
-        .message-history-table th:nth-child(5),
-        .message-history-table td:nth-child(5){width:38%;white-space:normal;overflow-wrap:anywhere}
-        .message-audit-table{table-layout:fixed;width:100%}
-        .message-audit-table th,
-        .message-audit-table td{white-space:normal;overflow-wrap:anywhere;vertical-align:top}
-        .message-status-test{background:#fff5d6;color:#8b5a00}
-        .message-status-queued{background:#eaf6ff;color:#0b5c8c}
-        .message-status-sent{background:#e8f8ef;color:#13733a}
-        .message-status-failed{background:#ffe9e9;color:#9a241f}
-        .message-status-skipped{background:#f1f5f9;color:#475569}
-        .message-status-completed{background:#e8f8ef;color:#13733a}
-        .message-provider-note{padding:14px 16px;border-radius:18px;background:#fff7ed;border:1px solid rgba(255,127,90,.18);color:#6e3a1d}
-        .message-whatsapp-bridge{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:16px;align-items:center;margin-top:16px;padding:16px;border:1px solid rgba(20,184,166,.22);border-radius:22px;background:linear-gradient(135deg,rgba(240,253,250,.95),rgba(255,255,255,.95))}
-        .message-whatsapp-qr{display:grid;place-items:center;min-height:190px;border:1px dashed rgba(20,184,166,.38);border-radius:18px;background:#fff}
-        .message-whatsapp-qr img{max-width:180px;width:100%;height:auto}
-        .message-guard-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
-        .message-guard-card{padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:16px;background:#fff}
-        .message-guard-card span{display:block;color:#64748b;font-size:.82rem}
-        .message-guard-card strong{display:block;margin-top:4px;font-size:1.35rem}
-        .message-worker-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-        .message-worker-list{display:grid;gap:10px;margin-top:12px}
-        .message-worker-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border:1px solid rgba(148,163,184,.25);border-radius:14px;background:#fff}
-        .message-worker-row strong{text-transform:uppercase;font-size:.78rem;letter-spacing:.06em}
-        .message-worker-code{display:block;white-space:normal;word-break:break-word;padding:12px;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:.78rem;line-height:1.5}
-        .message-center-layout.is-loading [data-message-content]{opacity:.55;pointer-events:none}
-        .message-command-strip{display:grid;grid-template-columns:minmax(230px,.68fr) minmax(0,1.32fr);gap:16px;align-items:center;margin:0 0 16px;padding:16px;border:1px solid rgba(148,163,184,.25);border-radius:18px;background:linear-gradient(135deg,#f8fcfd,#fff);box-shadow:0 18px 36px rgba(16,42,75,.06)}
-        .message-command-strip strong{display:block;color:#10233f;font-size:18px}.message-command-strip small{display:block;margin-top:4px;color:#64748b;line-height:1.45}
-        .message-command-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.message-command-actions a{min-width:0;text-align:center;justify-content:center;white-space:normal;line-height:1.25}
-        .message-ajax-status{min-height:20px;color:#64748b;font-weight:800}
-        .message-ready{background:#e8f8ef;color:#13733a}
-        .message-waiting{background:#fff5d6;color:#8b5a00}
-        .message-inline-action{margin-top:10px}
-        .message-inline-action button{border:0;border-radius:999px;background:#fff7ed;color:#9a3412;font-weight:800;padding:8px 12px;cursor:pointer}
-        .message-inline-action button:hover{background:#ffedd5}
-        .message-filter-bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:end;margin:14px 0}
-        .message-filter-bar label{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:#64748b;font-weight:800;margin-bottom:6px}
-        .message-filter-bar input,.message-filter-bar select{width:100%;border:1px solid rgba(148,163,184,.35);border-radius:14px;padding:11px 12px;background:#fff;color:#0f172a}
-        .message-filter-actions{display:flex;gap:8px;flex-wrap:wrap}
-        .message-pagination{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:16px;padding:13px 16px;border:1px solid rgba(148,163,184,.25);border-radius:20px;background:#f8fbfd}
-        .message-pagination-info{font-weight:800;color:#617391}
-        .message-pagination-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-        .message-page-count{font-weight:900;color:#10243f}
-        .message-pagination .is-disabled{pointer-events:none;opacity:.45}
-        .message-soft-btn{border:0;border-radius:999px;background:#eef2ff;color:#29327a;font-weight:800;padding:10px 14px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
-        .message-danger-btn{border:0;border-radius:999px;background:#ffe9e9;color:#9a241f;font-weight:800;padding:10px 14px;cursor:pointer}
-        .message-reason-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
-        .message-reason-card{padding:13px 14px;border:1px solid rgba(148,163,184,.25);border-radius:16px;background:#fff}
-        .message-reason-card strong{display:block;font-size:.9rem;color:#0f172a}
-        .message-reason-card span{display:block;margin-top:4px;color:#64748b;font-size:.8rem}
-        .message-reason-card b{display:inline-flex;margin-top:8px}
-        .message-channel-chart{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:center;margin-top:14px;padding:16px;border:1px solid rgba(148,163,184,.22);border-radius:22px;background:#f8fbfd}
-        .message-channel-ring{width:220px;aspect-ratio:1;border-radius:999px;display:grid;place-items:center;margin:auto;background:conic-gradient(#e2e8f0 0 100%);box-shadow:inset 0 0 0 28px rgba(255,255,255,.86)}
-        .message-channel-ring strong{font-size:1.8rem;color:#10233f}
-        .message-channel-ring span{display:block;color:#64748b;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em;text-align:center}
-        .message-channel-bars{display:grid;gap:10px}
-        .message-channel-row{display:grid;grid-template-columns:130px minmax(0,1fr) 74px;gap:10px;align-items:center}
-        .message-channel-row strong{color:#10233f;font-size:.9rem;overflow-wrap:anywhere}
-        .message-channel-track{height:12px;border-radius:999px;background:#e2e8f0;overflow:hidden}
-        .message-channel-fill{display:block;height:100%;width:0;border-radius:999px;background:var(--channel-tone,#64748b)}
-        .message-channel-total{text-align:right;color:#475569;font-weight:900;font-size:.84rem}
-        .message-channel-statuses{grid-column:2 / 4;display:flex;gap:6px;flex-wrap:wrap;color:#64748b;font-size:.74rem}
-        .message-channel-statuses span{padding:4px 7px;border-radius:999px;background:#fff;border:1px solid rgba(148,163,184,.24)}
-        @media (max-width: 780px){.message-channel-chart{grid-template-columns:1fr}.message-channel-row{grid-template-columns:1fr}.message-channel-total{text-align:left}.message-channel-statuses{grid-column:auto}.message-channel-ring{width:190px}}
-        @media (max-width: 900px){.message-filter-bar,.message-reason-grid{grid-template-columns:1fr 1fr}}
-        @media (max-width: 900px){.message-command-strip{grid-template-columns:1fr}.message-command-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
-        @media (max-width: 560px){.message-filter-bar,.message-reason-grid{grid-template-columns:1fr}.message-pagination{align-items:stretch;flex-direction:column}.message-pagination-actions{justify-content:space-between}}
-        @media (max-width: 560px){.message-command-actions{grid-template-columns:1fr}}
-        @media (max-width: 760px){.message-worker-grid{grid-template-columns:1fr}}
-        @media (max-width: 1100px){.message-layout{grid-template-columns:1fr}}
-    </style>
+    <link rel="stylesheet" href="<?= e(app_asset('css/message-center.css')); ?>">
 </head>
 <body class="portal-body">
     <?php billing_render_header('Mesaj merkezi', 'messages', $lang); ?>
@@ -902,22 +813,22 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
 
         <section class="portal-hero portal-reveal">
             <div>
-                <span class="portal-kicker">CRM / notification</span>
-                <h1>WhatsApp, app, Telegram ve SMS mesaj axini</h1>
-                <p>Provider API-lari qosulana qeder mesajlar DB novbesine yazilir. Kanal `Avto fallback` secilende sistem WhatsApp -> app -> Telegram -> SMS ardicilligi ile uygun kanali secir.</p>
+                <span class="portal-kicker">Mesaj merkezi</span>
+                <h1>Gundelik mesaj emeliyyatlari</h1>
+                <p>Musteriye WhatsApp, tetbiq, Telegram ve ya SMS ile mesaj gonderin. "Avtomatik secim" uygun kanali WhatsApp -> tetbiq -> Telegram -> SMS ardicilligi ile ozu tapir.</p>
             </div>
             <div class="portal-status-card">
-                <span>Provider veziyyeti</span>
-                <strong>Novbeye hazir</strong>
-                <small>Real gonderim adapteri aktiv olanda worker bu novbeden gonderecek</small>
+                <span>Novbe statusu</span>
+                <strong>Gonderime hazir</strong>
+                <small>Mesajlar novbeye yazilir ve sirayla gonderilir</small>
             </div>
         </section>
 
         <section class="portal-grid portal-grid-4 portal-reveal">
-            <article class="portal-metric-card"><span>Sablon</span><strong><?= e((string) $stats['templates']); ?></strong><small>Hazir mesaj tipleri</small></article>
-            <article class="portal-metric-card"><span>Bugun</span><strong><?= e((string) $stats['today']); ?></strong><small>Yazilan mesaj qeydi</small></article>
-            <article class="portal-metric-card"><span>Novbede</span><strong><?= e((string) $stats['queued']); ?></strong><small>Provider gozleyen</small></article>
-            <article class="portal-metric-card"><span>Test</span><strong><?= e((string) $stats['test']); ?></strong><small>Real tarixceye dusmeyen test</small></article>
+            <article class="portal-metric-card"><span>Sablonlar</span><strong><?= e((string) $stats['templates']); ?></strong><small>Hazir mesaj metnleri</small></article>
+            <article class="portal-metric-card"><span>Bu gun</span><strong><?= e((string) $stats['today']); ?></strong><small>Yaradilan mesajlar</small></article>
+            <article class="portal-metric-card"><span>Novbede</span><strong><?= e((string) $stats['queued']); ?></strong><small>Gonderilmesini gozleyen</small></article>
+            <article class="portal-metric-card"><span>Sinaq</span><strong><?= e((string) $stats['test']); ?></strong><small>Real gonderilmeyen yoxlamalar</small></article>
         </section>
 
         <?php
@@ -944,7 +855,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
         <div class="message-command-strip portal-reveal" data-message-command-strip>
             <div>
                 <strong>Mesaj emeliyyatlari</strong>
-                <small>Gonderim, tarixce ve provider yoxlamalari bir yerde saxlanir; bolme ve filter secimi sehifeni tam yenilemeden acilir.</small>
+                <small>Gonderim, tarixce ve kanal ayarlarina sehife yenilenmeden kecin.</small>
             </div>
             <div class="message-command-actions">
                 <a class="portal-primary-btn portal-inline-link" data-message-nav data-module-section="single" href="<?= e($messageHref('single')); ?>"><i class="fa-solid fa-paper-plane"></i> Ferdi mesaj</a>
@@ -954,7 +865,6 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                 <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="history" href="<?= e($messageHref('history')); ?>"><i class="fa-solid fa-clock-rotate-left"></i> Tarixce</a>
                 <?php if (app_portal_is_admin($user)): ?>
                     <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="settings" href="<?= e($smsProviderSettingsHref); ?>"><i class="fa-solid fa-sliders"></i> Kanal ayarlari</a>
-                    <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="test" href="<?= e($messageHref('test')); ?>"><i class="fa-solid fa-vial"></i> Provider test</a>
                 <?php endif; ?>
             </div>
         </div>
@@ -963,8 +873,8 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
         <?php if ($messageView === 'overview'): ?>
         <section class="portal-card portal-reveal">
             <div class="portal-card-head">
-                <h2>Novbe worker ve provider hazirligi</h2>
-                <small>Operator burada novbedeki mesajlari kanal/status uzre gorur; real gonderim CLI worker ile idare olunur.</small>
+                <h2>Kanal ve novbe veziyyeti</h2>
+                <small>Mesajlarin hansi kanaldan gonderildiyini ve novbede qalanlari burada izleyin.</small>
             </div>
             <div class="message-channel-chart" data-message-channel-chart>
                 <div class="message-channel-ring" style="background:<?= e($messageChannelRingGradient); ?>">
@@ -1011,145 +921,172 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                             <?php $ready = !empty($status['configured']) || ($providerName === 'sms' && !empty($status['has_endpoint']) && !empty($status['has_credentials'])); ?>
                             <div class="message-worker-row">
                                 <strong><?= e($providerName); ?></strong>
-                                <span class="portal-pill <?= $ready ? 'message-ready' : 'message-waiting'; ?>"><?= $ready ? 'hazir' : 'config gozleyir'; ?></span>
+                                <span class="portal-pill <?= $ready ? 'message-ready' : 'message-waiting'; ?>"><?= $ready ? 'hazir' : 'ayar gozleyir'; ?></span>
                             </div>
                         <?php endforeach; ?>
                     </div>
                 </div>
             </div>
             <?php if (app_portal_is_admin($user)): ?>
+                <div class="message-inline-action">
+                    <a class="message-soft-btn portal-inline-link" data-message-nav data-module-section="settings" href="<?= e($smsProviderSettingsHref); ?>"><i class="fa-solid fa-sliders"></i> Kanal ve provider ayarlarina kec</a>
+                </div>
+            <?php endif; ?>
+        </section>
+        <?php endif; ?>
+
+        <?php if (app_portal_is_admin($user) && $messageView === 'settings'): ?>
+        <section class="message-settings-section portal-reveal">
+            <div class="portal-card">
+                <div class="portal-card-head">
+                    <h2>Kanal ve provider ayarlari</h2>
+                    <small>SMS giris melumatlari, WhatsApp baglantisi ve gonderim limitleri yalniz bu bolmede deyisdirilir.</small>
+                </div>
                 <form method="post" class="portal-stacked-form portal-section-gap" id="sms-provider-settings" data-sms-provider-config>
                     <input type="hidden" name="action" value="save_sms_provider_credentials">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <strong class="portal-kicker">SMS provider</strong>
                     <div class="portal-form-row portal-grid-slim">
                         <div>
-                            <label for="smsProviderUsername">Username</label>
-                            <input id="smsProviderUsername" name="sms_provider_username" type="text" value="<?= e($smsProviderUsername); ?>" autocomplete="off" placeholder="Provider username / public key">
+                            <label for="smsProviderUsername">Istifadeci adi</label>
+                            <input id="smsProviderUsername" name="sms_provider_username" type="text" value="<?= e($smsProviderUsername); ?>" autocomplete="off" placeholder="SMS provider istifadeci adi">
                         </div>
                         <div>
-                            <label for="smsProviderPassword">Password</label>
-                            <input id="smsProviderPassword" name="sms_provider_password" type="password" autocomplete="new-password" placeholder="<?= $smsProviderHasPassword ? 'Saxlanib, deyismek ucun yazin' : 'Provider password / private key'; ?>">
+                            <label for="smsProviderPassword">Sifre</label>
+                            <input id="smsProviderPassword" name="sms_provider_password" type="password" autocomplete="new-password" placeholder="<?= $smsProviderHasPassword ? 'Saxlanib, deyismek ucun yazin' : 'Provider sifresi'; ?>">
                         </div>
                     </div>
                     <button type="submit" class="message-soft-btn">SMS provider saxla</button>
-                    <small>API unvani sistemde sabitdir: api.poctgoyercini.com. Gonderim zamani publicKey query-de, password Bearer header-de istifade olunur.</small>
+                    <small>API unvani sistemde sabitdir: api.poctgoyercini.com. Istifadeci adi ve sifre yalniz gonderim zamani tehlukesiz provider sorgusunda istifade olunur.</small>
                 </form>
-            <?php endif; ?>
-            <div class="message-whatsapp-bridge">
-                <div>
-                    <strong class="portal-kicker">WhatsApp Web bridge</strong>
-                    <h3>QR sessiya ve local agent statusu</h3>
-                    <p>
-                        Status: <strong><?= e(message_center_status_label((string) ($whatsappBridge['status'] ?? 'unknown'))); ?></strong>.
-                        Catimlidir: <strong><?= !empty($whatsappBridge['reachable']) ? 'beli' : 'xeyr'; ?></strong>.
-                        Qosulub: <strong><?= !empty($whatsappBridge['connected']) ? 'beli' : 'xeyr'; ?></strong>.
-                    </p>
-                    <?php if (!empty($whatsappBridge['last_error'])): ?>
-                        <small>Xeta: <?= e((string) $whatsappBridge['last_error']); ?></small>
-                    <?php elseif ((string) ($whatsappQr['status'] ?? '') === 'qr'): ?>
-                        <small>Telefonunuzda WhatsApp Web QR oxudun. Bundan sonra mesaj worker WhatsApp kanalindan gondere bilecek.</small>
-                    <?php else: ?>
-                        <small>Bridge islek deyilse mesajlar avtomatik app/Telegram/SMS fallback ile davam edir.</small>
-                    <?php endif; ?>
-                </div>
-                <div class="message-whatsapp-qr">
-                    <?php if (!empty($whatsappQr['qr'])): ?>
-                        <img src="<?= e((string) $whatsappQr['qr']); ?>" alt="WhatsApp QR">
-                    <?php elseif (!empty($whatsappBridge['connected'])): ?>
-                        <span class="portal-pill portal-pill-success">WhatsApp qosulub</span>
-                    <?php else: ?>
-                        <span class="portal-pill message-waiting">QR gozlenilir</span>
-                    <?php endif; ?>
-                </div>
-            </div>
-            <div class="message-guard-grid">
-                <div class="message-guard-card"><span>Namelum nomre gunluk limit</span><strong><?= e((string) $whatsappGuardLimits['unknown_daily_limit']); ?></strong></div>
-                <div class="message-guard-card"><span>Taninmis nomre gunluk limit</span><strong><?= e((string) $whatsappGuardLimits['known_daily_limit']); ?></strong></div>
-                <div class="message-guard-card"><span>Umumi saatliq limit</span><strong><?= e((string) $whatsappGuardLimits['global_hourly_limit']); ?></strong></div>
-                <div class="message-guard-card"><span>Umumi gunluk limit</span><strong><?= e((string) $whatsappGuardLimits['global_daily_limit']); ?></strong></div>
-                <div class="message-guard-card"><span>Nomreye 24 saatda gonderilen</span><strong><?= e((string) $whatsappGuardStats['sent_24h']); ?></strong></div>
-                <div class="message-guard-card"><span>Umumi saatliq gonderim</span><strong><?= e((string) $whatsappGuardStats['global_sent_hour']); ?></strong></div>
-                <div class="message-guard-card"><span>Umumi 24 saatliq gonderim</span><strong><?= e((string) $whatsappGuardStats['global_sent_24h']); ?></strong></div>
-                <div class="message-guard-card"><span>Hazirda bloklanan</span><strong><?= e((string) $whatsappGuardStats['blocked']); ?></strong></div>
-            </div>
-            <?php if (app_portal_is_admin($user)): ?>
-                <form method="post" class="portal-stacked-form portal-section-gap">
-                    <input type="hidden" name="action" value="update_whatsapp_guard">
-                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
-                    <div class="portal-form-row portal-grid-slim">
-                        <div>
-                            <label for="waUnknownDaily">Namelum nomre gunluk limit</label>
-                            <input id="waUnknownDaily" type="number" min="1" max="50" name="whatsapp_unknown_daily_limit" value="<?= e((string) $whatsappGuardLimits['unknown_daily_limit']); ?>">
-                        </div>
-                        <div>
-                            <label for="waKnownDaily">Taninmis nomre gunluk limit</label>
-                            <input id="waKnownDaily" type="number" min="1" max="500" name="whatsapp_known_daily_limit" value="<?= e((string) $whatsappGuardLimits['known_daily_limit']); ?>">
-                        </div>
-                        <div>
-                            <label for="waUnknownGap">Namelum nomre fasilesi (saniye)</label>
-                            <input id="waUnknownGap" type="number" min="60" max="86400" name="whatsapp_unknown_min_gap_sec" value="<?= e((string) $whatsappGuardLimits['unknown_min_gap_sec']); ?>">
-                        </div>
-                        <div>
-                            <label for="waKnownGap">Taninmis nomre fasilesi (saniye)</label>
-                            <input id="waKnownGap" type="number" min="30" max="86400" name="whatsapp_known_min_gap_sec" value="<?= e((string) $whatsappGuardLimits['known_min_gap_sec']); ?>">
-                        </div>
-                        <div>
-                            <label for="waGlobalDaily">Umumi gunluk limit</label>
-                            <input id="waGlobalDaily" type="number" min="1" max="1000" name="whatsapp_global_daily_limit" value="<?= e((string) $whatsappGuardLimits['global_daily_limit']); ?>">
-                        </div>
-                        <div>
-                            <label for="waGlobalHourly">Umumi saatliq limit</label>
-                            <input id="waGlobalHourly" type="number" min="1" max="200" name="whatsapp_global_hourly_limit" value="<?= e((string) $whatsappGuardLimits['global_hourly_limit']); ?>">
-                        </div>
-                        <div>
-                            <label for="waGlobalGap">Umumi fasilesi (saniye)</label>
-                            <input id="waGlobalGap" type="number" min="30" max="3600" name="whatsapp_global_min_gap_sec" value="<?= e((string) $whatsappGuardLimits['global_min_gap_sec']); ?>">
-                        </div>
+                <div class="message-whatsapp-bridge">
+                    <div>
+                        <strong class="portal-kicker">WhatsApp Web bridge</strong>
+                        <h3>QR sessiyasi ve yerli xidmetin veziyyeti</h3>
+                        <p>
+                            Status: <strong><?= e(message_center_status_label((string) ($whatsappBridge['status'] ?? 'unknown'))); ?></strong>.
+                            Xidmet aciqdir: <strong><?= !empty($whatsappBridge['reachable']) ? 'beli' : 'xeyr'; ?></strong>.
+                            WhatsApp qosulub: <strong><?= !empty($whatsappBridge['connected']) ? 'beli' : 'xeyr'; ?></strong>.
+                        </p>
+                        <?php if (!empty($whatsappBridge['last_error'])): ?>
+                            <small>Xeta: <?= e((string) $whatsappBridge['last_error']); ?></small>
+                        <?php elseif ((string) ($whatsappQr['status'] ?? '') === 'qr'): ?>
+                            <small>Telefonunuzda WhatsApp Web QR oxudun. Bundan sonra mesaj worker WhatsApp kanalindan gondere bilecek.</small>
+                        <?php else: ?>
+                            <small>WhatsApp elcatan deyilse mesaj diger aktiv kanalla gonderilmeye davam edir.</small>
+                        <?php endif; ?>
                     </div>
-                    <button type="submit" class="message-soft-btn">WhatsApp guard limitlerini saxla</button>
-                    <small>Nomre ve ya qlobal hesab limiti asildiqda WhatsApp gecikdirilmir, mesaj SMS fallback ile gonderilir.</small>
-                </form>
-            <?php endif; ?>
-            <div class="portal-section-gap">
-                <strong class="portal-kicker">CLI icra</strong>
-                <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\process-communication-queue.php --limit=50</code>
-                <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\process-communication-queue.php --apply --limit=50</code>
-                <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\billing-maintenance.php --apply --queue-notices --channel=auto</code>
-            </div>
-            <div class="portal-section-gap">
-                <strong class="portal-kicker">Provider test mesajlari</strong>
-                <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\test-communication-provider.php --channel=telegram</code>
-                <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\test-communication-provider.php --channel=sms --destination=994XXXXXXXXX</code>
-                <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\test-communication-provider.php --channel=whatsapp --destination=994XXXXXXXXX</code>
-                <small>Bu test skripti default yoxlama rejiminde isleyir. Real test ucun sonda `--apply` verilir ve DB/ticket/alarm yaratmir.</small>
-            </div>
-            <div class="portal-section-gap">
-                <strong class="portal-kicker">Son worker icralari</strong>
-                <?php if ($workerRuns === []): ?>
-                    <?php billing_render_empty_state('Worker icrasi yoxdur', 'Real gonderim worker-i hele DB-ye icra xulasesi yazmayib.', 'fa-clock-rotate-left'); ?>
-                <?php else: ?>
-                    <div class="portal-table-wrap">
-                        <table class="portal-table">
-                            <thead><tr><th>Bitme vaxti</th><th>Rejim</th><th>Kanal</th><th>Status</th><th>Skan</th><th>Gonderildi</th><th>Xeta</th><th>Qalib</th><th>Ms</th></tr></thead>
-                            <tbody>
-                                <?php foreach ($workerRuns as $run): ?>
-                                    <tr>
-                                        <td><?= e((string) ($run['finished_at'] ?? '')); ?></td>
-                                        <td><?= e((string) ($run['mode'] ?? '-')); ?></td>
-                                        <td><?= e(message_center_channel_label((string) ($run['channel'] ?? '-'))); ?></td>
-                                        <td><span class="portal-pill message-status-<?= e((string) ($run['status'] ?? 'completed')); ?>"><?= e(message_center_status_label((string) ($run['status'] ?? 'completed'))); ?></span></td>
-                                        <td><?= e((string) ($run['scanned_count'] ?? 0)); ?></td>
-                                        <td><?= e((string) ($run['sent_count'] ?? 0)); ?></td>
-                                        <td><?= e((string) ($run['failed_count'] ?? 0)); ?></td>
-                                        <td><?= e((string) ($run['left_queued_count'] ?? 0)); ?></td>
-                                        <td><?= e((string) ($run['duration_ms'] ?? 0)); ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                    <div class="message-whatsapp-qr">
+                        <?php if (!empty($whatsappQr['qr'])): ?>
+                            <img src="<?= e((string) $whatsappQr['qr']); ?>" alt="WhatsApp QR">
+                        <?php elseif (!empty($whatsappBridge['connected'])): ?>
+                            <span class="portal-pill portal-pill-success">WhatsApp qosulub</span>
+                        <?php else: ?>
+                            <span class="portal-pill message-waiting">QR gozlenilir</span>
+                        <?php endif; ?>
                     </div>
+                </div>
+                <div class="message-guard-grid">
+                    <div class="message-guard-card"><span>Yeni nomre ucun gunluk limit</span><strong><?= e((string) $whatsappGuardLimits['unknown_daily_limit']); ?></strong></div>
+                    <div class="message-guard-card"><span>Taninmis nomre ucun gunluk limit</span><strong><?= e((string) $whatsappGuardLimits['known_daily_limit']); ?></strong></div>
+                    <div class="message-guard-card"><span>Umumi saatliq limit</span><strong><?= e((string) $whatsappGuardLimits['global_hourly_limit']); ?></strong></div>
+                    <div class="message-guard-card"><span>Umumi gunluk limit</span><strong><?= e((string) $whatsappGuardLimits['global_daily_limit']); ?></strong></div>
+                    <div class="message-guard-card"><span>Nomreye 24 saatda gonderilen</span><strong><?= e((string) $whatsappGuardStats['sent_24h']); ?></strong></div>
+                    <div class="message-guard-card"><span>Umumi saatliq gonderim</span><strong><?= e((string) $whatsappGuardStats['global_sent_hour']); ?></strong></div>
+                    <div class="message-guard-card"><span>Umumi 24 saatliq gonderim</span><strong><?= e((string) $whatsappGuardStats['global_sent_24h']); ?></strong></div>
+                    <div class="message-guard-card"><span>Hazirda bloklanan</span><strong><?= e((string) $whatsappGuardStats['blocked']); ?></strong></div>
+                </div>
+                <?php if (app_portal_is_admin($user)): ?>
+                    <details class="message-details">
+                        <summary>WhatsApp gonderim limitlerini deyis</summary>
+                        <div class="message-details-body">
+                            <form method="post" class="portal-stacked-form">
+                                <input type="hidden" name="action" value="update_whatsapp_guard">
+                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                <div class="portal-form-row portal-grid-slim">
+                                    <div>
+                                        <label for="waUnknownDaily">Yeni nomre ucun gunluk limit</label>
+                                        <input id="waUnknownDaily" type="number" min="1" max="50" name="whatsapp_unknown_daily_limit" value="<?= e((string) $whatsappGuardLimits['unknown_daily_limit']); ?>">
+                                    </div>
+                                    <div>
+                                        <label for="waKnownDaily">Taninmis nomre ucun gunluk limit</label>
+                                        <input id="waKnownDaily" type="number" min="1" max="500" name="whatsapp_known_daily_limit" value="<?= e((string) $whatsappGuardLimits['known_daily_limit']); ?>">
+                                    </div>
+                                    <div>
+                                        <label for="waUnknownGap">Yeni nomreye gonderim fasilesi (saniye)</label>
+                                        <input id="waUnknownGap" type="number" min="60" max="86400" name="whatsapp_unknown_min_gap_sec" value="<?= e((string) $whatsappGuardLimits['unknown_min_gap_sec']); ?>">
+                                    </div>
+                                    <div>
+                                        <label for="waKnownGap">Taninmis nomreye gonderim fasilesi (saniye)</label>
+                                        <input id="waKnownGap" type="number" min="30" max="86400" name="whatsapp_known_min_gap_sec" value="<?= e((string) $whatsappGuardLimits['known_min_gap_sec']); ?>">
+                                    </div>
+                                    <div>
+                                        <label for="waGlobalDaily">Umumi gunluk limit</label>
+                                        <input id="waGlobalDaily" type="number" min="1" max="1000" name="whatsapp_global_daily_limit" value="<?= e((string) $whatsappGuardLimits['global_daily_limit']); ?>">
+                                    </div>
+                                    <div>
+                                        <label for="waGlobalHourly">Umumi saatliq limit</label>
+                                        <input id="waGlobalHourly" type="number" min="1" max="200" name="whatsapp_global_hourly_limit" value="<?= e((string) $whatsappGuardLimits['global_hourly_limit']); ?>">
+                                    </div>
+                                    <div>
+                                        <label for="waGlobalGap">Umumi gonderim fasilesi (saniye)</label>
+                                        <input id="waGlobalGap" type="number" min="30" max="3600" name="whatsapp_global_min_gap_sec" value="<?= e((string) $whatsappGuardLimits['global_min_gap_sec']); ?>">
+                                    </div>
+                                </div>
+                                <button type="submit" class="message-soft-btn">Gonderim limitlerini saxla</button>
+                                <small>Limit asildiqda mesaj novbede saxlanilmir; sistem onu diger aktiv kanalla gonderir.</small>
+                            </form>
+                        </div>
+                    </details>
                 <?php endif; ?>
+                <div class="portal-section-gap">
+                    <details class="message-details">
+                        <summary>Texniki novbe komandalari</summary>
+                        <div class="message-details-body">
+                            <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\process-communication-queue.php --limit=50</code>
+                            <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\process-communication-queue.php --apply --limit=50</code>
+                            <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\billing-maintenance.php --apply --queue-notices --channel=auto</code>
+                        </div>
+                    </details>
+                    <details class="message-details">
+                        <summary>Texniki provider test komandalari</summary>
+                        <div class="message-details-body">
+                            <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\test-communication-provider.php --channel=telegram</code>
+                            <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\test-communication-provider.php --channel=sms --destination=994XXXXXXXXX</code>
+                            <code class="message-worker-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\test-communication-provider.php --channel=whatsapp --destination=994XXXXXXXXX</code>
+                            <small>Bu test skripti default yoxlama rejiminde isleyir. Real test ucun sonda `--apply` verilir ve DB/ticket/alarm yaratmir.</small>
+                        </div>
+                    </details>
+                    <details class="message-details">
+                        <summary>Son worker icralari</summary>
+                        <div class="message-details-body">
+                            <?php if ($workerRuns === []): ?>
+                                <?php billing_render_empty_state('Worker icrasi yoxdur', 'Real gonderim worker-i hele DB-ye icra xulasesi yazmayib.', 'fa-clock-rotate-left'); ?>
+                            <?php else: ?>
+                                <div class="portal-table-wrap">
+                                    <table class="portal-table">
+                                        <thead><tr><th>Bitme vaxti</th><th>Rejim</th><th>Kanal</th><th>Status</th><th>Skan</th><th>Gonderildi</th><th>Xeta</th><th>Qalib</th><th>Ms</th></tr></thead>
+                                        <tbody>
+                                            <?php foreach ($workerRuns as $run): ?>
+                                                <tr>
+                                                    <td data-label="Bitme vaxti"><?= e((string) ($run['finished_at'] ?? '')); ?></td>
+                                                    <td data-label="Rejim"><?= e((string) ($run['mode'] ?? '-')); ?></td>
+                                                    <td data-label="Kanal"><?= e(message_center_channel_label((string) ($run['channel'] ?? '-'))); ?></td>
+                                                    <td data-label="Status"><span class="portal-pill message-status-<?= e((string) ($run['status'] ?? 'completed')); ?>"><?= e(message_center_status_label((string) ($run['status'] ?? 'completed'))); ?></span></td>
+                                                    <td data-label="Skan"><?= e((string) ($run['scanned_count'] ?? 0)); ?></td>
+                                                    <td data-label="Gonderildi"><?= e((string) ($run['sent_count'] ?? 0)); ?></td>
+                                                    <td data-label="Xeta"><?= e((string) ($run['failed_count'] ?? 0)); ?></td>
+                                                    <td data-label="Qalib"><?= e((string) ($run['left_queued_count'] ?? 0)); ?></td>
+                                                    <td data-label="Ms"><?= e((string) ($run['duration_ms'] ?? 0)); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </details>
+                </div>
             </div>
         </section>
         <?php endif; ?>
@@ -1216,10 +1153,10 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
         <?php if ($messageView === 'overview'): ?>
                 <section class="mgs-channel-grid portal-reveal">
             <article class="mgs-channel-card"><i class="fa-brands fa-whatsapp"></i><strong>WhatsApp</strong><small>Esas kanal: nomre varsa birinci yoxlanir.</small></article>
-            <article class="mgs-channel-card"><i class="fa-solid fa-mobile-screen"></i><strong>Oz app / portal</strong><small>Portal aktivdirsa push ve kabinet tarixcesine dusur.</small></article>
+            <article class="mgs-channel-card"><i class="fa-solid fa-mobile-screen"></i><strong>Tetbiq / portal</strong><small>Portal aktivdirsa mesaj kabinet tarixcesinde gorunur.</small></article>
             <article class="mgs-channel-card"><i class="fa-brands fa-telegram"></i><strong>Telegram</strong><small>Telegram ID baglidirsa alternativ kanal kimi istifade olunur.</small></article>
             <article class="mgs-channel-card"><i class="fa-solid fa-comment-sms"></i><strong>SMS provider</strong><small>Son fallback kimi SMS xarakter sayaci ile gonderilir.</small></article>
-            <article class="mgs-channel-card"><i class="fa-solid fa-robot"></i><strong>Avto fallback</strong><small>WhatsApp -> app -> Telegram -> SMS ardicilligi.</small></article>
+            <article class="mgs-channel-card"><i class="fa-solid fa-robot"></i><strong>Avtomatik secim</strong><small>WhatsApp -> tetbiq -> Telegram -> SMS ardicilligi.</small></article>
         </section>
         <?php endif; ?>
 
@@ -1273,7 +1210,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     <h2>Musteri axtarisi</h2>
                     <small>Kodu tapmaq ucun qisa axtaris.</small>
                 </div>
-                <form method="get" class="portal-inline-form">
+                <form method="get" class="portal-inline-form message-customer-search-form" data-message-auto-filter data-message-filter-delay="400">
                     <input type="hidden" name="view" value="single">
                     <?php if ($lang !== 'az'): ?>
                         <input type="hidden" name="lang" value="<?= e($lang); ?>">
@@ -1289,12 +1226,13 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                         <?php billing_render_empty_state('Musteri tapilmadi', 'Kod, telefon ve ya ad uzre basqa axtaris yazin.', 'fa-user-magnifying-glass'); ?>
                     <?php endif; ?>
                     <?php foreach ($customerRows as $customer): ?>
-                        <div class="portal-link-card">
+                        <button type="button" class="portal-link-card message-customer-result" data-message-customer-code="<?= e((string) ($customer['subscriber_code'] ?? '')); ?>">
                             <div>
                                 <strong><?= e((string) ($customer['subscriber_code'] ?? '-')); ?> - <?= e((string) ($customer['full_name'] ?? '')); ?></strong>
                                 <span><?= e((string) ($customer['phone'] ?? '-')); ?> / <?= e((string) ($customer['area'] ?? '-')); ?></span>
                             </div>
-                        </div>
+                            <span class="message-customer-result-action">Sec</span>
+                        </button>
                     <?php endforeach; ?>
                 </div>
             </aside>
@@ -1377,10 +1315,10 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                         <tbody>
                             <?php foreach ($templates as $template): ?>
                                 <tr>
-                                    <td><code><?= e((string) $template['code']); ?></code></td>
-                                    <td><?= e((string) $template['title']); ?></td>
-                                    <td><span class="portal-pill"><?= e((string) $template['category']); ?></span></td>
-                                    <td class="message-template-body"><?= e((string) $template['body']); ?></td>
+                                    <td data-label="Kod"><code><?= e((string) $template['code']); ?></code></td>
+                                    <td data-label="Ad"><?= e((string) $template['title']); ?></td>
+                                    <td data-label="Kateqoriya"><span class="portal-pill"><?= e((string) $template['category']); ?></span></td>
+                                    <td class="message-template-body" data-label="Metn"><?= e((string) $template['body']); ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1398,7 +1336,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                 <div class="message-provider-note">
                     Real SMS/WhatsApp/Telegram adapteri qosulanda bu cedvel gonderim workerinin giris novbesi olacaq.
                 </div>
-                <form method="get" class="message-filter-bar">
+                <form method="get" class="message-filter-bar" data-message-auto-filter data-message-filter-delay="350">
                     <input type="hidden" name="view" value="history">
                     <?php if ($lang !== 'az'): ?>
                         <input type="hidden" name="lang" value="<?= e($lang); ?>">
@@ -1426,7 +1364,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                         <input id="messageQuery" type="text" name="message_q" value="<?= e($messageSearch); ?>" placeholder="kod / ad / telefon / unvan">
                     </div>
                     <div class="message-filter-actions">
-                        <button class="message-soft-btn" type="submit">Filterle</button>
+                        <button class="message-soft-btn" type="submit">Tetbiq et</button>
                         <a class="message-soft-btn" data-message-nav data-module-section="history" href="message-center.php?view=history">Sifirla</a>
                     </div>
                 </form>
@@ -1445,12 +1383,12 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                         <tbody>
                             <?php foreach ($recent as $message): ?>
                                 <tr>
-                                    <td><?= e((string) ($message['created_at'] ?? '')); ?></td>
-                                    <td><?= e((string) ($message['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($message['recipient_name'] ?? $message['full_name'] ?? '')); ?></small></td>
-                                    <td><?= e(message_center_channel_label((string) ($message['channel'] ?? '-'))); ?><br><small><?= e((string) ($message['fallback_chain'] ?? '')); ?></small></td>
-                                    <td><span class="portal-pill message-status-<?= e((string) ($message['status'] ?? 'queued')); ?>"><?= e(message_center_status_label((string) ($message['status'] ?? 'queued'))); ?></span></td>
+                                    <td data-label="Vaxt"><?= e((string) ($message['created_at'] ?? '')); ?></td>
+                                    <td data-label="Musteri"><?= e((string) ($message['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($message['recipient_name'] ?? $message['full_name'] ?? '')); ?></small></td>
+                                    <td data-label="Kanal"><?= e(message_center_channel_label((string) ($message['channel'] ?? '-'))); ?><br><small><?= e((string) ($message['fallback_chain'] ?? '')); ?></small></td>
+                                    <td data-label="Status"><span class="portal-pill message-status-<?= e((string) ($message['status'] ?? 'queued')); ?>"><?= e(message_center_status_label((string) ($message['status'] ?? 'queued'))); ?></span></td>
                                     <?php $messageBody = (string) ($message['message_body'] ?? ''); ?>
-                                    <td title="<?= e($messageBody); ?>">
+                                    <td data-label="Mesaj" title="<?= e($messageBody); ?>">
                                         <?= e(message_center_text_preview($messageBody)); ?>
                                         <?php if (app_portal_is_admin($user) && (string) ($message['status'] ?? '') === 'failed'): ?>
                                             <form method="post" class="message-inline-action">
@@ -1498,13 +1436,13 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                         <tbody>
                             <?php foreach ($deliveryAttempts as $attempt): ?>
                                 <tr>
-                                    <td><?= e((string) ($attempt['attempted_at'] ?? '')); ?></td>
-                                    <td><?= e(message_center_channel_label((string) ($attempt['channel'] ?? '-'))); ?></td>
-                                    <td><span class="portal-pill message-status-<?= e((string) ($attempt['status'] ?? 'failed')); ?>"><?= e(message_center_status_label((string) ($attempt['status'] ?? 'failed'))); ?></span></td>
-                                    <td><?= e((string) ($attempt['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($attempt['recipient_name'] ?? '')); ?></small></td>
-                                    <td><code><?= e((string) ($attempt['destination_masked'] ?? '')); ?></code></td>
-                                    <td><?= e((string) ($attempt['delivery'] ?? '-')); ?></td>
-                                    <td><?= e((string) ($attempt['reason'] ?? '')); ?></td>
+                                    <td data-label="Vaxt"><?= e((string) ($attempt['attempted_at'] ?? '')); ?></td>
+                                    <td data-label="Kanal"><?= e(message_center_channel_label((string) ($attempt['channel'] ?? '-'))); ?></td>
+                                    <td data-label="Status"><span class="portal-pill message-status-<?= e((string) ($attempt['status'] ?? 'failed')); ?>"><?= e(message_center_status_label((string) ($attempt['status'] ?? 'failed'))); ?></span></td>
+                                    <td data-label="Musteri"><?= e((string) ($attempt['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($attempt['recipient_name'] ?? '')); ?></small></td>
+                                    <td data-label="Unvan"><code><?= e((string) ($attempt['destination_masked'] ?? '')); ?></code></td>
+                                    <td data-label="Provider"><?= e((string) ($attempt['delivery'] ?? '-')); ?></td>
+                                    <td data-label="Qeyd"><?= e((string) ($attempt['reason'] ?? '')); ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1518,78 +1456,6 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
-    <script>
-    (() => {
-        const shell = document.querySelector('[data-message-shell]');
-        if (!shell || !window.fetch || !window.DOMParser) return;
-        let controller = null;
-        const viewFromUrl = url => {
-            const target = new URL(url, window.location.href);
-            return target.searchParams.get('view') || 'overview';
-        };
-        const updateShell = (url, html) => {
-            const parsed = new DOMParser().parseFromString(html, 'text/html');
-            const nextContent = parsed.querySelector('[data-message-content]');
-            const currentContent = shell.querySelector('[data-message-content]');
-            if (!nextContent || !currentContent) throw new Error('Message partial content not found');
-            currentContent.innerHTML = nextContent.innerHTML;
-            const view = viewFromUrl(url);
-            shell.dataset.messageView = view;
-            shell.querySelectorAll('[data-message-nav]').forEach(link => {
-                const linkView = link.dataset.moduleSection || viewFromUrl(link.href);
-                link.classList.toggle('is-active', linkView === view);
-            });
-            shell.querySelectorAll('[data-module-nav-group]').forEach(group => {
-                const active = !!group.querySelector('[data-message-nav].is-active');
-                group.classList.toggle('is-active-group', active);
-                if (active) group.open = true;
-            });
-            const status = shell.querySelector('[data-message-status]');
-            if (status) status.textContent = '';
-            if (url.hash) {
-                requestAnimationFrame(() => {
-                    const target = shell.querySelector(url.hash);
-                    if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
-                });
-            }
-        };
-        const loadMessage = async (url, push = true) => {
-            if (controller) controller.abort();
-            controller = new AbortController();
-            shell.classList.add('is-loading');
-            const target = new URL(url, window.location.href);
-            try {
-                const response = await fetch(target, {headers: {'X-Requested-With': 'fetch'}, signal: controller.signal});
-                if (!response.ok) throw new Error('Mesaj merkezi yenilenmedi');
-                updateShell(target, await response.text());
-                if (push) history.pushState({messageCenter: true}, '', target);
-            } catch (error) {
-                if (error.name !== 'AbortError') {
-                    const status = shell.querySelector('[data-message-status]');
-                    if (status) status.textContent = error.message || 'Mesaj merkezi yenilenmedi.';
-                }
-            } finally {
-                shell.classList.remove('is-loading');
-            }
-        };
-        shell.addEventListener('click', event => {
-            const link = event.target.closest('a[href]');
-            if (!link || link.classList.contains('is-disabled')) return;
-            const target = new URL(link.href, window.location.href);
-            if (!link.matches('[data-message-nav]') && target.pathname.split('/').pop() !== 'message-center.php') return;
-            event.preventDefault();
-            loadMessage(target);
-        });
-        shell.addEventListener('submit', event => {
-            const form = event.target.closest('form');
-            if (!form || String(form.method || 'get').toLowerCase() !== 'get') return;
-            event.preventDefault();
-            const target = new URL(form.action || window.location.href, window.location.href);
-            new FormData(form).forEach((value, key) => target.searchParams.set(key, value));
-            loadMessage(target);
-        });
-        window.addEventListener('popstate', () => loadMessage(window.location.href, false));
-    })();
-    </script>
+    <script src="<?= e(app_asset('script/message-center.js')); ?>"></script>
 </body>
 </html>

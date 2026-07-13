@@ -313,7 +313,13 @@ $pages = [
         'name' => 'message_center',
         'page' => 'message-center.php',
         'query' => http_build_query(['view' => 'overview']),
-        'markers' => ['Mesaj', 'Umumi baxis', 'WhatsApp Web bridge'],
+        'markers' => ['Mesaj', 'Umumi baxis', 'Kanal ve novbe veziyyeti', 'Kanal ve provider ayarlarina kec'],
+    ],
+    [
+        'name' => 'message_center_settings',
+        'page' => 'message-center.php',
+        'query' => http_build_query(['view' => 'settings']),
+        'markers' => ['Kanal ve provider ayarlari', 'WhatsApp Web bridge', 'sms-provider-settings', 'Texniki novbe komandalari'],
     ],
     [
         'name' => 'message_center_single',

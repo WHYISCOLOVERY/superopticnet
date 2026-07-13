@@ -190,6 +190,7 @@ $tests = [
     ['telegram_command_actions', ['tools/telegram-command-actions-smoke.php'], 120],
     ['telegram_bot_routing', ['tools/telegram-bot-routing-smoke.php'], 120],
     ['message_center_channel_chart', ['tools/message-center-channel-chart-smoke.php'], 120],
+    ['message_center_ui_contract', ['tools/message-center-ui-contract-smoke.php'], 120],
     ['sms_provider_config', ['tools/sms-provider-config-smoke.php'], 120],
     ['message_network_customer_separation', ['tools/message-network-customer-separation-smoke.php'], 120],
     ['portal_module_access', ['tools/portal-module-access-smoke.php'], 120],
