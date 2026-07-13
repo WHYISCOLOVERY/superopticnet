@@ -64,4 +64,33 @@ Backend, API, PHP context, auth, CSRF ve permission kodu deyismedi; yalniz `view
 
 ### Qalan risk
 
-- `chat-list.php` polling-i yalniz `chat_rows` bos olmayanda (yeni `.wa-chat-layout` DOM-da movcud olanda) baslayir; sistemde hec bir cat yoxdursa (tam bos hal) ve worker ilk mesaji o zaman gonderirse, sehife hele de reload teleb edir. Bu, tapsirigin "movcud setirleri yenile / yeni cat siyahiya elave et" umumi ssenarisinden kenardadir, lakin qeyd olunmalidir.
+- `chat-list.php` polling-i yalniz `chat_rows` bos olmayanda (yeni `.wa-chat-layout` DOM-da movcud olanda) baslayir; sistemde hec bir cat yoxdursa (tam bos hal) ve worker ilk mesaji o zaman gonderirse, sehife hele de reload teleb edir. Bu, tapsirigin "movcud setirleri yenile / yeni cat siyahiya elave et" umumi ssenarisinden kenardadir, lakin qeyd olunmalidir. **Bu mesele ucuncu kecidde duzeldildi, asagiya bax.**
+
+## Ucuncu kecid (dar duzelis)
+
+Status: `DONE`
+
+Ikinci kecidde qeyd olunan qalan riski ve elave 5 dar duzelisi tetbiq etdim.
+
+### Deyisdirilen fayllar
+
+- `views/whatsapp-monitor/chats.php`:
+  - `$chatRows === []` yoxlamasi artiq butun `wa-chat-layout` blokunu (axtaris, `data-wa-chat-list`, cat thread paneli) gizletmir. Layout, axtaris qutusu ve `data-wa-chat-list` konteyneri **hemise** render olunur; yalniz siyahi bos olanda `data-wa-chat-list` daxilinde `billing_render_empty_state(...)` (`.mgs-empty-state`) gorunur. Beleliklecat monitor shell-i ve chat-list polling ilk yuklemede cat olmasa da aktiv olur; worker ilk mesaji gonderende sehife reload olmadan siyahiya dusur (JS terefinde `.mgs-empty-state` avtomatik silinir).
+  - Basliqdaki `<span class="portal-pill">` elementine `data-wa-chat-count-total` atributu elave edildi ki, JS chat-list polling neticesine gore aktiv cat sayini yenileye bilsin.
+- `script/whatsapp-monitor.js`:
+  - `refreshChatList()`: server cavabinda `rows.length > 0` olanda `data-wa-chat-list` daxilindeki `.mgs-empty-state` bloku silinir (mesajlar elave olunmazdan evvel); hemin funksiya sonunda `updateChatCountTotal(rows.length)` cagirilaraq basliqdaki `N aktiv cat` mətni chat-list polling neticesine gore yenilenir.
+  - Uc async polling novune (mesaj polling, chat-list polling, QR pairing polling) in-flight guard elave edildi: her birinde `…InFlight` bul dəyişəni evvelki sorgu bitmeyibse yeni sorgunu buraxir (`if (…InFlight) return;` / `try { … } finally { …InFlight = false; }`). Bu, yavas sebeke seraitinde eyni novde sorgularin ust-uste dusmesinin qarsisini alir.
+  - QR pairing polling (`data-wa-pairing-live`) `document.visibilitychange` ile idare olunmaga baslandi: sehife arxa planda olanda interval 2s -> 15s-e seyrelir, yeniden aktiv olanda derhal bir sorgu gedir ve interval 2s-e qayidir. Terminal statuslarda (`connected/expired/failed/revoked`) `pairingStopped` bayragi polling-i tamamile saxlayir ve visibilitychange handler-i bir daha yenidenbaslatmir.
+  - Butun dinamik server metni (`textContent`) ile yazilir; `URLSearchParams`/`URL.searchParams.set(...)` contract-i (mesaj, cat-list, pairing endpoint-lerinde) deyismedi.
+
+Backend, API, PHP context, auth, CSRF ve permission kodu deyismedi; yalniz `views/whatsapp-monitor/chats.php` ve `script/whatsapp-monitor.js` toxunuldu (`css/whatsapp-monitor.css` bu kecidde deyisiklik teleb etmedi, movcud `.mgs-empty-state` ve `.wa-chat-list-scroll` stilleri yeni bos-hal yerlesimini deyisiklik olmadan destekleyir).
+
+### Isledilen testler
+
+- Deyisdirilen `chats.php` ve `whatsapp-monitor.js` elle sintaksis review edildi: PHP `if/else/endif` ve `foreach/endforeach` cutleri sayildi (6 aç/6 bağla, iç-içə səviyyələr yoxlanıldı), JS-de `{`/`}` ve `(`/`)` sayi (78/78, 214/214) beraber tapildi.
+- `php -l` ve `node --check` bu sessiyada alet icazesi tesdiqlenmedi (eyni mehdudiyyet evvelki iki kecidde de qeyd olunmusdu); avtomatik icra alinmadi, manual review ile evez edildi.
+- Brauzerde canli smoke test aparilmadi. Tovsiye olunan yoxlama: sistemde hec bir WhatsApp cati olmayan bir hesabla `whatsapp-monitor.php?view=chats` ac, bos hal gorununu tesdiq et, sonra worker/test alətiylə ilk mesaji simulyasiya edib sehife reload olmadan cat-in siyahiya dusdüyünü ve basliqdaki "N aktiv cat" sayinin yenilendiyini yoxla; DevTools network throttling ile yavas sebeke seraitinde ust-uste polling sorgusu getmediyini (in-flight guard) tesdiqle; sekmeni arxa plana at/geri qaytar ve QR sehifesinde pairing polling-in seyrelib/derhal yenilendiyini yoxla.
+
+### Qalan risk
+
+- Hec bir qalan mesele qeyd olunmur; ikinci kecidin qalan riski (tam bos hal ucun chat-list shell-inin aktiv olmamasi) bu kecidde aradan qaldirildi.

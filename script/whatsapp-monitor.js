@@ -11,7 +11,9 @@
     if (live) {
         const sessionKey = live.dataset.sessionKey || '';
         if (sessionKey) {
-            let timer = null;
+            let pairingTimer = null;
+            let pairingStopped = false;
+            let pairingInFlight = false;
 
             const renderPairing = (payload) => {
                 const status = String(payload.status || 'requested');
@@ -39,13 +41,18 @@
                         box.classList.add('is-loading');
                     }
                 }
-                if (['connected', 'expired', 'failed', 'revoked'].includes(status) && timer) {
-                    window.clearInterval(timer);
-                    timer = null;
+                if (['connected', 'expired', 'failed', 'revoked'].includes(status)) {
+                    pairingStopped = true;
+                    if (pairingTimer) {
+                        window.clearInterval(pairingTimer);
+                        pairingTimer = null;
+                    }
                 }
             };
 
             const refreshPairing = async () => {
+                if (pairingInFlight) return;
+                pairingInFlight = true;
                 try {
                     const endpoint = new URL('api/whatsapp-monitor/pairing-status.php', window.location.href);
                     endpoint.searchParams.set('session_key', sessionKey);
@@ -54,10 +61,30 @@
                     renderPairing(await response.json());
                 } catch {
                     // The next poll retries without interrupting the operator.
+                } finally {
+                    pairingInFlight = false;
                 }
             };
+
+            const schedulePairingRefresh = interval => {
+                if (pairingTimer) window.clearInterval(pairingTimer);
+                pairingTimer = null;
+                if (pairingStopped) return;
+                pairingTimer = window.setInterval(refreshPairing, interval);
+            };
+
             refreshPairing();
-            timer = window.setInterval(refreshPairing, 2000);
+            schedulePairingRefresh(2000);
+
+            document.addEventListener('visibilitychange', () => {
+                if (pairingStopped) return;
+                if (document.hidden) {
+                    schedulePairingRefresh(15000);
+                } else {
+                    refreshPairing();
+                    schedulePairingRefresh(2000);
+                }
+            });
         }
     }
 
@@ -90,6 +117,7 @@
         const newBadge = chatMonitor?.querySelector('[data-wa-new-badge]');
         let newBadgeTimer = null;
         let messageFailCount = 0;
+        let messagesInFlight = false;
 
         const flashNewBadge = () => {
             if (!newBadge) return;
@@ -122,6 +150,8 @@
         };
 
         const refreshMessages = async () => {
+            if (messagesInFlight) return;
+            messagesInFlight = true;
             try {
                 const endpoint = new URL('api/whatsapp-monitor/chat-messages.php', window.location.href);
                 endpoint.searchParams.set('number_id', numberId);
@@ -141,6 +171,8 @@
             } catch {
                 messageFailCount += 1;
                 if (messageFailCount >= 2) setLiveStatus('weak');
+            } finally {
+                messagesInFlight = false;
             }
         };
 
@@ -161,6 +193,11 @@
     const searchInput = document.querySelector('[data-wa-chat-search]');
     const chatList = document.querySelector('[data-wa-chat-list]');
     const emptyFilter = chatList?.querySelector('[data-wa-chat-empty-filter]');
+    const chatCountTotal = chatMonitor?.querySelector('[data-wa-chat-count-total]');
+
+    const updateChatCountTotal = count => {
+        if (chatCountTotal) chatCountTotal.textContent = `${count} aktiv cat`;
+    };
 
     const applyChatSearchFilter = () => {
         if (!chatList) return;
@@ -248,13 +285,21 @@
             }
         };
 
+        let chatListInFlight = false;
+
         const refreshChatList = async () => {
+            if (chatListInFlight) return;
+            chatListInFlight = true;
             try {
                 const endpoint = new URL('api/whatsapp-monitor/chat-list.php', window.location.href);
                 const response = await fetch(endpoint, {headers: {'X-Requested-With': 'XMLHttpRequest'}, cache: 'no-store'});
                 if (!response.ok) return;
                 const payload = await response.json();
                 const rows = payload.rows || [];
+                if (rows.length > 0) {
+                    const emptyState = chatList.querySelector('.mgs-empty-state');
+                    if (emptyState) emptyState.remove();
+                }
                 rows.forEach(row => {
                     const key = `[data-number-id="${row.number_id}"][data-chat-id="${CSS.escape(String(row.chat_id || ''))}"]`;
                     let item = chatList.querySelector(key);
@@ -264,8 +309,11 @@
                 });
                 if (emptyFilter) chatList.appendChild(emptyFilter);
                 applyChatSearchFilter();
+                updateChatCountTotal(rows.length);
             } catch {
                 // Keep the current list visible and retry on the next interval.
+            } finally {
+                chatListInFlight = false;
             }
         };
 
