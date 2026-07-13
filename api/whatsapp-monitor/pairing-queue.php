@@ -13,7 +13,7 @@ if (!$db instanceof PDO) {
 }
 
 $headers = function_exists('getallheaders') ? getallheaders() : [];
-$token = (string) ($headers['X-WhatsApp-Monitor-Token'] ?? $headers['x-whatsapp-monitor-token'] ?? $_GET['token'] ?? '');
+$token = (string) ($headers['X-WhatsApp-Monitor-Token'] ?? $headers['x-whatsapp-monitor-token'] ?? '');
 if (!whatsapp_monitor_worker_authorized($db, $token)) {
     http_response_code(403);
     echo json_encode(['ok' => false, 'error' => 'forbidden'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

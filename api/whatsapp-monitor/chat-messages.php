@@ -13,10 +13,17 @@ if (!$db instanceof PDO) {
 }
 
 $chatId = clean_text((string) ($_GET['chat_id'] ?? ''));
-if ($chatId === '') {
+$numberId = max(0, (int) ($_GET['number_id'] ?? 0));
+if ($chatId === '' || $numberId <= 0) {
     http_response_code(422);
-    echo json_encode(['ok' => false, 'error' => 'chat_required']);
+    echo json_encode(['ok' => false, 'error' => 'chat_scope_required']);
     exit;
 }
-$rows = whatsapp_monitor_chat_messages($db, $user, $chatId, max(0, (int) ($_GET['after_id'] ?? 0)));
-echo json_encode(['ok' => true, 'rows' => $rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+$rows = whatsapp_monitor_chat_messages($db, $user, $chatId, max(0, (int) ($_GET['after_id'] ?? 0)), $numberId);
+echo json_encode([
+    'ok' => true,
+    'number_id' => $numberId,
+    'chat_id' => $chatId,
+    'last_message_id' => (int) ($rows !== [] ? ($rows[array_key_last($rows)]['id'] ?? 0) : 0),
+    'rows' => $rows,
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

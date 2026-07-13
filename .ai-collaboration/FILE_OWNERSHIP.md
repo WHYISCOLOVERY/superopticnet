@@ -1,46 +1,32 @@
 # Fayl sahibliyi
 
-Bu siyahi ilkin serheddir. Her konkret tapsiriqda yalniz elaqeli fayllar daha dar siyahi ile qeyd edilmelidir.
+Aktiv WhatsApp Monitoring tapsirigi ucun daraldilmis fayl serhedleri asagidadir.
 
 ## A. Codex backend fayllari
 
-- `api/**`
-- `db/**`
-- `db.php`
-- `db-helpers.php`
-- `*-lib.php`
-- `*-module-lib.php`
-- `*-module-partial.php`
-- `provider-api-lib.php`
-- `operations-permission-lib.php`
-- `audit-log-lib.php`
-- `tools/*.php`, `tools/*.py`, `tools/*.js` test ve maintenance skriptleri
-- `deploy/**`
+- `whatsapp-monitor-lib.php`
+- `api/whatsapp-monitor/**`
+- `whatsapp-monitor.php` daxilindeki auth, POST action ve AJAX data wiring
+- `whatsapp-bridge/server.js`
+- `tools/whatsapp-*.php`
+- `tools/full-system-regression.php`
 
 Claude bu fayllari yalniz oxuya biler; deyise bilmez.
 
 ## B. Claude frontend fayllari
 
-- `views/**`
-- `css/**`
-- `script/**`
-- `images/**` yalniz optimizasiya ve UI asset isi ucun
-- yalniz gorunus yaradan yeni partial ve komponentler
+- `views/whatsapp-monitor/**`
+- WhatsApp modulu ucun yeni `css/whatsapp-monitor.css`
+- WhatsApp modulu ucun yeni `script/whatsapp-monitor.js`
+- yalniz WhatsApp gorunusu yaradan yeni partial ve komponentler
 
 Codex inteqrasiya merhelesinde bu fayllari sebebsiz yeniden dizayn etmemelidir.
 
 ## C. Qarisiq fayllar
 
-- `operations-center.php`
-- `billing-section-page.php`
-- `portal.php`
 - `whatsapp-monitor.php`
-- `message-center.php`
-- `billing-ui.php`
-- `page-helpers.php`
-- kokde HTML, PHP biznes mentiqi ve JavaScript-i birlikde saxlayan diger sehifeler
 
-Qarisiq fayl Claude-a verilmezden evvel Codex konkret deyisiklik serhedini yazmali veya view hissesini partial-a ayirmalidir.
+Claude `whatsapp-monitor.php` faylinda yalniz frontend script/style importu ve gorunus wiring hissesine toxuna biler. Auth, POST action, CSRF ve context yaratma hissesini deyise bilmez.
 
 ## Runtime ve mexfi saheler
 

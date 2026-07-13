@@ -176,8 +176,9 @@ $context = whatsapp_monitor_context($db, $user, $view, $lang);
     (() => {
         const thread = document.querySelector('[data-wa-chat-thread]');
         const messages = thread?.querySelector('[data-wa-chat-messages]');
+        const numberId = thread?.dataset.numberId || '';
         const chatId = thread?.dataset.chatId || '';
-        if (!thread || !messages || !chatId) return;
+        if (!thread || !messages || !numberId || !chatId) return;
         messages.scrollTop = messages.scrollHeight;
 
         const appendMessage = row => {
@@ -202,6 +203,7 @@ $context = whatsapp_monitor_context($db, $user, $view, $lang);
         const refreshMessages = async () => {
             try {
                 const endpoint = new URL('api/whatsapp-monitor/chat-messages.php', window.location.href);
+                endpoint.searchParams.set('number_id', numberId);
                 endpoint.searchParams.set('chat_id', chatId);
                 endpoint.searchParams.set('after_id', thread.dataset.lastMessageId || '0');
                 const response = await fetch(endpoint, {headers: {'X-Requested-With': 'XMLHttpRequest'}, cache: 'no-store'});

@@ -2,7 +2,9 @@
 declare(strict_types=1);
 
 $chatRows = (array) ($context['chat_rows'] ?? []);
+$selectedNumberId = (int) ($context['selected_number_id'] ?? 0);
 $selectedChatId = (string) ($context['selected_chat_id'] ?? '');
+$selectedChat = is_array($context['selected_chat'] ?? null) ? $context['selected_chat'] : [];
 $chatMessages = (array) ($context['chat_messages'] ?? []);
 $lastMessageId = (int) ($chatMessages !== [] ? ($chatMessages[array_key_last($chatMessages)]['id'] ?? 0) : 0);
 ?>
@@ -18,7 +20,8 @@ $lastMessageId = (int) ($chatMessages !== [] ? ($chatMessages[array_key_last($ch
             <aside class="wa-chat-list" aria-label="Cat siyahisi">
                 <?php foreach ($chatRows as $chat): ?>
                     <?php $chatId = (string) ($chat['chat_id'] ?? ''); ?>
-                    <a class="wa-chat-link<?= $selectedChatId === $chatId ? ' is-active' : ''; ?>" href="<?= e(whatsapp_monitor_url('chats', ['chat_id' => $chatId], $monitorLang)); ?>">
+                    <?php $chatNumberId = (int) ($chat['number_id'] ?? 0); ?>
+                    <a class="wa-chat-link<?= $selectedChatId === $chatId && $selectedNumberId === $chatNumberId ? ' is-active' : ''; ?>" href="<?= e(whatsapp_monitor_url('chats', ['number_id' => $chatNumberId, 'chat_id' => $chatId], $monitorLang)); ?>">
                         <strong><?= e((string) ($chat['contact_name'] ?? $chatId)); ?></strong>
                         <small><?= e((string) ($chat['company_number'] ?? '-')); ?> / <?= e((string) ($chat['employee_name'] ?? '-')); ?></small>
                         <span><?= e(mb_substr((string) ($chat['last_message'] ?? ''), 0, 80)); ?></span>
@@ -26,8 +29,8 @@ $lastMessageId = (int) ($chatMessages !== [] ? ($chatMessages[array_key_last($ch
                     </a>
                 <?php endforeach; ?>
             </aside>
-            <div class="wa-chat-thread" data-wa-chat-thread data-chat-id="<?= e($selectedChatId); ?>" data-last-message-id="<?= e((string) $lastMessageId); ?>">
-                <div class="wa-chat-thread-head"><strong><?= e((string) (($chatRows[array_search($selectedChatId, array_column($chatRows, 'chat_id'), true)]['contact_name'] ?? $selectedChatId))); ?></strong><small>Yalniz monitorinq goruntusudur; buradan mesaj gonderilmir.</small></div>
+            <div class="wa-chat-thread" data-wa-chat-thread data-number-id="<?= e((string) $selectedNumberId); ?>" data-chat-id="<?= e($selectedChatId); ?>" data-last-message-id="<?= e((string) $lastMessageId); ?>">
+                <div class="wa-chat-thread-head"><strong><?= e((string) ($selectedChat['contact_name'] ?? $selectedChatId)); ?></strong><small>Yalniz monitorinq goruntusudur; buradan mesaj gonderilmir.</small></div>
                 <div class="wa-chat-messages" data-wa-chat-messages>
                     <?php foreach ($chatMessages as $message): ?>
                         <?php $direction = (string) ($message['direction'] ?? 'inbound'); ?>

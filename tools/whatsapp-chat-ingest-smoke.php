@@ -20,6 +20,7 @@ if (!is_array($pairing) || !is_array($actor)) {
 
 $messageId = 'smoke-' . bin2hex(random_bytes(8));
 $chatId = '994500000000@c.us';
+$numberId = (int) ($pairing['number_id'] ?? 0);
 $payload = [
     'session_key' => (string) $pairing['session_key'],
     'message_id' => $messageId,
@@ -44,7 +45,7 @@ try {
     if ((int) $countStatement->fetchColumn() !== 1) {
         $errors[] = 'dedup_failed';
     }
-    $messages = whatsapp_monitor_chat_messages($db, $actor, $chatId);
+    $messages = whatsapp_monitor_chat_messages($db, $actor, $chatId, 0, $numberId);
     if (!array_filter($messages, static fn (array $row): bool => (string) ($row['whatsapp_message_id'] ?? '') === $messageId)) {
         $errors[] = 'chat_message_missing';
     }
@@ -52,12 +53,25 @@ try {
     if (!array_filter($chats, static fn (array $row): bool => (string) ($row['chat_id'] ?? '') === $chatId)) {
         $errors[] = 'chat_summary_missing';
     }
-    $context = ['chat_rows' => $chats, 'selected_chat_id' => $chatId, 'chat_messages' => $messages];
+    $selectedChat = null;
+    foreach ($chats as $chatRow) {
+        if ((int) ($chatRow['number_id'] ?? 0) === $numberId && (string) ($chatRow['chat_id'] ?? '') === $chatId) {
+            $selectedChat = $chatRow;
+            break;
+        }
+    }
+    $context = [
+        'chat_rows' => $chats,
+        'selected_number_id' => $numberId,
+        'selected_chat_id' => $chatId,
+        'selected_chat' => $selectedChat,
+        'chat_messages' => $messages,
+    ];
     $monitorLang = 'az';
     ob_start();
     require dirname(__DIR__) . '/views/whatsapp-monitor/chats.php';
     $html = (string) ob_get_clean();
-    foreach (['WhatsApp cat monitoru', 'data-wa-chat-thread', 'Smoke incoming message'] as $marker) {
+    foreach (['WhatsApp cat monitoru', 'data-wa-chat-thread', 'data-number-id="' . $numberId . '"', 'Smoke incoming message'] as $marker) {
         if (!str_contains($html, $marker)) {
             $errors[] = 'chat_render_missing:' . $marker;
         }

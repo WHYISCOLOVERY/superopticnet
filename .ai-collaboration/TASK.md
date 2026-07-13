@@ -1,15 +1,26 @@
 # Aktiv tapsiriq
 
-Status: `WAITING_FOR_MODULE_SCOPE`
+Status: `READY`
 
 ## Cari meqsed
 
-Codex ve yerli Claude Code ucun tehlukesiz, ardicil emekdasliq axinini qurmaq.
-Canli layihe yolu: `D:\xampp\htdocs\superopticnet`.
+WhatsApp Monitoring modulunda catlar, QR qosulmasi ve monitor ekranini sade,
+aydın, suretli ve responsiv etmek. Movcud worker, audit, permission ve real-time
+polling mentiqi qorunmalidir.
 
 Ilkin Git checkpoint: `6d8838a` (`chore: create local baseline checkpoint`).
 
-Konkret modul ve qebul meyarlari secilmeden tetbiq kodunda deyisiklik edilmemelidir.
+## Qebul meyarlari
+
+- Eyni musteri iki sirket nomresi ile yazisanda mesajlar qarismamalidir.
+- Cat secimi `number_id + chat_id` scope-u ile aparilmalidir.
+- Ilkin acilisda en son 300 mesaj xronoloji ardicilliqla gorunmelidir.
+- Cat siyahisi ve secilmis yazisma orta yasli emekdas ucun aydin olmalidir.
+- QR statusu, gozleme, ugur ve xeta hallari aydin gosterilmelidir.
+- Mobil ekranda ic-ice lazimsiz scroll ve metn dasmasi olmamalidir.
+- AJAX polling tam sehife reload yaratmamalidir.
+- Super admin idare edir; uygun admin/monitor rollari hamisini, diger emekdas yalniz oz melumatini gorur.
+- Claude backend, API, DB ve permission mentiqini deyismemelidir.
 
 ## Hazirliq neticesi
 
@@ -19,12 +30,9 @@ Konkret modul ve qebul meyarlari secilmeden tetbiq kodunda deyisiklik edilmemeli
 - Mock melumat, dagidici DB emeliyyati ve tehlukeli Git emri qadagandir.
 - Her real tapsiriqdan evvel bu faylda status `READY` edilmeli, modul, scope ve qebul meyarlari yazilmalidir.
 
-## Novbeti tapsiriq ucun doldurulacaq saheler
+## Scope xaricinde
 
-- Modul:
-- Istifadeci problemi:
-- Backend qebul meyarlari:
-- Frontend qebul meyarlari:
-- Rol ve icaze qaydalari:
-- Test ssenarileri:
-- Scope xaricinde qalanlar:
+- Monitor sehifesinden mesaj gondermek.
+- WhatsApp worker protokolunu deyismek.
+- Yeni mock melumat yaratmaq.
+- Diger portal modullarini bu kecidde yeniden dizayn etmek.

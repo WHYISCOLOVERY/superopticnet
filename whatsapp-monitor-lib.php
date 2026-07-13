@@ -789,10 +789,14 @@ function whatsapp_monitor_chat_rows(PDO $db, array $actor): array
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
-function whatsapp_monitor_chat_messages(PDO $db, array $actor, string $chatId, int $afterId = 0): array
+function whatsapp_monitor_chat_messages(PDO $db, array $actor, string $chatId, int $afterId = 0, int $numberId = 0): array
 {
     $where = 'm.chat_id = :chat_id';
     $params = ['chat_id' => $chatId];
+    if ($numberId > 0) {
+        $where .= ' AND m.number_id = :number_id';
+        $params['number_id'] = $numberId;
+    }
     if (!whatsapp_monitor_can_view_all($actor)) {
         $where .= ' AND m.employee_id = :employee_id';
         $params['employee_id'] = (int) ($actor['id'] ?? 0);
@@ -801,17 +805,19 @@ function whatsapp_monitor_chat_messages(PDO $db, array $actor, string $chatId, i
         $where .= ' AND m.id > :after_id';
         $params['after_id'] = $afterId;
     }
+    $initialLoad = $afterId <= 0;
     $statement = $db->prepare(
         'SELECT m.*, n.phone_number AS company_number, e.full_name AS employee_name
          FROM whatsapp_monitor_messages m
          LEFT JOIN whatsapp_employee_numbers n ON n.id = m.number_id
          LEFT JOIN portal_accounts e ON e.id = m.employee_id
          WHERE ' . $where . '
-         ORDER BY m.occurred_at ASC, m.id ASC
+         ORDER BY m.occurred_at ' . ($initialLoad ? 'DESC' : 'ASC') . ', m.id ' . ($initialLoad ? 'DESC' : 'ASC') . '
          LIMIT 300'
     );
     $statement->execute($params);
-    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    return $initialLoad ? array_reverse($rows) : $rows;
 }
 
 function whatsapp_monitor_devices(PDO $db, array $actor, array $filters = []): array
@@ -1315,7 +1321,21 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
     whatsapp_monitor_ensure_schema($db);
     $settings = whatsapp_monitor_settings($db);
     $chatRows = $view === 'chats' ? whatsapp_monitor_chat_rows($db, $actor) : [];
-    $selectedChatId = clean_text((string) ($_GET['chat_id'] ?? ($chatRows[0]['chat_id'] ?? '')));
+    $selectedChatId = clean_text((string) ($_GET['chat_id'] ?? ''));
+    $selectedNumberId = max(0, (int) ($_GET['number_id'] ?? 0));
+    $selectedChat = null;
+    foreach ($chatRows as $chatRow) {
+        if ((string) ($chatRow['chat_id'] ?? '') === $selectedChatId
+            && (int) ($chatRow['number_id'] ?? 0) === $selectedNumberId) {
+            $selectedChat = $chatRow;
+            break;
+        }
+    }
+    if ($selectedChat === null && $chatRows !== []) {
+        $selectedChat = $chatRows[0];
+        $selectedChatId = (string) ($selectedChat['chat_id'] ?? '');
+        $selectedNumberId = (int) ($selectedChat['number_id'] ?? 0);
+    }
     return [
         'view' => $view,
         'tabs' => whatsapp_monitor_tabs(),
@@ -1329,8 +1349,12 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
         'devices' => whatsapp_monitor_devices($db, $actor, $_GET),
         'cases' => whatsapp_monitor_cases($db, $actor, $_GET),
         'chat_rows' => $chatRows,
+        'selected_number_id' => $selectedNumberId,
         'selected_chat_id' => $selectedChatId,
-        'chat_messages' => $view === 'chats' && $selectedChatId !== '' ? whatsapp_monitor_chat_messages($db, $actor, $selectedChatId) : [],
+        'selected_chat' => $selectedChat,
+        'chat_messages' => $view === 'chats' && $selectedChatId !== '' && $selectedNumberId > 0
+            ? whatsapp_monitor_chat_messages($db, $actor, $selectedChatId, 0, $selectedNumberId)
+            : [],
         'metrics' => whatsapp_monitor_metrics($db, $actor),
         'audit_rows' => $view === 'audit' ? whatsapp_monitor_audit_rows($db, $actor) : [],
     ];
