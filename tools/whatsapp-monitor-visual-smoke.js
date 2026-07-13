@@ -54,11 +54,24 @@ async function inspectPage(browser, name, file, viewport, expectations = {}) {
   if (expectations.injectChat) await page.waitForTimeout(5400);
   else await page.waitForTimeout(300);
 
-  const metrics = await page.evaluate(() => {
+  const metrics = await page.evaluate((expectedSelector) => {
     const visible = element => Boolean(element) && getComputedStyle(element).display !== 'none';
+    const overflowTargets = Array.from(document.querySelectorAll('input, select, textarea, button, a, table, .portal-table-wrap, .wa-screen-grid, .wa-form-grid'));
+    const overflowingElements = overflowTargets.filter(element => {
+      if (!visible(element)) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.left < -2 || rect.right > innerWidth + 2;
+    }).length;
+    const labelledCells = Array.from(document.querySelectorAll('.portal-table td[data-label]'));
+    const visibleDataLabels = labelledCells.filter(cell => {
+      const content = getComputedStyle(cell, '::before').content;
+      return content && content !== 'none' && content !== '""';
+    }).length;
     return {
       viewportWidth: innerWidth,
       scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+      overflowingElements,
+      selectorVisible: expectedSelector === '' || visible(document.querySelector(expectedSelector)),
       listVisible: visible(document.querySelector('.wa-chat-list')),
       threadVisible: visible(document.querySelector('.wa-chat-thread')),
       backVisible: visible(document.querySelector('.wa-chat-back')),
@@ -66,20 +79,30 @@ async function inspectPage(browser, name, file, viewport, expectations = {}) {
       emptyStates: document.querySelectorAll('[data-wa-chat-list] .mgs-empty-state').length,
       totalLabel: document.querySelector('[data-wa-chat-count-total]')?.textContent.trim() || '',
       qrColumns: document.querySelector('.wa-qr-panel') ? getComputedStyle(document.querySelector('.wa-qr-panel')).gridTemplateColumns : '',
+      detailsCount: document.querySelectorAll('details').length,
+      openDetailsCount: document.querySelectorAll('details[open]').length,
+      labelledCells: labelledCells.length,
+      visibleDataLabels,
       contentLength: document.body.innerText.trim().length,
     };
-  });
+  }, expectations.selector || '');
 
   const screenshot = path.join(outputDir, `${name}.png`);
   await page.screenshot({ path: screenshot, fullPage: true });
   const ok = metrics.contentLength > 50
     && metrics.scrollWidth <= metrics.viewportWidth + 2
+    && metrics.overflowingElements === 0
+    && metrics.selectorVisible
     && (expectations.listVisible === undefined || metrics.listVisible === expectations.listVisible)
     && (expectations.threadVisible === undefined || metrics.threadVisible === expectations.threadVisible)
     && (expectations.backVisible === undefined || metrics.backVisible === expectations.backVisible)
     && (expectations.chatItems === undefined || metrics.chatItems === expectations.chatItems)
     && (expectations.emptyStates === undefined || metrics.emptyStates === expectations.emptyStates)
     && (expectations.totalLabel === undefined || metrics.totalLabel === expectations.totalLabel)
+    && (expectations.detailsCount === undefined || metrics.detailsCount === expectations.detailsCount)
+    && (expectations.openDetailsCount === undefined || metrics.openDetailsCount === expectations.openDetailsCount)
+    && (expectations.minLabelledCells === undefined || metrics.labelledCells >= expectations.minLabelledCells)
+    && (expectations.minVisibleDataLabels === undefined || metrics.visibleDataLabels >= expectations.minVisibleDataLabels)
     && consoleErrors.length === 0;
 
   results.push({ name, ok, screenshot, metrics, consoleErrors });
@@ -96,6 +119,31 @@ async function inspectPage(browser, name, file, viewport, expectations = {}) {
     await inspectPage(browser, 'chats-empty-live-insert', 'chats-empty', { width: 390, height: 844 }, { injectChat: true, chatItems: 1, emptyStates: 0, totalLabel: '1 aktiv çat' });
     await inspectPage(browser, 'pairing-desktop', 'pairing', { width: 1440, height: 900 });
     await inspectPage(browser, 'pairing-mobile', 'pairing', { width: 390, height: 844 });
+    const remainingViews = [
+      ['overview', '.wa-kpi-groups', 4, 0],
+      ['screen-wall', '.wa-screen-grid', 0, 0],
+      ['numbers', 'form input[name="phone_number"]', 8, 1],
+      ['devices', 'form input[name="device_name"]', 7, 1],
+      ['cases', 'form select[name="case_type"]', 6, 0],
+      ['performance', '.portal-table', 4, 0],
+      ['settings', 'form input[name="default_grid_columns"]', 0, 0],
+      ['audit', '.wa-audit-pre', 5, 0],
+    ];
+    for (const [view, selector, labelledCells, detailsCount] of remainingViews) {
+      await inspectPage(browser, `${view}-desktop`, view, { width: 1440, height: 900 }, {
+        selector,
+        minLabelledCells: labelledCells,
+        detailsCount,
+        openDetailsCount: 0,
+      });
+      await inspectPage(browser, `${view}-mobile`, view, { width: 390, height: 844 }, {
+        selector,
+        minLabelledCells: labelledCells,
+        minVisibleDataLabels: labelledCells,
+        detailsCount,
+        openDetailsCount: 0,
+      });
+    }
   } finally {
     await browser.close();
   }
