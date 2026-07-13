@@ -82,6 +82,7 @@ function billing_ui_smoke_render_page(string $page, string $query): void
         'billing-documents.php',
         'billing-reports.php',
         'billing-statistics.php',
+        'statistics-center.php',
         'radius-active.php',
         'radius-logs.php',
         'radius-nas.php',

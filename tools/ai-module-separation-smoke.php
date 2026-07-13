@@ -105,14 +105,27 @@ foreach ($routes as $section => $route) {
 }
 
 $pageSource = is_file($root . '/ai-section-page.php') ? (string) file_get_contents($root . '/ai-section-page.php') : '';
+$scriptSource = is_file($root . '/script/ai-center.js') ? (string) file_get_contents($root . '/script/ai-center.js') : '';
+$ajaxSource = $pageSource . "\n" . $scriptSource;
 foreach (['fetch(', 'AbortController', 'history.pushState', 'popstate'] as $marker) {
-    $expect(str_contains($pageSource, $marker), 'ai_ajax_marker_missing:' . $marker);
+    $expect(str_contains($ajaxSource, $marker), 'ai_ajax_marker_missing:' . $marker);
 }
 foreach (['[data-ai-nav]', 'sectionFromUrl', 'updateShell', 'dataset.aiSection'] as $marker) {
-    $expect(str_contains($pageSource, $marker), 'ai_nav_ajax_marker_missing:' . $marker);
+    $expect(str_contains($ajaxSource, $marker), 'ai_nav_ajax_marker_missing:' . $marker);
 }
 $partialSource = is_file($root . '/ai-module-partial.php') ? (string) file_get_contents($root . '/ai-module-partial.php') : '';
 $expect(str_contains($partialSource, "billing_require_employee(false, 'ai')"), 'ai_partial_permission_missing');
+$expect(str_contains($partialSource, 'app_ai_section_allowed'), 'ai_partial_section_permission_missing');
+
+if (function_exists('app_ai_visible_sections')) {
+    $supportSections = app_ai_visible_sections(['role' => 'employee', 'account_type' => 'operator', 'employee_role' => 'support']);
+    foreach (['automations', 'audit', 'model-status', 'finance-analytics'] as $hiddenSection) {
+        $expect(!isset($supportSections[$hiddenSection]), 'ai_support_sees_restricted_section:' . $hiddenSection);
+    }
+    foreach (['overview', 'copilot', 'customer-analytics', 'network-analytics', 'risks', 'recommendations'] as $visibleSection) {
+        $expect(isset($supportSections[$visibleSection]), 'ai_support_missing_section:' . $visibleSection);
+    }
+}
 
 $moduleSource = is_file($root . '/views/ai/module.php') ? (string) file_get_contents($root . '/views/ai/module.php') : '';
 foreach (['data-ai-command-strip', 'data-ai-title', 'data-ai-kicker', 'Superpilot sorus', 'Musteri analizi', 'Sebeke analizi', 'Risk novbesi'] as $marker) {

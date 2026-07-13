@@ -38,6 +38,39 @@ function app_ai_routes(): array
     ];
 }
 
+function app_ai_user_is_admin(array $user): bool
+{
+    $role = strtolower(trim((string) ($user['employee_role'] ?? '')));
+    $accountType = strtolower(trim((string) ($user['account_type'] ?? '')));
+    return in_array($role, ['admin', 'super_admin'], true)
+        || ($role === '' && $accountType === 'admin');
+}
+
+function app_ai_visible_sections(array $user): array
+{
+    $sections = app_ai_sections();
+    if (app_ai_user_is_admin($user)) {
+        return $sections;
+    }
+
+    $allowed = ['overview', 'copilot', 'customer-analytics', 'network-analytics', 'risks', 'recommendations'];
+    if (app_portal_can_access_module($user, 'finance')) {
+        $allowed[] = 'finance-analytics';
+    }
+
+    return array_intersect_key($sections, array_flip($allowed));
+}
+
+function app_ai_visible_routes(array $user): array
+{
+    return array_intersect_key(app_ai_routes(), app_ai_visible_sections($user));
+}
+
+function app_ai_section_allowed(array $user, string $section): bool
+{
+    return isset(app_ai_visible_sections($user)[$section]);
+}
+
 function app_ai_section(array $query, string $fallback = 'overview'): string
 {
     $sections = app_ai_sections();
@@ -195,6 +228,10 @@ function app_ai_recommendations(PDO $db): array
 function app_ai_build_context(PDO $db, array $user, string $section, array $query): array
 {
     $section = app_ai_section(['ai_section' => $section]);
+    $visibleSections = app_ai_visible_sections($user);
+    if (!isset($visibleSections[$section])) {
+        $section = 'overview';
+    }
     app_mgs_ensure_schema($db);
     $data = [];
 
@@ -253,8 +290,9 @@ function app_ai_build_context(PDO $db, array $user, string $section, array $quer
         'lang' => app_lang(),
         'user' => $user,
         'section' => $section,
-        'sections' => app_ai_sections(),
-        'routes' => app_ai_routes(),
+        'sections' => $visibleSections,
+        'routes' => app_ai_visible_routes($user),
+        'is_admin' => app_ai_user_is_admin($user),
         'data' => $data,
         'query' => $query,
     ];

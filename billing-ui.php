@@ -168,7 +168,7 @@ function billing_nav_groups(string $lang): array
             ['key' => 'analytics-traffic', 'label' => 'Trafik analizi', 'href' => 'billing-statistics.php' . $suffix . '#traffic'],
             ['key' => 'traffic-monetization', 'label' => 'Traffic monetization', 'href' => 'billing-statistics.php' . $suffix . '#traffic-monetization'],
             ['key' => 'mgs-stats', 'label' => 'MGS statistika', 'href' => 'billing-statistics.php'],
-            ['key' => 'reports', 'label' => 'Hesabatlar', 'href' => 'operations-center.php' . ($suffix === '' ? '?' : $suffix . '&') . 'section=reports'],
+            ['key' => 'reports', 'label' => 'Statistika', 'href' => 'statistics-center.php' . $suffix],
             ],
         ],
         'HR & KPI' => [
@@ -379,7 +379,7 @@ function billing_nav_link_href(array $link): string
         'kpi' => 'operations-center.php?section=hr&focus=kpi',
         'users-roles' => 'admin-users.php',
         'mgs-stats' => 'billing-statistics.php',
-        'reports' => 'operations-center.php?section=reports',
+        'reports' => 'statistics-center.php',
         'settings-radius' => 'admin-users.php',
         'identity-integrations' => 'identity-integrations.php',
         'copilot-context' => 'mgs-copilot-context.php',
