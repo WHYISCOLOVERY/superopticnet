@@ -242,8 +242,8 @@ try {
         [$configSource, "'whatsapp-monitor.php' => 'whatsapp_monitor'"],
         [$pageSource, "billing_require_employee(false, 'whatsapp_monitor')"],
         [$moduleSource, 'data-whatsapp-monitor-module'],
-        [$moduleSource, 'Canli monitor'],
-        [(string) file_get_contents(dirname(__DIR__) . '/views/whatsapp-monitor/pairing.php'), 'QR ile WhatsApp baglantisi'],
+        [$moduleSource, 'Canlı monitor'],
+        [(string) file_get_contents(dirname(__DIR__) . '/views/whatsapp-monitor/pairing.php'), 'QR ilə WhatsApp bağlantısı'],
         [(string) file_get_contents(dirname(__DIR__) . '/api/whatsapp-monitor/pairing-update.php'), 'whatsapp_monitor_worker_update_pairing'],
     ] as [$source, $marker]) {
         $expect(str_contains($source, $marker), 'source_marker_missing:' . $marker);

@@ -78,7 +78,7 @@ try {
     ob_start();
     require dirname(__DIR__) . '/views/whatsapp-monitor/chats.php';
     $html = (string) ob_get_clean();
-    foreach (['WhatsApp cat monitoru', 'data-wa-chat-thread', 'data-number-id="' . $numberId . '"', 'Smoke incoming message'] as $marker) {
+    foreach (['WhatsApp çat monitoru', 'data-wa-chat-thread', 'data-number-id="' . $numberId . '"', 'Smoke incoming message'] as $marker) {
         if (!str_contains($html, $marker)) {
             $errors[] = 'chat_render_missing:' . $marker;
         }
