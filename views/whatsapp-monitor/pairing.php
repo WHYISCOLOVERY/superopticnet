@@ -13,22 +13,13 @@ $canManage = !empty($context['can_manage']);
             <h3>QR ile WhatsApp baglantisi</h3>
             <small>Her sirket nomresi ayri QR sessiyasi ile qosulur. QR oxunmadan nomre monitorinqe qosulmus sayilmir.</small>
         </div>
-        <span class="portal-pill">Worker endpoint: api/whatsapp-monitor/pairing-update.php</span>
+        <span class="portal-pill">Status avtomatik yenilenir</span>
     </div>
-    <div class="wa-grid">
-        <article class="wa-card">
-            <strong>1. Sessiya yarat</strong>
-            <small>Super admin nomre ucun QR sessiyasi yaradir. Evvelki aciq sessiyalar avtomatik expired edilir.</small>
-        </article>
-        <article class="wa-card">
-            <strong>2. Worker QR qaytarir</strong>
-            <small>WhatsApp worker token ile queue oxuyur ve QR payload/data URI-ni panele gonderir.</small>
-        </article>
-        <article class="wa-card">
-            <strong>3. Nomre qosulur</strong>
-            <small>Telefon WhatsApp-da QR oxudulur. Worker statusu scanned/connected kimi yenileyir.</small>
-        </article>
-    </div>
+    <ol class="wa-process-steps">
+        <li>Sessiya yaradilir: super admin nomre ucun yeni QR sessiyasi acir, evvelki aciq sessiya legv olunur.</li>
+        <li>QR hazirlanir: sistem bir necə saniye erzinde QR kodu ekrana gonderir.</li>
+        <li>Nomre qosulur: telefon WhatsApp-da QR oxudulur ve status "Qosulub" olur.</li>
+    </ol>
 </section>
 
 <?php if ($canManage): ?>
@@ -79,14 +70,14 @@ $canManage = !empty($context['can_manage']);
             <span class="wa-status <?= e($pairingStatus); ?>" data-wa-pairing-status><?= e(whatsapp_monitor_pairing_status_label($pairingStatus)); ?></span>
         </div>
         <div class="wa-qr-panel">
-            <div class="wa-qr-box" data-wa-qr-box>
+            <div class="wa-qr-box<?= $hasQrImage ? '' : ' is-loading'; ?>" data-wa-qr-box>
                 <?php if ($hasQrImage): ?>
                     <img src="<?= e($qrImage); ?>" alt="WhatsApp QR">
                 <?php else: ?>
                     <div>
-                        <i class="fa-solid fa-qrcode" style="font-size:56px;color:#0e848d"></i>
-                        <strong>QR worker gozlenilir</strong>
-                        <small class="wa-muted">Worker bu sessiya ucun qr_image_data_uri gonderende burada oxudulacaq QR gorunecek.</small>
+                        <i class="fa-solid fa-qrcode wa-qr-icon" aria-hidden="true"></i>
+                        <strong>QR kodu hazirlanir</strong>
+                        <small class="wa-muted">Bir necə saniyeye QR kodu bu bloka avtomatik gorunecek.</small>
                     </div>
                 <?php endif; ?>
             </div>
@@ -94,7 +85,7 @@ $canManage = !empty($context['can_manage']);
                 <strong>Session key</strong>
                 <div class="wa-session-key"><?= e((string) ($latestPairing['session_key'] ?? '')); ?></div>
                 <small>Bitme vaxti: <?= e((string) ($latestPairing['expires_at'] ?? '-')); ?></small>
-                <small>Worker: <span data-wa-worker><?= e((string) ($latestPairing['worker_id'] ?? '-')); ?></span></small>
+                <small>Baglanti nomresi: <span data-wa-worker><?= e((string) ($latestPairing['worker_id'] ?? '-')); ?></span></small>
                 <?php if (!empty($latestPairing['failure_reason'])): ?>
                     <small>Xeta: <?= e((string) ($latestPairing['failure_reason'] ?? '')); ?></small>
                 <?php endif; ?>

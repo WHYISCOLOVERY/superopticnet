@@ -7,8 +7,10 @@ $selectedChatId = (string) ($context['selected_chat_id'] ?? '');
 $selectedChat = is_array($context['selected_chat'] ?? null) ? $context['selected_chat'] : [];
 $chatMessages = (array) ($context['chat_messages'] ?? []);
 $lastMessageId = (int) ($chatMessages !== [] ? ($chatMessages[array_key_last($chatMessages)]['id'] ?? 0) : 0);
+$hasSelection = $selectedChatId !== '' && $selectedNumberId > 0;
+$backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
 ?>
-<section class="portal-muted-card portal-section-gap">
+<section class="portal-muted-card portal-section-gap wa-chat-monitor" data-wa-chat-monitor data-has-selection="<?= $hasSelection ? '1' : '0'; ?>">
     <div class="portal-card-head">
         <div><h3>WhatsApp cat monitoru</h3><small>Bagli sirket nomrelerine gelen ve gonderilen mesajlar real vaxtda gosterilir.</small></div>
         <span class="portal-pill"><?= e((string) count($chatRows)); ?> aktiv cat</span>
@@ -16,30 +18,67 @@ $lastMessageId = (int) ($chatMessages !== [] ? ($chatMessages[array_key_last($ch
     <?php if ($chatRows === []): ?>
         <?php billing_render_empty_state('Hele mesaj yoxdur', 'Nomre connected olduqdan sonra yeni gelen ve gonderilen mesajlar burada avtomatik gorunecek.', 'fa-comments'); ?>
     <?php else: ?>
-        <div class="wa-chat-layout">
+        <div class="wa-chat-layout" data-wa-chat-layout>
             <aside class="wa-chat-list" aria-label="Cat siyahisi">
-                <?php foreach ($chatRows as $chat): ?>
-                    <?php $chatId = (string) ($chat['chat_id'] ?? ''); ?>
-                    <?php $chatNumberId = (int) ($chat['number_id'] ?? 0); ?>
-                    <a class="wa-chat-link<?= $selectedChatId === $chatId && $selectedNumberId === $chatNumberId ? ' is-active' : ''; ?>" href="<?= e(whatsapp_monitor_url('chats', ['number_id' => $chatNumberId, 'chat_id' => $chatId], $monitorLang)); ?>">
-                        <strong><?= e((string) ($chat['contact_name'] ?? $chatId)); ?></strong>
-                        <small><?= e((string) ($chat['company_number'] ?? '-')); ?> / <?= e((string) ($chat['employee_name'] ?? '-')); ?></small>
-                        <span><?= e(mb_substr((string) ($chat['last_message'] ?? ''), 0, 80)); ?></span>
-                        <time><?= e((string) ($chat['last_message_at'] ?? '')); ?></time>
-                    </a>
-                <?php endforeach; ?>
+                <div class="wa-chat-search">
+                    <label class="wa-chat-search-label" for="wa-chat-search-input">
+                        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                        <span class="wa-visually-hidden">Cat axtar</span>
+                    </label>
+                    <input type="search" id="wa-chat-search-input" placeholder="Ad, nomre ve ya emekdas axtar" data-wa-chat-search autocomplete="off">
+                </div>
+                <div class="wa-chat-list-scroll" data-wa-chat-list>
+                    <?php foreach ($chatRows as $chat): ?>
+                        <?php
+                        $chatId = (string) ($chat['chat_id'] ?? '');
+                        $chatNumberId = (int) ($chat['number_id'] ?? 0);
+                        $isActive = $selectedChatId === $chatId && $selectedNumberId === $chatNumberId;
+                        $searchBlob = mb_strtolower(
+                            ((string) ($chat['contact_name'] ?? '')) . ' ' .
+                            ((string) ($chat['company_number'] ?? '')) . ' ' .
+                            ((string) ($chat['employee_name'] ?? ''))
+                        );
+                        ?>
+                        <a class="wa-chat-link<?= $isActive ? ' is-active' : ''; ?>" data-wa-chat-search-item data-wa-chat-search-text="<?= e($searchBlob); ?>" href="<?= e(whatsapp_monitor_url('chats', ['number_id' => $chatNumberId, 'chat_id' => $chatId], $monitorLang)); ?>"<?= $isActive ? ' aria-current="true"' : ''; ?>>
+                            <span class="wa-chat-link-top">
+                                <strong><?= e((string) ($chat['contact_name'] ?? $chatId)); ?></strong>
+                                <time><?= e((string) ($chat['last_message_at'] ?? '')); ?></time>
+                            </span>
+                            <small><?= e((string) ($chat['company_number'] ?? '-')); ?> &middot; <?= e((string) ($chat['employee_name'] ?? '-')); ?></small>
+                            <span class="wa-chat-link-preview"><?= e(mb_substr((string) ($chat['last_message'] ?? ''), 0, 80)); ?></span>
+                            <span class="wa-chat-link-count"><?= e((string) ($chat['message_count'] ?? 0)); ?> mesaj</span>
+                        </a>
+                    <?php endforeach; ?>
+                    <p class="wa-chat-empty-filter" data-wa-chat-empty-filter hidden>Axtarisa uygun cat tapilmadi.</p>
+                </div>
             </aside>
             <div class="wa-chat-thread" data-wa-chat-thread data-number-id="<?= e((string) $selectedNumberId); ?>" data-chat-id="<?= e($selectedChatId); ?>" data-last-message-id="<?= e((string) $lastMessageId); ?>">
-                <div class="wa-chat-thread-head"><strong><?= e((string) ($selectedChat['contact_name'] ?? $selectedChatId)); ?></strong><small>Yalniz monitorinq goruntusudur; buradan mesaj gonderilmir.</small></div>
-                <div class="wa-chat-messages" data-wa-chat-messages>
-                    <?php foreach ($chatMessages as $message): ?>
-                        <?php $direction = (string) ($message['direction'] ?? 'inbound'); ?>
-                        <article class="wa-message is-<?= e($direction); ?>" data-message-id="<?= e((string) ($message['id'] ?? 0)); ?>">
-                            <div><?= e((string) ($message['message_body'] ?? '')); ?><?php if (!empty($message['has_media'])): ?><small>[Media: <?= e((string) ($message['message_type'] ?? 'file')); ?>]</small><?php endif; ?></div>
-                            <time><?= e((string) ($message['occurred_at'] ?? '')); ?></time>
-                        </article>
-                    <?php endforeach; ?>
-                </div>
+                <?php if ($hasSelection): ?>
+                    <div class="wa-chat-thread-head">
+                        <a class="wa-chat-back" href="<?= e($backUrl); ?>"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Siyahiya qayit</a>
+                        <div class="wa-chat-thread-head-main">
+                            <strong><?= e((string) ($selectedChat['contact_name'] ?? $selectedChatId)); ?></strong>
+                            <small><?= e((string) ($selectedChat['company_number'] ?? '-')); ?> &middot; <?= e((string) ($selectedChat['employee_name'] ?? '-')); ?></small>
+                        </div>
+                        <span class="wa-chat-new-badge" data-wa-new-badge hidden>Yeni mesaj</span>
+                    </div>
+                    <p class="wa-chat-thread-note">Yalniz monitorinq goruntusudur; buradan mesaj gonderilmir.</p>
+                    <div class="wa-chat-messages" data-wa-chat-messages role="log" aria-live="polite">
+                        <?php if ($chatMessages === []): ?>
+                            <?php billing_render_empty_state('Bu catda hele mesaj yoxdur', 'Yeni mesaj gelende burada avtomatik gorunecek.', 'fa-comment-dots'); ?>
+                        <?php else: ?>
+                            <?php foreach ($chatMessages as $message): ?>
+                                <?php $direction = (string) ($message['direction'] ?? 'inbound'); ?>
+                                <article class="wa-message is-<?= e($direction); ?>" data-message-id="<?= e((string) ($message['id'] ?? 0)); ?>">
+                                    <div><?= e((string) ($message['message_body'] ?? '')); ?><?php if (!empty($message['has_media'])): ?><small>[Media: <?= e((string) ($message['message_type'] ?? 'file')); ?>]</small><?php endif; ?></div>
+                                    <time><?= e((string) ($message['occurred_at'] ?? '')); ?></time>
+                                </article>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                <?php else: ?>
+                    <?php billing_render_empty_state('Cat secin', 'Sol terefden bir yazisma secin ki, mesajlar burada gorunsun.', 'fa-comments'); ?>
+                <?php endif; ?>
             </div>
         </div>
     <?php endif; ?>

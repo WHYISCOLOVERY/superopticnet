@@ -82,6 +82,7 @@ $context = whatsapp_monitor_context($db, $user, $view, $lang);
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WhatsApp Monitorinq - SuperOptik</title>
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/whatsapp-monitor.css')); ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 </head>
 <body class="portal-body">
@@ -116,107 +117,6 @@ $context = whatsapp_monitor_context($db, $user, $view, $lang);
         <?php require __DIR__ . '/views/whatsapp-monitor/module.php'; ?>
     </main>
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
-    <script>
-    (() => {
-        document.addEventListener('click', event => {
-            const full = event.target.closest('[data-screen-wall-fullscreen]');
-            if (full) {
-                const wall = document.querySelector('[data-screen-wall]');
-                if (wall && wall.requestFullscreen) wall.requestFullscreen();
-            }
-        });
-
-        const live = document.querySelector('[data-wa-pairing-live]');
-        if (!live) return;
-        const sessionKey = live.dataset.sessionKey || '';
-        if (!sessionKey) return;
-        let timer = null;
-
-        const renderPairing = (payload) => {
-            const status = String(payload.status || 'requested');
-            live.dataset.pairingStatus = status;
-            const badge = live.querySelector('[data-wa-pairing-status]');
-            if (badge) {
-                badge.className = `wa-status ${status}`;
-                badge.textContent = payload.status_label || status;
-            }
-            const worker = live.querySelector('[data-wa-worker]');
-            if (worker) worker.textContent = payload.worker_id || '-';
-            const box = live.querySelector('[data-wa-qr-box]');
-            if (box && String(payload.qr_image_data_uri || '').startsWith('data:image/')) {
-                let image = box.querySelector('img');
-                if (!image) {
-                    box.replaceChildren();
-                    image = document.createElement('img');
-                    image.alt = 'WhatsApp QR';
-                    box.appendChild(image);
-                }
-                image.src = payload.qr_image_data_uri;
-            }
-            if (['connected', 'expired', 'failed', 'revoked'].includes(status) && timer) {
-                window.clearInterval(timer);
-                timer = null;
-            }
-        };
-
-        const refreshPairing = async () => {
-            try {
-                const endpoint = new URL('api/whatsapp-monitor/pairing-status.php', window.location.href);
-                endpoint.searchParams.set('session_key', sessionKey);
-                const response = await fetch(endpoint, {headers: {'X-Requested-With': 'XMLHttpRequest'}, cache: 'no-store'});
-                if (!response.ok) return;
-                renderPairing(await response.json());
-            } catch {
-                // The next poll retries without interrupting the operator.
-            }
-        };
-        refreshPairing();
-        timer = window.setInterval(refreshPairing, 2000);
-    })();
-    (() => {
-        const thread = document.querySelector('[data-wa-chat-thread]');
-        const messages = thread?.querySelector('[data-wa-chat-messages]');
-        const numberId = thread?.dataset.numberId || '';
-        const chatId = thread?.dataset.chatId || '';
-        if (!thread || !messages || !numberId || !chatId) return;
-        messages.scrollTop = messages.scrollHeight;
-
-        const appendMessage = row => {
-            if (messages.querySelector(`[data-message-id="${Number(row.id || 0)}"]`)) return;
-            const article = document.createElement('article');
-            article.className = `wa-message is-${row.direction === 'outbound' ? 'outbound' : 'inbound'}`;
-            article.dataset.messageId = String(row.id || 0);
-            const body = document.createElement('div');
-            body.textContent = row.message_body || '';
-            if (Number(row.has_media || 0) === 1) {
-                const media = document.createElement('small');
-                media.textContent = `[Media: ${row.message_type || 'file'}]`;
-                body.appendChild(media);
-            }
-            const time = document.createElement('time');
-            time.textContent = row.occurred_at || '';
-            article.append(body, time);
-            messages.appendChild(article);
-            thread.dataset.lastMessageId = String(row.id || 0);
-        };
-
-        const refreshMessages = async () => {
-            try {
-                const endpoint = new URL('api/whatsapp-monitor/chat-messages.php', window.location.href);
-                endpoint.searchParams.set('number_id', numberId);
-                endpoint.searchParams.set('chat_id', chatId);
-                endpoint.searchParams.set('after_id', thread.dataset.lastMessageId || '0');
-                const response = await fetch(endpoint, {headers: {'X-Requested-With': 'XMLHttpRequest'}, cache: 'no-store'});
-                if (!response.ok) return;
-                const payload = await response.json();
-                (payload.rows || []).forEach(appendMessage);
-                if ((payload.rows || []).length > 0) messages.scrollTop = messages.scrollHeight;
-            } catch {
-                // Keep the monitor open and retry on the next interval.
-            }
-        };
-        window.setInterval(refreshMessages, 2500);
-    })();
-    </script>
+    <script src="<?= e(app_asset('script/whatsapp-monitor.js')); ?>"></script>
 </body>
 </html>
