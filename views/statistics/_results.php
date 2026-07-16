@@ -89,7 +89,7 @@ $circumference = 2 * M_PI * $ringRadius;
                         $percent = max(3, min(100, round(($value / $maxValue) * 100, 1)));
                         ?>
                         <li class="statistics-bar-row" style="--row-color:var(--stat-c<?= $colorIndex; ?>)">
-                            <span class="statistics-bar-label"><?= e((string) ($row['label'] ?? '-')); ?></span>
+                            <span class="statistics-bar-label"><?= e(app_ui_term((string) ($row['label'] ?? '-'))); ?></span>
                             <span class="statistics-bar-track"><i class="statistics-bar-fill" style="width:<?= $percent; ?>%"></i></span>
                             <strong class="statistics-bar-value"><?= e($formatValue($kind, $value)); ?></strong>
                             <small class="statistics-bar-count"><?= (int) ($row['count'] ?? 0); ?> qeyd</small>

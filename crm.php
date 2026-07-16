@@ -127,20 +127,20 @@ $technicianNames = array_values(array_unique(array_map(
 $technicianNames = array_values(array_filter($technicianNames));
 sort($technicianNames);
 $ticketColumns = [
-    'AÃ§Ä±q' => [],
-    'Ä°ÅŸdÉ™' => [],
+    'Açıq' => [],
+    'İşdə' => [],
     'Gecikir' => [],
-    'BaÄŸlÄ±' => [],
+    'Bağlı' => [],
 ];
 foreach ($tickets as $ticket) {
     $ticketStatus = (string) ($ticket['status'] ?? '');
     $resolvedAt = trim((string) ($ticket['resolved_at'] ?? ''));
     if ($ticketStatus === 'Baglandi' || $resolvedAt !== '') {
-        $ticketColumns['BaÄŸlÄ±'][] = $ticket;
+        $ticketColumns['Bağlı'][] = $ticket;
     } elseif (trim((string) ($ticket['assigned_technician_name'] ?? '')) !== '') {
-        $ticketColumns['Ä°ÅŸdÉ™'][] = $ticket;
+        $ticketColumns['İşdə'][] = $ticket;
     } else {
-        $ticketColumns['AÃ§Ä±q'][] = $ticket;
+        $ticketColumns['Açıq'][] = $ticket;
     }
 }
 $activeTechnicianCount = 0;
@@ -207,7 +207,7 @@ unset($kanbanParams['page'], $tableParams['page']);
                     <a class="portal-ghost-btn portal-inline-link<?= $viewMode === 'table' ? ' is-active' : ''; ?>" href="crm.php?<?= e(http_build_query($tableParams)); ?>">Cedvel</a>
                     <a class="portal-ghost-btn portal-inline-link" href="problem-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Statistika</a>
                     <?php if (app_portal_is_admin($user)): ?>
-                        <a class="portal-ghost-btn portal-inline-link" href="admin-users.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Ä°stifadÉ™Ã§i idarÉ™si</a>
+                        <a class="portal-ghost-btn portal-inline-link" href="admin-users.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">İstifadəçi idarəsi</a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -222,12 +222,12 @@ unset($kanbanParams['page'], $tableParams['page']);
 
         <?php if (!$openCreatePanel): ?>
         <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('CÉ™mi bilet', (string) $stats['total'], 'TarixÃ§É™ daxil olmaqla', 'fa-ticket', 'blue'); ?>
-            <?php billing_render_stat_card('AÃ§Ä±q bilet', (string) $stats['open'], 'TexnikÉ™ yÃ¶nlÉ™ndirilmÉ™li', 'fa-circle-exclamation', 'orange'); ?>
-            <?php billing_render_stat_card('Ä°ÅŸdÉ™ olan', (string) count($ticketColumns['Ä°ÅŸdÉ™']), 'Texnik Ã¼zÉ™rindÉ™', 'fa-person-digging', 'navy'); ?>
-            <?php billing_render_stat_card('BaÄŸlÄ± bilet', (string) $stats['closed'], 'Qeyd vÉ™ sÉ™bÉ™blÉ™ baÄŸlanÄ±b', 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('Aktiv texnik', (string) $activeTechnicianCount, 'AÃ§Ä±q iÅŸ gÃ¶rÉ™n É™mÉ™kdaÅŸ', 'fa-users-gear', 'blue'); ?>
-            <?php billing_render_stat_card('NÉ™ticÉ™', (string) count($tickets), 'Cari filtr nÉ™ticÉ™si', 'fa-filter', 'navy'); ?>
+            <?php billing_render_stat_card('Cəmi bilet', (string) $stats['total'], 'Tarixçə daxil olmaqla', 'fa-ticket', 'blue'); ?>
+            <?php billing_render_stat_card('Açıq bilet', (string) $stats['open'], 'Texnikə yönləndirilməli', 'fa-circle-exclamation', 'orange'); ?>
+            <?php billing_render_stat_card('İşdə olan', (string) count($ticketColumns['İşdə']), 'Texnik üzərində', 'fa-person-digging', 'navy'); ?>
+            <?php billing_render_stat_card('Bağlı bilet', (string) $stats['closed'], 'Qeyd və səbəblə bağlanıb', 'fa-circle-check', 'green'); ?>
+            <?php billing_render_stat_card('Aktiv texnik', (string) $activeTechnicianCount, 'Açıq iş görən əməkdaş', 'fa-users-gear', 'blue'); ?>
+            <?php billing_render_stat_card('Nəticə', (string) count($tickets), 'Cari filtr nəticəsi', 'fa-filter', 'navy'); ?>
         </section>
         <?php endif; ?>
 
@@ -326,7 +326,7 @@ unset($kanbanParams['page'], $tableParams['page']);
                     <h2>Filtr ve axtaris</h2>
                     <small>Abonent, erazi, texnik ve status uzre axtaris edin.</small>
                 </div>
-                <form class="portal-stacked-form" method="get">
+                <form class="portal-stacked-form" method="get" id="crm-filter" data-auto-filter data-auto-filter-targets="crm-results">
                     <?php if ($lang !== 'az'): ?>
                         <input type="hidden" name="lang" value="<?= e($lang); ?>">
                     <?php endif; ?>
@@ -364,26 +364,27 @@ unset($kanbanParams['page'], $tableParams['page']);
                         <button type="submit" class="portal-primary-btn">Filtrle</button>
                         <a class="portal-ghost-btn portal-inline-link" href="crm.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sifirla</a>
                     </div>
+                    <small data-auto-filter-status role="status" aria-live="polite"></small>
                 </form>
             </article>
             <?php endif; ?>
         </section>
 
         <?php if (!$openCreatePanel && $viewMode === 'kanban'): ?>
-        <section class="portal-reveal">
+        <section class="portal-reveal" data-auto-filter-results="crm-results" data-auto-filter-form="crm-filter">
             <div class="mgs-section-head">
                 <div>
-                    <h2>Kanban baxÄ±ÅŸ</h2>
-                    <p>Operator, texnik vÉ™ admin Ã¼Ã§Ã¼n status Ã¼zrÉ™ sÃ¼rÉ™tli iÅŸ axÄ±nÄ±.</p>
+                    <h2>Kanban baxış</h2>
+                    <p>Operator, texnik və admin üçün status üzrə sürətli iş axını.</p>
                 </div>
-                <span class="mgs-status-badge"><?= e((string) count($tickets)); ?> nÉ™ticÉ™</span>
+                <span class="mgs-status-badge"><?= e((string) count($tickets)); ?> nəticə</span>
             </div>
             <div class="mgs-kanban">
                 <?php foreach ($ticketColumns as $columnTitle => $columnTickets): ?>
                     <article class="mgs-kanban-column">
                         <h2><?= e($columnTitle); ?> <span class="portal-pill"><?= e((string) count($columnTickets)); ?></span></h2>
                         <?php if ($columnTickets === []): ?>
-                            <?php billing_render_empty_state('BoÅŸ sÃ¼tun', 'Bu statusda mÃ¼raciÉ™t yoxdur.', 'fa-inbox'); ?>
+                            <?php billing_render_empty_state('Boş sütun', 'Bu statusda müraciət yoxdur.', 'fa-inbox'); ?>
                         <?php endif; ?>
                         <?php foreach (array_slice($columnTickets, 0, 8) as $ticket): ?>
                             <?php
@@ -392,12 +393,12 @@ unset($kanbanParams['page'], $tableParams['page']);
                                 $messageUrl = crm_ticket_message_url($ticket, $lang);
                             ?>
                             <div class="mgs-ticket-card">
-                                <strong>#<?= e((string) ($ticket['id'] ?? '')); ?> Â· <?= e((string) ($ticket['subject'] ?? '-')); ?></strong>
+                                <strong>#<?= e((string) ($ticket['id'] ?? '')); ?> · <?= e((string) ($ticket['subject'] ?? '-')); ?></strong>
                                 <p><?= e((string) ($ticket['customer_name'] ?? '-')); ?> / <?= e((string) ($ticket['phone'] ?? '-')); ?></p>
-                                <small><?= e((string) ($ticket['area'] ?? '-')); ?> Â· <?= e((string) ($ticket['assigned_technician_name'] ?? 'TÉ™yin edilmÉ™yib')); ?></small>
+                                <small><?= e((string) ($ticket['area'] ?? '-')); ?> · <?= e((string) ($ticket['assigned_technician_name'] ?? 'Təyin edilməyib')); ?></small>
                                 <span class="portal-status-pill <?= ((string) ($ticket['status'] ?? '') === 'Baglandi') ? 'is-closed' : 'is-open'; ?>"><?= e((string) ($ticket['status'] ?? '-')); ?></span>
                                 <div class="mgs-ticket-actions">
-                                    <?php if ($profileUrl !== ''): ?><a href="<?= e($profileUrl); ?>">MÃ¼ÅŸtÉ™ri 360</a><?php endif; ?>
+                                    <?php if ($profileUrl !== ''): ?><a href="<?= e($profileUrl); ?>">Müştəri 360</a><?php endif; ?>
                                     <a href="<?= e($operationsUrl); ?>">SPoG</a>
                                     <a href="<?= e($messageUrl); ?>">SMS</a>
                                 </div>
@@ -410,12 +411,12 @@ unset($kanbanParams['page'], $tableParams['page']);
         <?php endif; ?>
 
         <?php if (!$openCreatePanel && $viewMode === 'table'): ?>
-        <section class="mgs-data-card portal-reveal">
+        <section class="mgs-data-card portal-reveal" data-auto-filter-results="crm-results" data-auto-filter-form="crm-filter">
             <div class="mgs-section-head">
-                <div><h2>BiletlÉ™r</h2><p>ÆtraflÄ± axtarÄ±ÅŸ Ã¼Ã§Ã¼n cÉ™dvÉ™l gÃ¶rÃ¼nÃ¼ÅŸÃ¼.</p></div>
+                <div><h2>Biletlər</h2><p>Ətraflı axtarış üçün cədvəl görünüşü.</p></div>
             </div>
             <?php if ($tickets === []): ?>
-                <?php billing_render_empty_state('Bilet tapÄ±lmadÄ±', 'SeÃ§ilmiÅŸ filtrÉ™ uyÄŸun mÃ¼raciÉ™t yoxdur.', 'fa-ticket'); ?>
+                <?php billing_render_empty_state('Bilet tapılmadı', 'Seçilmiş filtrə uyğun müraciət yoxdur.', 'fa-ticket'); ?>
             <?php else: ?>
             <div class="portal-table-wrap">
                 <table class="portal-table portal-crm-table">
@@ -428,7 +429,7 @@ unset($kanbanParams['page'], $tableParams['page']);
                             <th>Musteri</th>
                             <th>Baglanma</th>
                             <th>Status</th>
-                            <th>ÆmÉ™liyyat</th>
+                            <th>Əməliyyat</th>
                         </tr>
                     </thead>
                     <tbody>

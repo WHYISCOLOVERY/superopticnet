@@ -748,7 +748,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             z-index:2147483200;
             margin:0;
             padding:clamp(14px,2vw,28px);
-            overflow:auto;
+            overflow:hidden;
             border:0;
             border-radius:0;
             background:rgba(15,31,52,.58);
@@ -757,7 +757,9 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         }
         .billing-create-panel[open] .billing-create-summary,
         .billing-create-panel[open] .billing-create-inner{
-            width:min(1180px,calc(100vw - 28px));
+            width:100%;
+            max-width:1180px;
+            box-sizing:border-box;
             margin:0 auto;
             background:rgba(255,255,255,.98);
         }
@@ -774,8 +776,10 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         }
         .billing-create-panel[open] .billing-create-summary::-webkit-details-marker{display:none}
         .billing-create-panel[open] .billing-create-inner{
-            max-height:calc(100vh - 112px);
-            overflow:auto;
+            max-height:calc(100dvh - 112px);
+            overflow-x:hidden;
+            overflow-y:auto;
+            overscroll-behavior:contain;
             padding:18px;
             border:1px solid rgba(17,38,64,.12);
             border-top:0;
@@ -820,7 +824,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             }
             .billing-create-panel[open] .billing-create-summary,
             .billing-create-panel[open] .billing-create-inner{
-                width:calc(100vw - 14px);
+                width:100%;
             }
             .billing-create-panel[open] .billing-create-summary{
                 position:sticky;
@@ -840,7 +844,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                 display:none;
             }
             .billing-create-panel[open] .billing-create-inner{
-                max-height:calc(100vh - 78px);
+                max-height:calc(100dvh - 78px);
                 padding:12px;
                 border-radius:0 0 18px 18px;
             }
@@ -918,10 +922,10 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         </section>
 
         <?php if ($openCreateModal): ?>
-        <details class="mgs-data-card portal-reveal billing-create-panel" id="customer-create" open>
+        <details class="mgs-data-card portal-reveal billing-create-panel" id="customer-create" role="dialog" aria-modal="true" aria-labelledby="customer-create-title" open>
             <summary class="billing-create-summary">
                 <span>
-                    <strong>Yeni musteri yarat</strong>
+                    <strong id="customer-create-title">Yeni musteri yarat</strong>
                     <small>Forma modal kimi acilir, siyahi sehifeni uzatmir.</small>
                 </span>
                 <a class="portal-ghost-btn portal-inline-link billing-create-close" href="billing-customers.php">
@@ -947,7 +951,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                 <div class="billing-create-grid">
                     <div class="portal-form-row">
                         <label>Musteri kodu</label>
-                        <input type="text" name="subscriber_code" placeholder="erazi secilende avtomatik" data-customer-code-input data-auto-code="1">
+                        <input type="text" name="subscriber_code" placeholder="Ərazi seçildikdə avtomatik doldurulur" data-customer-code-input data-auto-code="1" autofocus>
                         <small class="billing-ip-helper" data-customer-code-helper>Erazi sec ve sistem hemin prefixden novbeti bos kodu versin.</small>
                     </div>
                     <div class="portal-form-row"><label>Ad soyad / sirket</label><input type="text" name="full_name" value="<?=e((string)($_POST['full_name']??''));?>" required></div>
@@ -1098,7 +1102,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                     <span><i class="fa-solid fa-filter"></i> Axtaris ve filterler</span>
                     <small><?= $filtersOpen ? 'Aktiv filter var' : 'Siyahini daraltmaq ucun ac'; ?></small>
                 </summary>
-                <form method="get" class="portal-stacked-form">
+                <form method="get" class="portal-stacked-form" id="billing-customers-filter" data-auto-filter data-auto-filter-targets="billing-customers-results">
                     <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                     <input type="hidden" name="view" value="<?= e($viewMode); ?>">
                     <div class="billing-filter-grid">
@@ -1136,14 +1140,16 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                         <a class="portal-ghost-btn portal-inline-link" href="billing-customers.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sifirla</a>
                     </div>
                     <div class="mgs-quick-filters">
-                        <a class="mgs-chip<?= $statusFilter === 'billing_active' ? ' is-active' : ''; ?>" href="billing-customers.php?status_filter=billing_active&view=<?= e($viewMode); ?>">Aktiv</a>
-                        <a class="mgs-chip<?= $statusFilter === 'billing_inactive' ? ' is-active' : ''; ?>" href="billing-customers.php?status_filter=billing_inactive&view=<?= e($viewMode); ?>">Deaktiv</a>
-                        <a class="mgs-chip<?= $statusFilter === 'radius_active' ? ' is-active' : ''; ?>" href="billing-customers.php?status_filter=radius_active&view=<?= e($viewMode); ?>">Online/Radius aktiv</a>
-                        <a class="mgs-chip<?= $statusFilter === 'radius_inactive' ? ' is-active' : ''; ?>" href="billing-customers.php?status_filter=radius_inactive&view=<?= e($viewMode); ?>">Radius passiv</a>
+                        <a class="mgs-chip<?= $statusFilter === 'billing_active' ? ' is-active' : ''; ?>" data-auto-filter-link data-auto-filter-form="billing-customers-filter" href="billing-customers.php?status_filter=billing_active&view=<?= e($viewMode); ?>">Aktiv</a>
+                        <a class="mgs-chip<?= $statusFilter === 'billing_inactive' ? ' is-active' : ''; ?>" data-auto-filter-link data-auto-filter-form="billing-customers-filter" href="billing-customers.php?status_filter=billing_inactive&view=<?= e($viewMode); ?>">Deaktiv</a>
+                        <a class="mgs-chip<?= $statusFilter === 'radius_active' ? ' is-active' : ''; ?>" data-auto-filter-link data-auto-filter-form="billing-customers-filter" href="billing-customers.php?status_filter=radius_active&view=<?= e($viewMode); ?>">Online/Radius aktiv</a>
+                        <a class="mgs-chip<?= $statusFilter === 'radius_inactive' ? ' is-active' : ''; ?>" data-auto-filter-link data-auto-filter-form="billing-customers-filter" href="billing-customers.php?status_filter=radius_inactive&view=<?= e($viewMode); ?>">Radius passiv</a>
                     </div>
+                    <small data-auto-filter-status role="status" aria-live="polite"></small>
                 </form>
             </details>
 
+            <div data-auto-filter-results="billing-customers-results" data-auto-filter-form="billing-customers-filter">
             <?php if ($customers === []): ?>
                 <div class="portal-section-gap">
                     <?php billing_render_empty_state('Netice tapilmadi', 'Axtaris ve filtr sertlerini deyisib yeniden yoxlayin.', 'fa-magnifying-glass'); ?>
@@ -1275,6 +1281,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                     <a class="portal-ghost-btn portal-inline-link<?= $page >= $totalPages ? ' portal-disabled-link' : ''; ?>" href="billing-customers.php?<?= e(http_build_query($nextParams)); ?>">Novbeti</a>
                 </nav>
             <?php endif; ?>
+            </div>
         </section>
         <?php endif; ?>
         <form method="post" id="billingCustomerRefreshForm" hidden>
@@ -1301,15 +1308,24 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         const createPanel = document.getElementById('customer-create');
         const openCreateButtons = document.querySelectorAll('[data-open-customer-create]');
         const closeCreateButtons = document.querySelectorAll('[data-close-customer-create]');
-        const setCreateModal = (open) => {
+        let createModalOpener = null;
+        const createFocusable = () => Array.from(createPanel?.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) || []).filter((item) => item.offsetParent !== null);
+        const setCreateModal = (open, opener = null) => {
             if (!createPanel) return;
             if (open) {
+                createModalOpener = opener || document.activeElement;
                 createPanel.setAttribute('open', 'open');
                 document.body.classList.add('billing-modal-open');
-                createPanel.querySelector('input[name="subscriber_code"]')?.focus({ preventScroll: true });
+                (createPanel.querySelector('input[name="subscriber_code"]') || createFocusable()[0])?.focus({ preventScroll: true });
             } else {
                 createPanel.removeAttribute('open');
                 document.body.classList.remove('billing-modal-open');
+                if (createModalOpener instanceof HTMLElement && createModalOpener.isConnected) {
+                    createModalOpener.focus({ preventScroll: true });
+                }
+                createModalOpener = null;
             }
         };
 
@@ -1317,30 +1333,49 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             event.preventDefault();
         });
         openCreateButtons.forEach((button) => {
-            button.addEventListener('click', () => setCreateModal(true));
+            button.addEventListener('click', () => setCreateModal(true, button));
         });
         closeCreateButtons.forEach((button) => {
             button.addEventListener('click', () => setCreateModal(false));
         });
+        if (createPanel?.hasAttribute('open')) {
+            window.requestAnimationFrame(() => {
+                (createPanel.querySelector('input[name="subscriber_code"]') || createFocusable()[0])?.focus({ preventScroll: true });
+            });
+        }
         createPanel?.addEventListener('click', (event) => {
             if (event.target === createPanel) {
                 setCreateModal(false);
             }
         });
         document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && createPanel?.hasAttribute('open')) {
+            if (!createPanel?.hasAttribute('open')) return;
+            if (event.key === 'Escape') {
                 setCreateModal(false);
+                return;
+            }
+            if (event.key === 'Tab') {
+                const focusable = createFocusable();
+                if (focusable.length === 0) return;
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
             }
         });
 
         const refreshForm = document.getElementById('billingCustomerRefreshForm');
-        document.querySelectorAll('[data-refresh-customer]').forEach((button) => {
-            button.addEventListener('click', () => {
-                if (!refreshForm) return;
-                refreshForm.elements.account_id.value = button.dataset.accountId || '';
-                refreshForm.elements.username.value = button.dataset.username || '';
-                refreshForm.submit();
-            });
+        document.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-refresh-customer]');
+            if (!button || !refreshForm) return;
+            refreshForm.elements.account_id.value = button.dataset.accountId || '';
+            refreshForm.elements.username.value = button.dataset.username || '';
+            refreshForm.submit();
         });
 
         const serviceSelect = document.querySelector('[data-service-type-select]');

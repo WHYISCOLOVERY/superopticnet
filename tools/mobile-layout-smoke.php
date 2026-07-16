@@ -9,7 +9,7 @@ if (PHP_SAPI !== 'cli') {
 
 $root = dirname(__DIR__);
 $css = file_get_contents($root . '/css/portal.css');
-$billingUi = file_get_contents($root . '/billing-ui.php');
+$portalJs = file_get_contents($root . '/script/portal.js');
 $copilot = file_get_contents($root . '/copilot-widget.php');
 $customers = file_get_contents($root . '/billing-customers.php');
 $adminUsers = file_get_contents($root . '/admin-users.php');
@@ -26,10 +26,10 @@ $checks = [
         && str_contains($css, '.portal-table td::before')
         && str_contains($css, 'content: attr(data-label)')
         && preg_match('/\.portal-table\s+thead\s*\{[\s\S]*?display:\s*none/s', $css) === 1,
-    'mobile_table_labels_js' => is_string($billingUi)
-        && str_contains($billingUi, 'syncMobileTables')
-        && str_contains($billingUi, 'cell.dataset.label')
-        && str_contains($billingUi, 'superoptic:table-refresh'),
+    'mobile_table_labels_js' => is_string($portalJs)
+        && str_contains($portalJs, 'syncMobileTables')
+        && str_contains($portalJs, 'cell.dataset.label')
+        && str_contains($portalJs, 'superoptic:table-refresh'),
     'mobile_nav_scrollbars_hidden' => is_string($css)
         && str_contains($css, '.billing-shell-nav::-webkit-scrollbar')
         && str_contains($css, '.billing-nav-group[open] .billing-nav-links::-webkit-scrollbar')
@@ -44,7 +44,7 @@ $checks = [
         && str_contains($copilot, '.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto'),
     'customer_create_mobile_modal' => is_string($customers)
         && str_contains($customers, '@media (max-width:700px)')
-        && str_contains($customers, 'max-height:calc(100vh - 78px)')
+        && str_contains($customers, 'max-height:calc(100dvh - 78px)')
         && str_contains($customers, '.billing-create-panel .mgs-wizard-steps'),
     'no_mobile_column_hiding' => is_string($adminUsers)
         && is_string($crm)

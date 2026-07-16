@@ -110,10 +110,10 @@ if ($db instanceof PDO) {
         </section>
 
         <section class="mgs-action-strip portal-reveal">
-            <article class="mgs-action-tile"><i class="fa-solid fa-database"></i><strong>SQL auth modeli</strong><small>radcheck/radreply proqram DB-sindÉ™n oxunur.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-route"></i><strong>PPPoE + IPoE</strong><small>VLAN1100 IPoE test modeli PPPoE-yÉ™ toxunmadan hazÄ±rlanÄ±r.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-network-wired"></i><strong>Core uyÄŸunluÄŸu</strong><small>85.132.57.218 ASR Ã¼zÉ™rindÉ™ dÉ™yiÅŸiklik etmÉ™dÉ™n atributlar saxlanÄ±r.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-vial"></i><strong>Test sync</strong><small>1100000-1100040 userlÉ™ri ilÉ™ radtest Ã¼Ã§Ã¼n hazÄ±r data.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-database"></i><strong>SQL auth modeli</strong><small>radcheck/radreply proqram DB-sindən oxunur.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-route"></i><strong>PPPoE + IPoE</strong><small>VLAN1100 IPoE test modeli PPPoE-yə toxunmadan hazırlanır.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-network-wired"></i><strong>Core uyğunluğu</strong><small>85.132.57.218 ASR üzərində dəyişiklik etmədən atributlar saxlanır.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-vial"></i><strong>Test sync</strong><small>1100000-1100040 userləri ilə radtest üçün hazır data.</small></article>
         </section>
 
         <section class="portal-card portal-reveal">
@@ -136,7 +136,7 @@ if ($db instanceof PDO) {
                 </div>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
-                        <thead><tr><th>Ad</th><th>Nov</th><th>Suret</th><th>Qiymet</th><th>GÃ¼n</th><th>Radius group</th></tr></thead>
+                        <thead><tr><th>Ad</th><th>Nov</th><th>Suret</th><th>Qiymet</th><th>Gün</th><th>Radius group</th></tr></thead>
                         <tbody>
                             <?php foreach ($tariffs as $tariff): ?>
                                 <tr>
@@ -144,7 +144,7 @@ if ($db instanceof PDO) {
                                     <td><?= e((string) $tariff['service_type']); ?></td>
                                     <td><?= e((string) $tariff['download_mbps']); ?>/<?= e((string) $tariff['upload_mbps']); ?> Mb/s</td>
                                     <td><?= e((string) $tariff['monthly_fee']); ?> AZN</td>
-                                    <td><?= e((string) app_billing_tariff_default_days($tariff)); ?> gÃ¼n</td>
+                                    <td><?= e((string) app_billing_tariff_default_days($tariff)); ?> gün</td>
                                     <td><code><?= e((string) $tariff['radius_group']); ?></code></td>
                                 </tr>
                             <?php endforeach; ?>
@@ -206,7 +206,7 @@ if ($db instanceof PDO) {
         <section class="portal-card portal-reveal">
             <div class="portal-card-head">
                 <h2>VM FreeRADIUS yoxlama komandasi</h2>
-                <small>`radtest` no reply verirse servis listen etmir, firewall yox, adeten FreeRADIUS config/debug xetasidir. SQL qoÅŸulmasÄ± Ã¼Ã§Ã¼n generator skripti hazÄ±rdÄ±r.</small>
+                <small>`radtest` no reply verirse servis listen etmir, firewall yox, adeten FreeRADIUS config/debug xetasidir. SQL qoşulması üçün generator skripti hazırdır.</small>
             </div>
             <pre><code>sudo systemctl status freeradius --no-pager
 sudo ss -lunp | grep -E '1812|1813'

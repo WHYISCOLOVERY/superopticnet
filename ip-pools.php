@@ -222,7 +222,7 @@ foreach ($pools as $pool) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IP Pool idarÉ™etmÉ™si</title>
+    <title>IP Pool idarəetməsi</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <style>
@@ -239,7 +239,7 @@ foreach ($pools as $pool) {
     </style>
 </head>
 <body class="portal-body">
-    <?php billing_render_header('IP Pool idarÉ™etmÉ™si', 'ip-pools', $lang); ?>
+    <?php billing_render_header('IP Pool idarəetməsi', 'ip-pools', $lang); ?>
 
     <main class="portal-layout">
         <?php if ($flash !== null): ?>
@@ -252,8 +252,8 @@ foreach ($pools as $pool) {
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">RADIUS IP engine</span>
-                <h1>Local, NAT public vÉ™ Static IP pool idarÉ™etmÉ™si</h1>
-                <p>Bu sÉ™hifÉ™ mÃ¼ÅŸtÉ™ri IP-lÉ™rini billingdÉ™n idarÉ™ etmÉ™k, boÅŸ/reserved/blacklist IP-lÉ™ri gÃ¶rmÉ™k vÉ™ RADIUS cavablarÄ±na hazÄ±r saxlamaq Ã¼Ã§Ã¼ndÃ¼r.</p>
+                <h1>Local, NAT public və Static IP pool idarəetməsi</h1>
+                <p>Bu səhifə müştəri IP-lərini billingdən idarə etmək, boş/reserved/blacklist IP-ləri görmək və RADIUS cavablarına hazır saxlamaq üçündür.</p>
                 <div class="mgs-command-actions">
                     <a class="portal-primary-btn portal-inline-link" href="#create-pool">Pool yarat</a>
                     <a class="portal-ghost-btn portal-inline-link" href="radius-billing.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>#pools">Legacy poollar</a>
@@ -280,7 +280,7 @@ foreach ($pools as $pool) {
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card" id="create-pool">
-                <div class="portal-card-head"><h2>Yeni IP pool</h2><small>Local, NAT public vÉ™ Static public pool yarat.</small></div>
+                <div class="portal-card-head"><h2>Yeni IP pool</h2><small>Local, NAT public və Static public pool yarat.</small></div>
                 <form class="portal-stacked-form" method="post">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <input type="hidden" name="action" value="create_pool">
@@ -316,7 +316,7 @@ foreach ($pools as $pool) {
             </article>
 
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Manual IP statusu</h2><small>Reserved/blacklist/free statusunu operativ dÉ™yiÅŸ.</small></div>
+                <div class="portal-card-head"><h2>Manual IP statusu</h2><small>Reserved/blacklist/free statusunu operativ dəyiş.</small></div>
                 <form class="portal-stacked-form" method="post">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <input type="hidden" name="action" value="mark_ip">
@@ -440,7 +440,7 @@ foreach ($pools as $pool) {
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Bos IP-lÉ™r</h2><small>Dropdown-lar ucun ilk 50 bos IP.</small></div>
+                <div class="portal-card-head"><h2>Bos IP-lər</h2><small>Dropdown-lar ucun ilk 50 bos IP.</small></div>
                 <?php if ($available === []): ?>
                     <?php billing_render_empty_state('Bos IP siyahisi yoxdur', 'Pool IP setirlerini yarat ve ya araliq cox boyukdurse manual secim et.', 'fa-network-wired'); ?>
                 <?php else: ?>
@@ -463,7 +463,7 @@ foreach ($pools as $pool) {
             </article>
 
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Aktiv assignment</h2><small>MÃ¼ÅŸtÉ™riyÉ™ baÄŸlÄ± cari IP-lÉ™r.</small></div>
+                <div class="portal-card-head"><h2>Aktiv assignment</h2><small>Müştəriyə bağlı cari IP-lər.</small></div>
                 <?php if ($assignments === []): ?>
                     <?php billing_render_empty_state('Assignment yoxdur', 'RADIUS sync veya profil IP deyisikliyi etdikde burada gorunecek.', 'fa-plug-circle-xmark'); ?>
                 <?php else: ?>

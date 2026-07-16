@@ -30,7 +30,14 @@ $tierId = 0;
 $bracketId = 0;
 $qualityRuleId = 0;
 $paymentExternal = 'bonus-smoke-' . $run;
-$superActor = ['id' => 1, 'role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'super_admin', 'full_name' => 'Bonus Smoke Super'];
+$superActor = [
+    'id' => 1,
+    'role' => 'employee',
+    'account_type' => 'admin',
+    'employee_role' => 'super_admin',
+    'full_name' => 'Bonus Smoke Super',
+    'login' => 's.abdullayev@superoptic.net',
+];
 $financeActor = ['id' => 2, 'role' => 'employee', 'account_type' => 'operator', 'employee_role' => 'finance', 'full_name' => 'Bonus Smoke Finance'];
 $errors = [];
 

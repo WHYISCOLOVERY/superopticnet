@@ -43,6 +43,7 @@ try {
         str_contains($portalActionsSource, 's.abdullayev@superoptic.net'),
         'portal_action_protected_designated_account_missing'
     );
+    $expect(str_contains($portalActionsSource, '$protectedShapeChanged'), 'protected_super_admin_shape_guard_missing');
     $expect(
         str_contains($portalActionsSource, 'privilege_change_reason'),
         'portal_action_privilege_reason_missing'
@@ -130,13 +131,14 @@ try {
         'full_name' => 'Permission Smoke NOC',
         'login' => 'permission-smoke-noc@superoptic.local',
     ];
-    $serdarFallback = [
+    $nameImpersonator = [
         'id' => 910004,
         'role' => 'employee',
-        'account_type' => 'operator',
-        'employee_role' => 'operator',
+        'account_type' => 'admin',
+        'employee_role' => 'super_admin',
         'full_name' => 'Serdar Abdullayev',
-        'login' => 'serdar@sp.az',
+        'login' => 'permission-smoke-impostor@superoptic.local',
+        'email' => 's.abdullayev@superoptic.net',
     ];
 
     if (function_exists('app_audit_actor_can_view')) {
@@ -147,7 +149,7 @@ try {
     if (function_exists('app_audit_actor_can_manage')) {
         $expect(app_audit_actor_can_manage($normalAdmin) === false, 'normal_admin_can_manage_journal');
         $expect(app_audit_actor_can_manage($nocAdmin) === false, 'account_type_admin_can_manage_journal');
-        $expect(app_audit_actor_can_manage($serdarFallback) === true, 'serdar_fallback_cannot_manage_journal');
+        $expect(app_audit_actor_can_manage($nameImpersonator) === false, 'name_or_role_impersonator_can_manage_journal');
         if (is_array($superAdmin)) {
             $expect(app_audit_actor_can_manage($superAdmin) === true, 'super_admin_cannot_manage_journal');
         }

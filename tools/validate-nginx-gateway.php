@@ -10,6 +10,7 @@ declare(strict_types=1);
  */
 
 $root = dirname(__DIR__);
+require_once $root . '/config.php';
 $nginxDir = $root . DIRECTORY_SEPARATOR . 'deploy' . DIRECTORY_SEPARATOR . 'nginx';
 
 function gateway_read(string $path): string

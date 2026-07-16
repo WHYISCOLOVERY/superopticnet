@@ -70,6 +70,7 @@ function app_db(): ?PDO
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
+        $pdo->exec('SET time_zone = ' . $pdo->quote(app_timezone_offset()));
     } catch (Throwable) {
         return null;
     }
@@ -1617,15 +1618,15 @@ function app_db_area_code_key(string $area): string
         'Ö' => 'o',
         'Ç' => 'c',
         'É™' => 'e',
-        'Ä±' => 'i',
-        'Ä°' => 'i',
+        'ı' => 'i',
+        'İ' => 'i',
         'ÅŸ' => 's',
         'Åž' => 's',
-        'Ã§' => 'c',
-        'Ã¼' => 'u',
-        'Ã¶' => 'o',
+        'ç' => 'c',
+        'ü' => 'u',
+        'ö' => 'o',
         'ÄŸ' => 'g',
-        'Æ' => 'e',
+        'Ə' => 'e',
         'Æ' => 'e',
     ];
     $value = strtr($value, $replace);
@@ -1753,24 +1754,24 @@ function app_db_default_area_code_prefixes(): array
     return [
         'Qaracuxur' => '100',
         'Qaraçuxur' => '100',
-        'QaraÃ§uxur' => '100',
+        'Qaraçuxur' => '100',
         'Astara' => '300',
         'Sahagaci' => '200',
         'Şahağacı' => '200',
-        'ÅžahaÄŸacÄ±' => '200',
+        'Şahağacı' => '200',
         'Bileceri' => '110',
         'Biləcəri' => '110',
-        'BilÉ™cÉ™ri' => '110',
+        'Biləcəri' => '110',
         'Kurdexani' => '232',
         'Kürdəxanı' => '232',
-        'KÃ¼rdÉ™xanÄ±' => '232',
+        'Kürdəxanı' => '232',
         'Zabrat' => '232',
         'Lenkeran' => '500',
         'Lənkəran' => '500',
-        'LÉ™nkÉ™ran' => '500',
+        'Lənkəran' => '500',
         'Masalli' => '400',
         'Masallı' => '400',
-        'MasallÄ±' => '400',
+        'Masallı' => '400',
     ];
 }
 

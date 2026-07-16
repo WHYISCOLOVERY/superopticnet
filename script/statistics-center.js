@@ -5,7 +5,6 @@
     const form = module.querySelector('[data-statistics-filter]');
     const status = module.querySelector('[data-statistics-status]');
     let controller = null;
-    let debounce = null;
 
     const currentResults = () => module.querySelector('[data-statistics-results]');
 
@@ -62,13 +61,12 @@
         });
 
         form.querySelectorAll('[data-statistics-date]').forEach(dateInput => {
-            dateInput.addEventListener('input', () => {
+            dateInput.addEventListener('change', () => {
                 const rangeSelect = form.querySelector('[data-statistics-range]');
                 if (rangeSelect && rangeSelect.value !== 'custom') {
                     rangeSelect.value = 'custom';
                 }
-                window.clearTimeout(debounce);
-                debounce = window.setTimeout(() => load(true), 400);
+                load(true);
             });
         });
     }

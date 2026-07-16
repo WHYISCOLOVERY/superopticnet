@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/noc-scan-results-lib.php';
+require_once __DIR__ . '/ui-language-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
@@ -1074,10 +1075,11 @@ if ($needsDeviceRows) {
         .noc-native-grid .wide{grid-column:1/-1}
         .noc-scan-dialog{grid-column:1/-1;display:grid;gap:14px;padding:16px;border:1px solid rgba(11,123,135,.18);border-radius:22px;background:linear-gradient(135deg,rgba(238,248,247,.95),rgba(255,255,255,.96))}
         .noc-scan-dialog.is-empty[hidden]{display:none!important}
-        .noc-scan-dialog.is-open{position:fixed;z-index:620;inset:0;display:grid;align-content:center;justify-items:center;gap:0;margin:0;padding:24px;border:0;border-radius:0;background:rgba(15,23,42,.48);backdrop-filter:blur(7px);overflow:auto}
+        body:has(.noc-scan-dialog.is-open),body:has(.noc-device-detail[open]){overflow:hidden}
+        .noc-scan-dialog.is-open{position:fixed;z-index:620;inset:0;display:grid;grid-template-columns:minmax(0,1100px);grid-template-rows:auto minmax(0,min(68vh,720px));align-content:center;justify-content:center;gap:0;margin:0;padding:24px;border:0;border-radius:0;background:rgba(15,23,42,.48);backdrop-filter:blur(7px);overflow:hidden}
         .noc-scan-dialog.is-open>.noc-scan-head,.noc-scan-dialog.is-open>.noc-scan-results{width:min(1100px,calc(100vw - 32px));box-sizing:border-box}
         .noc-scan-dialog.is-open>.noc-scan-head{padding:18px 20px;border:1px solid rgba(148,163,184,.28);border-bottom:0;border-radius:22px 22px 0 0;background:linear-gradient(180deg,#fff,rgba(248,250,252,.98))}
-        .noc-scan-dialog.is-open>.noc-scan-results{max-height:min(68vh,720px);overflow:auto;padding:0 20px 20px;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 22px 22px;background:rgba(248,250,252,.98)}
+        .noc-scan-dialog.is-open>.noc-scan-results{min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:0 20px 20px;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 22px 22px;background:rgba(248,250,252,.98)}
         .noc-scan-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
         .noc-scan-head h3{margin:4px 0;color:#10233f}
         .noc-scan-head small{color:#64748b}
@@ -1168,6 +1170,16 @@ if ($needsDeviceRows) {
         .noc-device-detail-head h3{margin:0;color:#10233f}
         .noc-device-detail-head small{display:block;margin-top:4px;color:#64748b}
         .noc-device-detail-close{border:0;border-radius:999px;background:#e5eaf0;color:#10233f;font-weight:900;padding:10px 14px;cursor:pointer}
+        .noc-command-hero{padding:20px 22px;align-items:center}
+        .noc-command-hero h1{max-width:860px;font-size:clamp(1.8rem,3vw,2.7rem);line-height:1.05}
+        .noc-command-hero p{max-width:900px}
+        .noc-secondary-summary{border:1px solid rgba(148,163,184,.22);border-radius:18px;background:rgba(255,255,255,.78)}
+        .noc-secondary-summary>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;padding:10px 16px;list-style:none;cursor:pointer;color:#10233f;font-weight:900}
+        .noc-secondary-summary>summary::-webkit-details-marker{display:none}
+        .noc-secondary-summary>summary::after{content:"+";display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#e6f2f4;color:#087b83;font-size:1.1rem}
+        .noc-secondary-summary[open]>summary::after{content:"-"}
+        .noc-secondary-summary>summary span{color:#64748b;font-size:.82rem;font-weight:800}
+        .noc-secondary-summary>.mgs-stat-grid{padding:0 14px 14px}
         .noc-access-panel{display:grid;gap:12px;padding:14px;border-radius:22px;background:rgba(238,248,247,.72);border:1px solid rgba(11,123,135,.16)}
         .noc-access-panel h4{margin:0;color:#0b7b87}
         .noc-access-panel p{margin:0;color:#64748b;line-height:1.45}
@@ -1196,6 +1208,13 @@ if ($needsDeviceRows) {
         .portal-noc-report .portal-table td{overflow-wrap:anywhere}
         @media (max-width:1100px){.noc-device-grid,.noc-two-col,.noc-native-actions,.noc-monitor-shell{grid-template-columns:1fr}.monitor-node{width:min(82vw,260px)}.native-monitor-board{min-height:min(72vh,680px)}}
         @media (max-width:760px){
+            .noc-command-hero{padding:16px}
+            .noc-command-hero h1{font-size:1.65rem}
+            .noc-command-hero p{display:none}
+            .noc-scan-dialog.is-open{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);align-content:stretch;padding:10px}
+            .noc-scan-dialog.is-open>.noc-scan-head,.noc-scan-dialog.is-open>.noc-scan-results{width:100%}
+            .noc-scan-dialog.is-open>.noc-scan-head{padding:14px}
+            .noc-scan-dialog.is-open>.noc-scan-results{padding:0 14px 14px}
             .native-monitor-board{min-height:0;overflow:hidden;touch-action:auto}
             .monitor-toolbar,.monitor-links,.monitor-hub-native{display:none}
             .monitor-stage{position:static;inset:auto;display:grid;grid-template-columns:1fr;gap:12px;transform:none!important}
@@ -1207,7 +1226,7 @@ if ($needsDeviceRows) {
             .noc-device-safe-actions,.noc-device-quick-actions{grid-template-columns:1fr}
             .noc-device-actions form,.noc-device-actions select,.noc-device-actions button{width:100%}
             .noc-action-form select,.noc-action-form input,.noc-action-form button{width:100%;max-width:100%;flex:1 1 100%}
-            .noc-device-detail[open] .noc-device-detail-panel{inset:76px 10px 12px;max-height:calc(100vh - 88px);padding:16px;border-radius:22px}
+            .noc-device-detail[open] .noc-device-detail-panel{inset:76px 10px 12px;left:10px;right:10px;width:auto;max-height:none;transform:none;padding:16px;border-radius:22px}
             .noc-device-detail-head{top:-16px}
             .noc-access-grid{grid-template-columns:1fr}
             .noc-scan-result,.noc-scan-add-form{grid-template-columns:1fr}
@@ -1228,7 +1247,7 @@ if ($needsDeviceRows) {
             </div>
         <?php endif; ?>
 
-        <section class="mgs-command-hero portal-reveal">
+        <section class="mgs-command-hero noc-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">NOC native panel</span>
                 <h1>Cihaz oyrenme, reachability, OLT/ONT ve backup nezareti</h1>
@@ -1266,19 +1285,25 @@ if ($needsDeviceRows) {
             </section>
         <?php endif; ?>
 
-        <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('Cihaz profili', (string) ($summary['device_profiles'] ?? count($devices)), 'auto-learning rows', 'fa-network-wired', 'blue'); ?>
-            <?php billing_render_stat_card('Reachable', (string) ($summary['devices_reachable'] ?? 0), 'son probe', 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('Mgmt path wait', (string) ($summary['devices_waiting_path'] ?? 0), 'offline spam blok', 'fa-route', 'orange'); ?>
-            <?php billing_render_stat_card('Unknown', (string) ($summary['devices_unknown'] ?? 0), 'probe gozleyir', 'fa-circle-question', 'navy'); ?>
-            <?php billing_render_stat_card('Not monitored', (string) ($summary['devices_not_monitored'] ?? 0), 'alias ve maintenance', 'fa-eye-slash', 'navy'); ?>
-            <?php billing_render_stat_card('SSH port ok', (string) ($summary['devices_ssh_confirmed'] ?? 0), '22/tcp cavab verir', 'fa-terminal', 'green'); ?>
-            <?php billing_render_stat_card('SSH auth ok', (string) ($summary['devices_ssh_auth_confirmed'] ?? 0), 'credential ile login', 'fa-user-shield', 'green'); ?>
-            <?php billing_render_stat_card('SNMP ok', (string) ($summary['devices_snmp_confirmed'] ?? 0), 'effective community probe', 'fa-wave-square', 'green'); ?>
-            <?php billing_render_stat_card('Access override', (string) ($summary['device_access_overrides'] ?? 0), 'per-device auth', 'fa-key', 'orange'); ?>
-            <?php billing_render_stat_card('Backup versiya', (string) ($summary['device_backup_versions'] ?? 0), 'hash dedup', 'fa-box-archive', 'blue'); ?>
-            <?php billing_render_stat_card('Alarm dedup', (string) ($summary['dedup_keys'] ?? 0), 'tekrar mesaj blok', 'fa-clone', 'green'); ?>
+        <section class="mgs-stat-grid portal-reveal" data-noc-primary-stats>
+            <?php billing_render_stat_card('Cihaz profili', (string) ($summary['device_profiles'] ?? count($devices)), 'öyrənilmiş cihazlar', 'fa-network-wired', 'blue'); ?>
+            <?php billing_render_stat_card('Əlçatan', (string) ($summary['devices_reachable'] ?? 0), 'son yoxlama', 'fa-circle-check', 'green'); ?>
+            <?php billing_render_stat_card('Şəbəkə yolu gözləyir', (string) ($summary['devices_waiting_path'] ?? 0), 'yanlış offline bildirişi bloklanır', 'fa-route', 'orange'); ?>
+            <?php billing_render_stat_card('Yoxlanılmayıb', (string) ($summary['devices_unknown'] ?? 0), 'yoxlama gözləyir', 'fa-circle-question', 'navy'); ?>
         </section>
+
+        <details class="noc-secondary-summary portal-reveal" data-noc-secondary-stats>
+            <summary>Ətraflı NOC göstəriciləri <span>7 texniki göstərici</span></summary>
+            <section class="mgs-stat-grid">
+                <?php billing_render_stat_card('Monitorinqdən kənar', (string) ($summary['devices_not_monitored'] ?? 0), 'alias və texniki fasilə', 'fa-eye-slash', 'navy'); ?>
+                <?php billing_render_stat_card('SSH portu açıqdır', (string) ($summary['devices_ssh_confirmed'] ?? 0), '22/tcp cavab verir', 'fa-terminal', 'green'); ?>
+                <?php billing_render_stat_card('SSH giriş uğurludur', (string) ($summary['devices_ssh_auth_confirmed'] ?? 0), 'hesab məlumatları təsdiqlənib', 'fa-user-shield', 'green'); ?>
+                <?php billing_render_stat_card('SNMP işləyir', (string) ($summary['devices_snmp_confirmed'] ?? 0), 'aktiv community yoxlaması', 'fa-wave-square', 'green'); ?>
+                <?php billing_render_stat_card('Fərdi giriş profili', (string) ($summary['device_access_overrides'] ?? 0), 'cihaza xüsusi giriş', 'fa-key', 'orange'); ?>
+                <?php billing_render_stat_card('Backup versiyası', (string) ($summary['device_backup_versions'] ?? 0), 'təkrar nüsxələr ayrılır', 'fa-box-archive', 'blue'); ?>
+                <?php billing_render_stat_card('Təkrar alarm bloku', (string) ($summary['dedup_keys'] ?? 0), 'təkrar mesaj göndərilmir', 'fa-clone', 'green'); ?>
+            </section>
+        </details>
 
         <div class="noc-ajax-status" data-noc-status aria-live="polite"></div>
         <div data-noc-content>
@@ -1329,7 +1354,7 @@ if ($needsDeviceRows) {
                                 <span class="monitor-node-status" data-monitor-status-text><?= e((string) $tooltip['label']); ?></span>
                                 <span class="monitor-node-type"><?= e(strtoupper((string) ($device['device_type'] ?? 'DEV'))); ?></span>
                                 <strong class="monitor-node-name"><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
-                                <span class="monitor-node-meta"><?= e((string) ($device['vendor'] ?? '-')); ?> / <?= e((string) ($device['reachability_state'] ?? $device['status'] ?? 'unknown')); ?></span>
+                                <span class="monitor-node-meta"><?= e((string) ($device['vendor'] ?? '-')); ?> / <?= e(app_ui_status((string) ($device['reachability_state'] ?? $device['status'] ?? 'unknown'))); ?></span>
                                 <span class="monitor-node-ip"><?= e((string) ($device['ip_address'] ?? '-')); ?></span>
                                 <textarea class="monitor-node-note" data-monitor-note placeholder="Qeyd..."><?= e($nodeNote); ?></textarea>
                                 <div class="monitor-node-tools" data-monitor-node-tools>
@@ -1350,7 +1375,7 @@ if ($needsDeviceRows) {
                         <?php if (!is_array($device)) { continue; } ?>
                         <?php $tone = noc_monitor_tone($device); ?>
                         <div class="noc-monitor-side-card">
-                            <span class="noc-pill noc-pill-<?= e($tone === 'up' ? 'success' : ($tone === 'down' ? 'danger' : ($tone === 'maintenance' ? 'muted' : 'warning'))); ?>"><?= e($tone); ?></span>
+                            <span class="noc-pill noc-pill-<?= e($tone === 'up' ? 'success' : ($tone === 'down' ? 'danger' : ($tone === 'maintenance' ? 'muted' : 'warning'))); ?>"><?= e(app_ui_status($tone)); ?></span>
                             <strong><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
                             <small><?= e((string) ($device['ip_address'] ?? '-')); ?> / <?= e((string) ($device['last_probe_error'] ?? $device['status'] ?? '-')); ?></small>
                         </div>
@@ -1541,7 +1566,7 @@ if ($needsDeviceRows) {
                                     <small><?= e(strtoupper((string) ($device['device_type'] ?? 'unknown'))); ?></small>
                                     <strong><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
                                 </div>
-                                <span class="noc-pill noc-pill-<?= e($tone); ?>"><?= e($state); ?></span>
+                                <span class="noc-pill noc-pill-<?= e($tone); ?>"><?= e(app_ui_status($state)); ?></span>
                             </div>
                             <div class="noc-device-meta is-summary">
                                 <span>IP<b><?= e((string) ($device['ip_address'] ?? '-')); ?></b></span>
@@ -1789,7 +1814,7 @@ if ($needsDeviceRows) {
                 <h2>ONT/SN/MAC native axtarisi</h2>
                 <small>Stored customer snapshot uzerinden SN, MAC, subscriber code, PPPoE/IPoE username, OLT/PON/ONT ve optik sahelere gore axtaris. VLAN 550 passiv olsa da saxlanmis profil gorunur.</small>
             </div>
-            <form method="get" class="portal-stacked-form">
+            <form method="get" class="portal-stacked-form" data-noc-auto-filter>
                 <input type="hidden" name="view" value="ont-search">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
@@ -2133,6 +2158,7 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
         const shell = document.querySelector('[data-noc-shell]');
         if (!shell || !window.fetch || !window.DOMParser) return;
         let controller = null;
+        let filterTimer = null;
         const viewFromUrl = url => {
             const target = new URL(url, window.location.href);
             if ((target.searchParams.get('ont_q') || '').trim() !== '') return 'ont-search';
@@ -2171,7 +2197,8 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
                 const response = await fetch(target, {headers: {'X-Requested-With': 'fetch'}, signal: controller.signal});
                 if (!response.ok) throw new Error('NOC panel yenilenmedi');
                 updateShell(target, await response.text());
-                if (push) history.pushState({noc: true}, '', target);
+                if (push === 'replace') history.replaceState({noc: true}, '', target);
+                else if (push) history.pushState({noc: true}, '', target);
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     const status = shell.querySelector('[data-noc-status]');
@@ -2195,7 +2222,22 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
             event.preventDefault();
             const target = new URL(form.action || window.location.href, window.location.href);
             new FormData(form).forEach((value, key) => target.searchParams.set(key, value));
-            loadNoc(target);
+            const historyMode = form.dataset.filterHistory === 'replace' ? 'replace' : true;
+            delete form.dataset.filterHistory;
+            loadNoc(target, historyMode);
+        });
+        shell.addEventListener('input', event => {
+            const field = event.target.closest('[data-noc-auto-filter] input[name="ont_q"]');
+            if (!field) return;
+            const form = field.closest('form');
+            const query = field.value.trim();
+            window.clearTimeout(filterTimer);
+            if (query.length === 1) return;
+            filterTimer = window.setTimeout(() => {
+                if (!form?.isConnected) return;
+                form.dataset.filterHistory = 'replace';
+                form.requestSubmit();
+            }, query === '' ? 0 : 400);
         });
         window.addEventListener('popstate', () => loadNoc(window.location.href, false));
         window.addEventListener('superoptic:noc-refresh', () => loadNoc(window.location.href, false));

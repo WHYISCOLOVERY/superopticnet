@@ -239,7 +239,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             </div>
         </section>
 
-        <section class="portal-grid portal-grid-4 portal-reveal">
+        <section class="portal-grid portal-grid-4 portal-reveal" data-auto-filter-results="problem-kpis" data-auto-filter-form="problem-statistics-filter">
             <article class="portal-metric-card">
                 <span>Aciq</span>
                 <strong><?= e((string) $stats['open_count']); ?></strong>
@@ -267,7 +267,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
                 <h2>Filtr</h2>
                 <small>Tarix araligini ve qruplashdirmani secin.</small>
             </div>
-            <form class="stats-filters" method="get">
+            <form class="stats-filters" method="get" id="problem-statistics-filter" data-auto-filter data-auto-filter-targets="problem-kpis,problem-visuals,problem-breakdown,problem-dynamics,problem-tickets">
                 <?php if ($lang !== 'az'): ?>
                     <input type="hidden" name="lang" value="<?= e($lang); ?>">
                 <?php endif; ?>
@@ -291,10 +291,11 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
                     <button type="submit" class="portal-primary-btn">Goster</button>
                     <a class="portal-ghost-btn portal-inline-link" href="problem-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sifirla</a>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
-        <section class="stats-visual-board portal-reveal" aria-label="Problem statistikasi vizual paneli">
+        <section class="stats-visual-board portal-reveal" aria-label="Problem statistikasi vizual paneli" data-auto-filter-results="problem-visuals" data-auto-filter-form="problem-statistics-filter">
             <article class="stats-visual-card">
                 <h3>Umumi veziyyet</h3>
                 <small>Aciq ve hell olunan biletlerin nisbati.</small>
@@ -372,7 +373,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             </article>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="problem-breakdown" data-auto-filter-form="problem-statistics-filter">
             <div class="portal-card-head">
                 <h2>Problem sebebleri</h2>
                 <small>Her sebeb uzre cem, aciq, hell olunan ve orta hell vaxti.</small>
@@ -395,7 +396,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             <?php endif; ?>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="problem-dynamics" data-auto-filter-form="problem-statistics-filter">
             <div class="portal-card-head">
                 <h2>Dinamika cedveli</h2>
                 <small>Tarix ve problem sebebi uzre aciq/hell olunan bilet sayi.</small>
@@ -433,7 +434,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             <?php problem_stats_pagination('rows_page', $dynamicRowsPageNumber, $dynamicRowsTotalPages, $dynamicRowsTotal, $tablePageSize); ?>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="problem-tickets" data-auto-filter-form="problem-statistics-filter">
             <div class="portal-card-head">
                 <h2>Son biletler</h2>
                 <small>Her sehifede maksimum 50 bilet gosterilir. Emekdas qeyd icinde deyil, ayrica sutunda gosterilir.</small>

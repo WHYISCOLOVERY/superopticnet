@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/config.php';
 require_once dirname(__DIR__) . '/mgs-integration-lib.php';
 require_once dirname(__DIR__) . '/communication-provider.php';
+require_once dirname(__DIR__) . '/live-cutover-lib.php';
 
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
@@ -97,6 +98,16 @@ if ($db instanceof PDO && app_mgs_ensure_schema($db)) {
         $expect((string) ($provider['user'] ?? '') === 'public-key-smoke', 'runtime_sms_user_wrong');
         $expect((string) ($provider['password'] ?? '') === 'private-key-smoke', 'runtime_sms_password_wrong');
         $expect(!empty($status['has_credentials']) && !empty($status['has_endpoint']), 'runtime_sms_public_status_not_ready');
+        $smsGate = null;
+        foreach (app_live_cutover_gates($db) as $gate) {
+            if ((string) ($gate['key'] ?? '') === 'real_sms_send') {
+                $smsGate = $gate;
+                break;
+            }
+        }
+        $expect(is_array($smsGate), 'live_sms_gate_missing');
+        $expect((string) ($smsGate['status'] ?? '') === 'ready_for_controlled_apply', 'live_sms_gate_not_ready');
+        $expect(str_contains((string) ($smsGate['evidence'] ?? ''), 'driver=poctgoyercini_json'), 'live_sms_gate_driver_not_runtime_json');
     } catch (Throwable $exception) {
         $errors[] = 'runtime_sms_provider_exception:' . $exception->getMessage();
     } finally {

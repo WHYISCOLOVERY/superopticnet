@@ -16,6 +16,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const customerProfileSectionGroups = document.querySelectorAll('.mgs-profile-main .customer-profile-section-group');
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+    const syncMobileTables = () => {
+        document.querySelectorAll('.portal-table').forEach((table) => {
+            const headers = Array.from(table.querySelectorAll('thead th')).map((header) => header.textContent.trim());
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                Array.from(row.children).forEach((cell, index) => {
+                    if (!cell.dataset.label && headers[index]) {
+                        cell.dataset.label = headers[index];
+                    }
+                });
+            });
+        });
+    };
+    syncMobileTables();
+    const tableObserver = new MutationObserver(() => requestAnimationFrame(syncMobileTables));
+    tableObserver.observe(document.body, {childList: true, subtree: true});
+    document.addEventListener('superoptic:table-refresh', syncMobileTables);
+
     function syncTopbarState() {
         topbar?.classList.toggle('is-scrolled', window.scrollY > 12);
     }
@@ -506,6 +523,168 @@ document.addEventListener('DOMContentLoaded', () => {
             window.history.replaceState({}, document.title, url.toString());
         }
     }
+
+    let autoFilterRequest = null;
+    let autoFilterRequestId = 0;
+    let autoFilterTimer = 0;
+
+    const cancelAutoFilterRequest = () => {
+        autoFilterRequestId += 1;
+        if (!autoFilterRequest) return;
+        autoFilterRequest.abort();
+        autoFilterRequest = null;
+    };
+
+    const autoFilterTargets = (form) => String(form.dataset.autoFilterTargets || '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter(Boolean);
+
+    const setAutoFilterStatus = (form, message, isError = false) => {
+        const status = form.querySelector('[data-auto-filter-status]');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle('is-error', isError);
+    };
+
+    const syncAutoFilterForm = (form, parsed) => {
+        if (!form.id) return;
+        const incoming = parsed.getElementById(form.id);
+        if (!incoming) return;
+
+        Array.from(form.elements).forEach((field) => {
+            if (!field.name) return;
+            const matches = Array.from(incoming.elements).filter((candidate) => candidate.name === field.name);
+            if (matches.length === 0) return;
+
+            if (field instanceof HTMLInputElement && ['checkbox', 'radio'].includes(field.type)) {
+                const match = matches.find((candidate) => candidate.value === field.value);
+                field.checked = Boolean(match?.checked);
+                return;
+            }
+            if (field instanceof HTMLSelectElement && field.multiple) {
+                const values = new Set(matches.flatMap((candidate) => Array.from(candidate.selectedOptions || []).map((option) => option.value)));
+                Array.from(field.options).forEach((option) => {
+                    option.selected = values.has(option.value);
+                });
+                return;
+            }
+
+            field.value = matches[0].value;
+        });
+
+        const currentQuickFilters = form.querySelector('.mgs-quick-filters');
+        const incomingQuickFilters = incoming.querySelector('.mgs-quick-filters');
+        if (currentQuickFilters && incomingQuickFilters) {
+            currentQuickFilters.replaceWith(document.importNode(incomingQuickFilters, true));
+        }
+    };
+
+    const loadAutoFilterResults = async (form, targetUrl = null, historyMode = 'replace') => {
+        const keys = autoFilterTargets(form);
+        if (keys.length === 0) return;
+
+        const url = targetUrl instanceof URL
+            ? targetUrl
+            : new URL(form.action || window.location.href, window.location.href);
+        if (!(targetUrl instanceof URL)) {
+            new FormData(form).forEach((value, key) => url.searchParams.set(key, String(value)));
+            url.searchParams.delete('page');
+        }
+
+        cancelAutoFilterRequest();
+        const requestId = autoFilterRequestId;
+        const requestController = new AbortController();
+        autoFilterRequest = requestController;
+        const isCurrentRequest = () => autoFilterRequestId === requestId
+            && autoFilterRequest === requestController
+            && !requestController.signal.aborted;
+        const targets = keys
+            .map((key) => document.querySelector(`[data-auto-filter-results="${CSS.escape(key)}"]`))
+            .filter(Boolean);
+        targets.forEach((target) => target.setAttribute('aria-busy', 'true'));
+        setAutoFilterStatus(form, 'Nəticələr yenilənir...');
+
+        try {
+            const response = await fetch(url, {
+                credentials: 'same-origin',
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+                signal: requestController.signal,
+            });
+            if (!isCurrentRequest()) return;
+            if (!response.ok) throw new Error(`auto_filter_${response.status}`);
+
+            const responseText = await response.text();
+            if (!isCurrentRequest()) return;
+            const parsed = new DOMParser().parseFromString(responseText, 'text/html');
+            if (!isCurrentRequest()) return;
+            syncAutoFilterForm(form, parsed);
+            keys.forEach((key) => {
+                const current = document.querySelector(`[data-auto-filter-results="${CSS.escape(key)}"]`);
+                const replacement = parsed.querySelector(`[data-auto-filter-results="${CSS.escape(key)}"]`);
+                if (!current || !replacement) throw new Error(`auto_filter_target_${key}`);
+                current.replaceWith(document.importNode(replacement, true));
+            });
+
+            const nextLocation = `${url.pathname}${url.search}${url.hash}`;
+            if (historyMode === 'push') history.pushState({autoFilter: true}, '', nextLocation);
+            else if (historyMode !== 'none') history.replaceState({autoFilter: true}, '', nextLocation);
+            setAutoFilterStatus(form, 'Nəticələr yeniləndi.');
+            syncMobileTables();
+            document.dispatchEvent(new CustomEvent('superoptic:auto-filter-loaded', {detail: {url: url.href}}));
+        } catch (error) {
+            if (error?.name === 'AbortError' || !isCurrentRequest()) return;
+            targets.forEach((target) => target.removeAttribute('aria-busy'));
+            setAutoFilterStatus(form, 'Yeniləmə alınmadı. Bir daha cəhd edin.', true);
+        } finally {
+            if (autoFilterRequest === requestController) {
+                autoFilterRequest = null;
+            }
+        }
+    };
+
+    document.addEventListener('submit', (event) => {
+        const form = event.target.closest('form[data-auto-filter]');
+        if (!form) return;
+        event.preventDefault();
+        window.clearTimeout(autoFilterTimer);
+        autoFilterTimer = 0;
+        loadAutoFilterResults(form, null, 'push');
+    });
+
+    document.addEventListener('input', (event) => {
+        const field = event.target.closest('form[data-auto-filter] input[type="text"],form[data-auto-filter] input[type="search"],form[data-auto-filter] textarea');
+        if (!field) return;
+        const form = field.closest('form[data-auto-filter]');
+        window.clearTimeout(autoFilterTimer);
+        cancelAutoFilterRequest();
+        autoFilterTimer = window.setTimeout(() => loadAutoFilterResults(form), 350);
+    });
+
+    document.addEventListener('change', (event) => {
+        const field = event.target.closest('form[data-auto-filter] select,form[data-auto-filter] input[type="date"],form[data-auto-filter] input[type="month"],form[data-auto-filter] input[type="checkbox"],form[data-auto-filter] input[type="radio"]');
+        if (!field) return;
+        window.clearTimeout(autoFilterTimer);
+        autoFilterTimer = 0;
+        cancelAutoFilterRequest();
+        loadAutoFilterResults(field.closest('form[data-auto-filter]'));
+    });
+
+    document.addEventListener('click', (event) => {
+        const link = event.target.closest('[data-auto-filter-results] .portal-pagination a[href],[data-auto-filter-results] .stats-pagination a[href],[data-auto-filter-link][href]');
+        if (!link || link.classList.contains('is-disabled') || link.classList.contains('portal-disabled-link')) return;
+        const owner = link.closest('[data-auto-filter-results]');
+        const formId = owner?.dataset.autoFilterForm || link.dataset.autoFilterForm || '';
+        const form = formId ? document.getElementById(formId) : document.querySelector('form[data-auto-filter]');
+        if (!form) return;
+        event.preventDefault();
+        loadAutoFilterResults(form, new URL(link.href, window.location.href), 'push');
+    });
+
+    window.addEventListener('popstate', () => {
+        const form = document.querySelector('form[data-auto-filter]');
+        if (form) loadAutoFilterResults(form, new URL(window.location.href), 'none');
+    });
 
     if (prefersReducedMotion || !('IntersectionObserver' in window)) {
         revealTargets.forEach((item) => item.classList.add('is-visible'));

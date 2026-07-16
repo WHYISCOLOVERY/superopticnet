@@ -192,10 +192,13 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
     $isProtectedDefaultSuperAdmin = $targetLogin === 's.abdullayev@superoptic.net'
         || strtolower(trim((string) ($existingAccount['login'] ?? ''))) === 's.abdullayev@superoptic.net';
     $willBeActive = isset($_POST['is_active']) ? 1 : 0;
-    if ($isProtectedDefaultSuperAdmin
-        && !app_portal_is_super_admin($user)
-        && ($role !== 'employee' || $accountType !== 'admin' || $employeeRole !== 'super_admin' || $willBeActive !== 1)
-    ) {
+    $protectedShapeChanged = $isProtectedDefaultSuperAdmin
+        && ($targetLogin !== 's.abdullayev@superoptic.net'
+            || $role !== 'employee'
+            || $accountType !== 'admin'
+            || $employeeRole !== 'super_admin'
+            || $willBeActive !== 1);
+    if ($isProtectedDefaultSuperAdmin && ($protectedShapeChanged || !app_portal_is_super_admin($user))) {
         header('Location: ' . portal_redirect_url('admin-users.php', 'protected_account'));
         exit;
     }

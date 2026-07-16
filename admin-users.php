@@ -4,6 +4,7 @@ declare(strict_types=1);
 require __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/copilot-widget.php';
+require_once __DIR__ . '/ui-language-lib.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -380,10 +381,6 @@ unset($queryBase['page']);
                     </button>
                 </div>
                 <div class="admin-users-modal-inner" data-admin-modal-panel>
-                <div class="portal-card-head">
-                    <h2><?= $editing !== null ? 'Istifadeciye duzelis et' : 'Yeni istifadeci yarat'; ?></h2>
-                    <small>Burada yalniz emekdas hesablari yaradilir: operator, technician, support ve admin.</small>
-                </div>
                 <form class="admin-users-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" data-admin-users-employee-mode>
                     <input type="hidden" name="action" value="save_account">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
@@ -431,21 +428,21 @@ unset($queryBase['page']);
                             <?php $currentEmployeeRole = (string) ($editing['employee_role'] ?? ''); ?>
                             <select id="employeeRole" name="employee_role">
                                 <option value="">Yoxdur</option>
-                                <option value="support" <?= $currentEmployeeRole === 'support' ? 'selected' : ''; ?>>support</option>
-                                <option value="operator" <?= $currentEmployeeRole === 'operator' ? 'selected' : ''; ?>>operator</option>
-                                <option value="technician" <?= $currentEmployeeRole === 'technician' ? 'selected' : ''; ?>>technician</option>
-                                <option value="engineer" <?= $currentEmployeeRole === 'engineer' ? 'selected' : ''; ?>>engineer</option>
-                                <option value="finance" <?= $currentEmployeeRole === 'finance' ? 'selected' : ''; ?>>finance</option>
-                                <option value="warehouse" <?= $currentEmployeeRole === 'warehouse' ? 'selected' : ''; ?>>warehouse</option>
-                                <option value="warehouse_manager" <?= $currentEmployeeRole === 'warehouse_manager' ? 'selected' : ''; ?>>warehouse_manager</option>
-                                <option value="hr" <?= $currentEmployeeRole === 'hr' ? 'selected' : ''; ?>>hr</option>
-                                <option value="night_operator" <?= $currentEmployeeRole === 'night_operator' ? 'selected' : ''; ?>>night_operator</option>
-                                <option value="admin" <?= $currentEmployeeRole === 'admin' ? 'selected' : ''; ?>>admin</option>
+                                <option value="support" <?= $currentEmployeeRole === 'support' ? 'selected' : ''; ?>><?= e(app_ui_label('support')); ?></option>
+                                <option value="operator" <?= $currentEmployeeRole === 'operator' ? 'selected' : ''; ?>><?= e(app_ui_label('operator')); ?></option>
+                                <option value="technician" <?= $currentEmployeeRole === 'technician' ? 'selected' : ''; ?>><?= e(app_ui_label('technician')); ?></option>
+                                <option value="engineer" <?= $currentEmployeeRole === 'engineer' ? 'selected' : ''; ?>><?= e(app_ui_label('engineer')); ?></option>
+                                <option value="finance" <?= $currentEmployeeRole === 'finance' ? 'selected' : ''; ?>><?= e(app_ui_label('finance')); ?></option>
+                                <option value="warehouse" <?= $currentEmployeeRole === 'warehouse' ? 'selected' : ''; ?>><?= e(app_ui_label('warehouse')); ?></option>
+                                <option value="warehouse_manager" <?= $currentEmployeeRole === 'warehouse_manager' ? 'selected' : ''; ?>><?= e(app_ui_label('warehouse_manager')); ?></option>
+                                <option value="hr" <?= $currentEmployeeRole === 'hr' ? 'selected' : ''; ?>><?= e(app_ui_label('hr')); ?></option>
+                                <option value="night_operator" <?= $currentEmployeeRole === 'night_operator' ? 'selected' : ''; ?>><?= e(app_ui_label('night_operator')); ?></option>
+                                <option value="admin" <?= $currentEmployeeRole === 'admin' ? 'selected' : ''; ?>>Admin</option>
                                 <?php if ($isSuperAdminActor): ?>
-                                    <option value="super_admin" <?= $currentEmployeeRole === 'super_admin' ? 'selected' : ''; ?>>super_admin</option>
+                                    <option value="super_admin" <?= $currentEmployeeRole === 'super_admin' ? 'selected' : ''; ?>>Super admin</option>
                                 <?php endif; ?>
-                                <option value="noc" <?= $currentEmployeeRole === 'noc' ? 'selected' : ''; ?>>noc</option>
-                                <option value="sales" <?= $currentEmployeeRole === 'sales' ? 'selected' : ''; ?>>sales</option>
+                                <option value="noc" <?= $currentEmployeeRole === 'noc' ? 'selected' : ''; ?>><?= e(app_ui_label('noc')); ?></option>
+                                <option value="sales" <?= $currentEmployeeRole === 'sales' ? 'selected' : ''; ?>><?= e(app_ui_label('sales')); ?></option>
                             </select>
                         </div>
                     </div>
@@ -589,7 +586,7 @@ unset($queryBase['page']);
                     <h2>Filter</h2>
                     <small>DB daxilindeki hesablari axtar.</small>
                 </div>
-                <form class="portal-stacked-form" method="get">
+                <form class="portal-stacked-form" method="get" id="admin-users-filter" data-auto-filter data-auto-filter-targets="admin-users-results">
                     <?php if ($lang !== 'az'): ?>
                         <input type="hidden" name="lang" value="<?= e($lang); ?>">
                     <?php endif; ?>
@@ -623,11 +620,12 @@ unset($queryBase['page']);
                         <button type="submit" class="portal-primary-btn">Goster</button>
                         <a class="portal-ghost-btn portal-inline-link" href="admin-users.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sifirla</a>
                     </div>
+                    <small data-auto-filter-status role="status" aria-live="polite"></small>
                 </form>
             </article>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="admin-users-results" data-auto-filter-form="admin-users-filter">
             <div class="portal-card-head">
                 <h2>Emekdas siyahisi</h2>
                 <div class="admin-users-view-switch">
@@ -652,14 +650,14 @@ unset($queryBase['page']);
                                 </div>
                                 <?php $cardEmployeeRole = (string) ($account['employee_role'] ?? ''); ?>
                                 <span class="admin-pill <?= ((string) ($account['role'] ?? '') === 'employee') ? 'is-employee' : ''; ?> <?= ((string) ($account['account_type'] ?? '') === 'admin') ? 'is-admin' : ''; ?> <?= $cardEmployeeRole === 'super_admin' ? 'is-super-admin' : ''; ?>">
-                                    <?= $cardEmployeeRole === 'super_admin' ? 'Super admin' : e((string) ($account['account_type'] ?? '')); ?>
+                                    <?= $cardEmployeeRole === 'super_admin' ? 'Super admin' : e(app_ui_term((string) ($account['employee_role'] ?? $account['account_type'] ?? ''))); ?>
                                 </span>
                             </div>
                             <div class="admin-users-card-meta">
                                 <span>ID: <?= e((string) ($account['id'] ?? '')); ?></span>
                                 <span>Elaqe: <?= e(trim((string) ($account['phone'] ?? '') . ' ' . (string) ($account['email'] ?? '')) ?: '-'); ?></span>
                                 <span>Erazi: <?= e((string) ($account['area'] ?? '-')); ?></span>
-                                <span>Status: <?= e((string) ($account['status'] ?? '-')); ?></span>
+                                <span>Vəziyyət: <?= e(app_ui_status((string) ($account['status'] ?? '-'))); ?></span>
                                 <?php if ((string) ($accountEmployeeMeta['telegram_chat_id'] ?? '') !== ''): ?>
                                     <span>Telegram: <?= e((string) ($accountEmployeeMeta['telegram_chat_id'] ?? '')); ?></span>
                                 <?php endif; ?>
@@ -712,7 +710,7 @@ unset($queryBase['page']);
                                     <span class="admin-pill <?= ((string) ($account['role'] ?? '') === 'employee') ? 'is-employee' : ''; ?> <?= ((string) ($account['account_type'] ?? '') === 'admin') ? 'is-admin' : ''; ?> <?= $rowEmployeeRole === 'super_admin' ? 'is-super-admin' : ''; ?>">
                                         <?= $rowEmployeeRole === 'super_admin'
                                             ? 'Super admin'
-                                            : e((string) ($account['role'] ?? '') . ' / ' . (string) ($account['account_type'] ?? '')); ?>
+                                            : e(app_ui_term((string) ($account['employee_role'] ?? $account['account_type'] ?? ''))); ?>
                                     </span>
                                 </td>
                                 <td data-label="Elaqe" class="admin-users-contact">
@@ -727,7 +725,7 @@ unset($queryBase['page']);
                                     <strong><?= e((string) ($account['area'] ?? '')); ?></strong><br>
                                     <small><?= e(implode(', ', (array) ($account['responsible_areas'] ?? []))); ?></small>
                                 </td>
-                                <td data-label="Status"><?= e((string) ($account['status'] ?? '')); ?></td>
+                                <td data-label="Status"><?= e(app_ui_status((string) ($account['status'] ?? ''))); ?></td>
                                 <td data-label="Emeliyyat">
                                     <div class="admin-users-actions">
                                         <a class="portal-primary-btn portal-inline-link" href="admin-users.php?edit=<?= e((string) ($account['id'] ?? '')); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">Redakte et</a>
@@ -766,12 +764,17 @@ unset($queryBase['page']);
     <?php app_render_copilot_widget($lang); ?>
     <script>
     (() => {
-        const openModal = (id) => {
+        const modalOpeners = new WeakMap();
+        const focusableItems = (modal) => Array.from(modal.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((item) => item.offsetParent !== null);
+        const openModal = (id, opener = null) => {
             const modal = document.getElementById(id);
             if (!modal) return;
+            modalOpeners.set(modal, opener || document.activeElement);
             modal.setAttribute('open', 'open');
             document.body.classList.add('admin-modal-open');
-            modal.querySelector('input:not([type="hidden"]), select, textarea')?.focus({ preventScroll: true });
+            focusableItems(modal)[0]?.focus({ preventScroll: true });
         };
         const closeModal = (modal) => {
             if (!modal) return;
@@ -779,9 +782,12 @@ unset($queryBase['page']);
             if (!document.querySelector('.admin-users-modal[open]')) {
                 document.body.classList.remove('admin-modal-open');
             }
+            const opener = modalOpeners.get(modal);
+            if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+            modalOpeners.delete(modal);
         };
         document.querySelectorAll('[data-open-admin-modal]').forEach((button) => {
-            button.addEventListener('click', () => openModal(button.dataset.openAdminModal || ''));
+            button.addEventListener('click', () => openModal(button.dataset.openAdminModal || '', button));
         });
         document.querySelectorAll('[data-close-admin-modal]').forEach((button) => {
             button.addEventListener('click', () => closeModal(button.closest('.admin-users-modal')));
@@ -793,8 +799,24 @@ unset($queryBase['page']);
             });
         });
         document.addEventListener('keydown', (event) => {
-            if (event.key !== 'Escape') return;
-            document.querySelectorAll('.admin-users-modal[open]').forEach((modal) => closeModal(modal));
+            const modal = document.querySelector('.admin-users-modal[open]');
+            if (!modal) return;
+            if (event.key === 'Escape') {
+                closeModal(modal);
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = focusableItems(modal);
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         });
     })();
     </script>

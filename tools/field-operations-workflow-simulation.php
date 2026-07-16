@@ -254,9 +254,17 @@ try {
     $ladderModelId = app_mgs_inventory_upsert_asset_model($db, 'SIM26', 'Field Ladder ' . $runId, 'tool');
     $drillModelId = app_mgs_inventory_upsert_asset_model($db, 'SIM26', 'Field Drill ' . $runId, 'tool');
     $modemAssets = [];
+    $macSeed = hash('sha256', $runId, true);
     for ($i = 1; $i <= 16; $i++) {
         $serial = $prefix . '-MSN-' . str_pad((string) $i, 3, '0', STR_PAD_LEFT);
-        $mac = sprintf('02:26:%02X:%02X:%02X:%02X', ($i >> 24) & 255, ($i >> 16) & 255, ($i >> 8) & 255, $i & 255);
+        $mac = sprintf(
+            '02:%02X:%02X:%02X:%02X:%02X',
+            ord($macSeed[0]),
+            ord($macSeed[1]),
+            ord($macSeed[2]),
+            ($i >> 8) & 255,
+            $i & 255
+        );
         $assetId = app_mgs_inventory_create_asset($db, ['product_id' => $items['modem']['id'], 'model_id' => $modemModelId, 'asset_code' => $prefix . '-MODEM-' . $i, 'serial_number' => $serial, 'mac_address' => $mac, 'ownership_type' => 'company', 'lifecycle_status' => 'in_warehouse', 'condition_status' => 'new', 'current_location_type' => 'branch', 'current_location_id' => '1', 'metadata_json' => app_db_json_encode(['run_id' => $runId])]);
         $modemAssets[] = ['id' => $assetId, 'serial' => $serial, 'mac' => $mac];
         $report['entity_ids']['assets'][] = $assetId;

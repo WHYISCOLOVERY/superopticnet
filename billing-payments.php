@@ -40,7 +40,7 @@ function billing_payments_import_csv(string $file, bool $apply, string $method, 
             return (float) $value;
         }
         $text = trim((string) $value);
-        $text = str_replace(['AZN', 'azn', 'â‚¼', ' '], '', $text);
+        $text = str_replace(['AZN', 'azn', '₼', ' '], '', $text);
         if (str_contains($text, ',') && str_contains($text, '.')) {
             $text = str_replace(',', '', $text);
         } else {
@@ -51,13 +51,13 @@ function billing_payments_import_csv(string $file, bool $apply, string $method, 
 
     $handle = fopen($file, 'rb');
     if ($handle === false) {
-        return ['error' => 'CSV faylÄ± oxunmadÄ±.'];
+        return ['error' => 'CSV faylı oxunmadı.'];
     }
 
     $header = fgetcsv($handle, 0, $delimiter);
     if (!is_array($header) || $header === []) {
         fclose($handle);
-        return ['error' => 'CSV baÅŸlÄ±ÄŸÄ± boÅŸdur.'];
+        return ['error' => 'CSV başlığı boşdur.'];
     }
 
     $columns = array_map(static fn (string $key): string => $normalizeKey($key), $header);
@@ -144,9 +144,9 @@ function billing_payments_import_csv(string $file, bool $apply, string $method, 
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && clean_text((string) ($_POST['action'] ?? '')) === 'provider_import') {
     if (!$db instanceof PDO) {
-        $importError = 'MySQL baÄŸlantÄ±sÄ± hazÄ±r deyil.';
+        $importError = 'MySQL bağlantısı hazır deyil.';
     } elseif (!isset($_FILES['provider_csv']) || (int) ($_FILES['provider_csv']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        $importError = 'CSV faylÄ± seÃ§ilmÉ™yib vÉ™ ya yÃ¼klÉ™nmÉ™ xÉ™tasÄ± var.';
+        $importError = 'CSV faylı seçilməyib və ya yüklənmə xətası var.';
     } else {
         $importMethod = clean_text((string) ($_POST['import_method'] ?? 'provider'));
         $importMethod = $importMethod !== '' ? $importMethod : 'provider';
@@ -367,12 +367,12 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
         <?php if (false): // Legacy duplicate hero and six-card summary retained only for rollback reference. ?>
         <section class="mgs-command-hero portal-reveal">
             <div>
-                <span class="portal-kicker">MaliyyÉ™ control center</span>
-                <h1>Ã–dÉ™niÅŸ siyahÄ±sÄ± vÉ™ provider analitikasÄ±</h1>
-                <p>ÆvvÉ™l yekun KPI vÉ™ trend, sonra filterli Ã§Ä±xarÄ±ÅŸ. CÉ™dvÉ™l yalnÄ±z detallÄ± baxÄ±ÅŸ Ã¼Ã§Ã¼n aÅŸaÄŸÄ± hissÉ™dÉ™ qalÄ±r.</p>
+                <span class="portal-kicker">Maliyyə control center</span>
+                <h1>Ödəniş siyahısı və provider analitikası</h1>
+                <p>Əvvəl yekun KPI və trend, sonra filterli çıxarış. Cədvəl yalnız detallı baxış üçün aşağı hissədə qalır.</p>
                 <div class="mgs-command-actions">
-                    <a class="portal-primary-btn" href="billing-cash-payment.php"><i class="fa-solid fa-cash-register"></i> NaÄŸd Ã¶dÉ™niÅŸ</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="billing-customers.php"><i class="fa-solid fa-users"></i> MÃ¼ÅŸtÉ™rilÉ™r</a>
+                    <a class="portal-primary-btn" href="billing-cash-payment.php"><i class="fa-solid fa-cash-register"></i> Nağd ödəniş</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="billing-customers.php"><i class="fa-solid fa-users"></i> Müştərilər</a>
                     <a class="portal-ghost-btn portal-inline-link<?= $openImportPanel ? ' is-active' : ''; ?>" href="<?= e($importPanelUrl); ?>"><i class="fa-solid fa-file-import"></i> Provider import</a>
                     <a class="portal-ghost-btn portal-inline-link" href="billing-statistics.php#revenue"><i class="fa-solid fa-chart-line"></i> Analitika</a>
                 </div>
@@ -380,18 +380,18 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
             <aside class="mgs-command-panel">
                 <span>Yekun</span>
                 <strong><?= e(billing_money($summary['total'])); ?></strong>
-                <small><?= e((string) $summary['count']); ?> Ã¶dÉ™niÅŸ qeydi</small>
-                <span class="mgs-status-badge is-online">Reconciliation Ã¼Ã§Ã¼n hazÄ±r data</span>
+                <small><?= e((string) $summary['count']); ?> ödəniş qeydi</small>
+                <span class="mgs-status-badge is-online">Reconciliation üçün hazır data</span>
             </aside>
         </section>
 
         <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('Bu gÃ¼n', billing_money($summary['today']), 'gÃ¼nlÃ¼k Ã¶dÉ™niÅŸ', 'fa-calendar-day', 'orange'); ?>
-            <?php billing_render_stat_card('Bu ay', billing_money($summary['month']), 'aylÄ±q Ã¶dÉ™niÅŸ', 'fa-chart-simple', 'green'); ?>
+            <?php billing_render_stat_card('Bu gün', billing_money($summary['today']), 'günlük ödəniş', 'fa-calendar-day', 'orange'); ?>
+            <?php billing_render_stat_card('Bu ay', billing_money($summary['month']), 'aylıq ödəniş', 'fa-chart-simple', 'green'); ?>
             <?php billing_render_stat_card('Terminal', billing_money($summary['terminal']), 'provider/webhook', 'fa-building-columns', 'blue'); ?>
-            <?php billing_render_stat_card('NaÄŸd/manual', billing_money($summary['cash']), 'É™mÉ™kdaÅŸ Ã¶dÉ™niÅŸi', 'fa-cash-register', 'navy'); ?>
+            <?php billing_render_stat_card('Nağd/manual', billing_money($summary['cash']), 'əməkdaş ödənişi', 'fa-cash-register', 'navy'); ?>
             <?php billing_render_stat_card('Toplam', billing_money($summary['total']), (string) $summary['count'] . ' qeyd', 'fa-coins', 'orange'); ?>
-            <?php billing_render_stat_card('Filtr nÉ™ticÉ™si', (string) $summary['filtered_count'], billing_money($summary['filtered_total']), 'fa-filter', 'blue'); ?>
+            <?php billing_render_stat_card('Filtr nəticəsi', (string) $summary['filtered_count'], billing_money($summary['filtered_total']), 'fa-filter', 'blue'); ?>
         </section>
 
         <?php endif; ?>
@@ -400,8 +400,8 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
         <section class="mgs-filter-panel portal-reveal" id="provider-import">
             <div class="mgs-section-head">
                 <div>
-                    <h2>Provider/terminal Ã¶dÉ™niÅŸ importu</h2>
-                    <p>CSV Ã¼zrÉ™ dry-run yoxlama et, sonra tÉ™sdiqlÉ™yib mÃ¼ÅŸtÉ™rilÉ™rÉ™ tÉ™tbiq et. <code>external_id</code> tÉ™krar Ã¶dÉ™niÅŸin ikinci dÉ™fÉ™ yazÄ±lmasÄ±nÄ± bloklayÄ±r.</p>
+                    <h2>Provider/terminal ödəniş importu</h2>
+                    <p>CSV üzrə dry-run yoxlama et, sonra təsdiqləyib müştərilərə tətbiq et. <code>external_id</code> təkrar ödənişin ikinci dəfə yazılmasını bloklayır.</p>
                 </div>
             </div>
             <?php if ($importError !== ''): ?>
@@ -410,17 +410,17 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
             <?php if (is_array($importResult)): ?>
                 <div class="mgs-stat-grid">
                     <?php billing_render_stat_card('Rejim', (string) ($importResult['mode'] ?? '-'), 'CSV yoxlama', 'fa-file-import', 'blue'); ?>
-                    <?php billing_render_stat_card('Oxundu', (string) ($importResult['processed'] ?? 0), 'sÉ™tir', 'fa-list-check', 'navy'); ?>
-                    <?php billing_render_stat_card('TÉ™tbiq', (string) ($importResult['applied'] ?? 0), 'real yazÄ±lan', 'fa-circle-check', 'green'); ?>
-                    <?php billing_render_stat_card('HazÄ±r', (string) ($importResult['would_apply'] ?? 0), 'dry-run', 'fa-eye', 'orange'); ?>
-                    <?php billing_render_stat_card('TÉ™krar', (string) ($importResult['duplicates'] ?? 0), 'skip', 'fa-copy', 'blue'); ?>
-                    <?php billing_render_stat_card('TapÄ±lmadÄ±', (string) ($importResult['missing_customer'] ?? 0), 'mÃ¼ÅŸtÉ™ri yoxdur', 'fa-triangle-exclamation', 'orange'); ?>
+                    <?php billing_render_stat_card('Oxundu', (string) ($importResult['processed'] ?? 0), 'sətir', 'fa-list-check', 'navy'); ?>
+                    <?php billing_render_stat_card('Tətbiq', (string) ($importResult['applied'] ?? 0), 'real yazılan', 'fa-circle-check', 'green'); ?>
+                    <?php billing_render_stat_card('Hazır', (string) ($importResult['would_apply'] ?? 0), 'dry-run', 'fa-eye', 'orange'); ?>
+                    <?php billing_render_stat_card('Təkrar', (string) ($importResult['duplicates'] ?? 0), 'skip', 'fa-copy', 'blue'); ?>
+                    <?php billing_render_stat_card('Tapılmadı', (string) ($importResult['missing_customer'] ?? 0), 'müştəri yoxdur', 'fa-triangle-exclamation', 'orange'); ?>
                 </div>
                 <?php $previewRows = array_slice(is_array($importResult['rows'] ?? null) ? $importResult['rows'] : [], 0, 12); ?>
                 <?php if ($previewRows !== []): ?>
                     <div class="portal-table-wrap">
                         <table class="portal-table">
-                            <thead><tr><th>SÉ™tir</th><th>MÃ¼ÅŸtÉ™ri</th><th>MÉ™blÉ™ÄŸ</th><th>Transaction</th><th>Status</th></tr></thead>
+                            <thead><tr><th>Sətir</th><th>Müştəri</th><th>Məbləğ</th><th>Transaction</th><th>Status</th></tr></thead>
                             <tbody>
                                 <?php foreach ($previewRows as $row): ?>
                                     <tr>
@@ -448,15 +448,15 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                         <input type="text" name="import_method" value="provider" placeholder="emanat / million / kapital">
                     </div>
                     <div class="portal-form-row">
-                        <label>GÃ¼n</label>
+                        <label>Gün</label>
                         <input type="number" name="import_days" min="0" max="366" value="0">
-                        <small>0 = tarifdÉ™ki gÃ¼n, yoxdursa 30 gÃ¼n.</small>
+                        <small>0 = tarifdəki gün, yoxdursa 30 gün.</small>
                     </div>
                     <div class="portal-form-row">
                         <label>Rejim</label>
                         <select name="import_mode">
-                            <option value="dry-run">Dry-run / yalnÄ±z yoxla</option>
-                            <option value="apply">TÉ™tbiq et</option>
+                            <option value="dry-run">Dry-run / yalnız yoxla</option>
+                            <option value="apply">Tətbiq et</option>
                         </select>
                     </div>
                 </div>
@@ -472,8 +472,8 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
             <article class="mgs-chart-card">
                 <div class="mgs-chart-head">
                     <div>
-                        <h2>GÃ¼nlÃ¼k gÉ™lir chart</h2>
-                        <p>Son 14 gÃ¼n Ã¼zrÉ™ Ã¶dÉ™niÅŸ hÉ™cmi.</p>
+                        <h2>Günlük gəlir chart</h2>
+                        <p>Son 14 gün üzrə ödəniş həcmi.</p>
                     </div>
                 </div>
                 <div class="mgs-bars">
@@ -486,15 +486,15 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                         </div>
                     <?php endforeach; ?>
                     <?php if ($dailyRevenue === []): ?>
-                        <?php billing_render_empty_state('Ã–dÉ™niÅŸ trendi yoxdur', 'Tarix aralÄ±ÄŸÄ±nda Ã¶dÉ™niÅŸ tapÄ±lmadÄ±.', 'fa-chart-column'); ?>
+                        <?php billing_render_empty_state('Ödəniş trendi yoxdur', 'Tarix aralığında ödəniş tapılmadı.', 'fa-chart-column'); ?>
                     <?php endif; ?>
                 </div>
             </article>
             <article class="mgs-chart-card">
                 <div class="mgs-chart-head">
                     <div>
-                        <h2>Provider paylanmasÄ±</h2>
-                        <p>Metod Ã¼zrÉ™ É™n Ã§ox istifadÉ™ olunan kanallar.</p>
+                        <h2>Provider paylanması</h2>
+                        <p>Metod üzrə ən çox istifadə olunan kanallar.</p>
                     </div>
                 </div>
                 <div class="mgs-bars">
@@ -513,25 +513,25 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
         <?php endif; ?>
 
         <section class="mgs-filter-panel portal-reveal">
-            <div class="mgs-section-head"><div><h2>Ã–dÉ™niÅŸ Ã¼zrÉ™ filtrasiya</h2><p>Kod, mÃ¼qavilÉ™, ad, telefon, transaction, tarix vÉ™ metod Ã¼zrÉ™ axtar.</p></div></div>
-            <form method="get" class="portal-stacked-form">
+            <div class="mgs-section-head"><div><h2>Ödəniş üzrə filtrasiya</h2><p>Kod, müqavilə, ad, telefon, transaction, tarix və metod üzrə axtar.</p></div></div>
+            <form method="get" class="portal-stacked-form" id="billing-payments-filter" data-auto-filter data-auto-filter-targets="billing-payments-results">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
-                    <div class="portal-form-row"><label>AxtarÄ±ÅŸ</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="mÃ¼ÅŸtÉ™ri kodu / ad / telefon / transaction"></div>
+                    <div class="portal-form-row"><label>Axtarış</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="müştəri kodu / ad / telefon / transaction"></div>
                     <div class="portal-form-row">
                         <label>Metod</label>
                         <select name="method">
-                            <option value="">BÃ¼tÃ¼n metodlar</option>
+                            <option value="">Bütün metodlar</option>
                             <?php foreach ($methods as $methodRow): ?>
                                 <?php $methodName = (string) ($methodRow['payment_method'] ?? ''); ?>
                                 <option value="<?= e($methodName); ?>" <?= $method === $methodName ? 'selected' : ''; ?>><?= e($methodName); ?> (<?= e((string) ($methodRow['payment_count'] ?? 0)); ?>)</option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="portal-form-row"><label>Ä°lkin tarix</label><input type="date" name="start_date" value="<?= e($startDate); ?>"></div>
+                    <div class="portal-form-row"><label>İlkin tarix</label><input type="date" name="start_date" value="<?= e($startDate); ?>"></div>
                     <div class="portal-form-row"><label>Son tarix</label><input type="date" name="end_date" value="<?= e($endDate); ?>"></div>
                     <div class="portal-form-row">
-                        <label>GÃ¶stÉ™r</label>
+                        <label>Göstər</label>
                         <select name="per_page">
                             <?php foreach ([25, 50] as $size): ?>
                                 <option value="<?= e((string) $size); ?>" <?= $perPage === $size ? 'selected' : ''; ?>><?= e((string) $size); ?></option>
@@ -541,25 +541,26 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                 </div>
                 <div class="billing-filter-actions">
                     <button type="submit" class="portal-primary-btn">Axtar</button>
-                    <a class="portal-ghost-btn portal-inline-link" href="billing-payments.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">SÄ±fÄ±rla</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="billing-payments.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sıfırla</a>
                 </div>
                 <div class="billing-export-actions">
                     <button type="button" class="portal-ghost-btn">Kopyala</button>
                     <button type="button" class="portal-ghost-btn">Excel</button>
                     <button type="button" class="portal-ghost-btn">CSV</button>
-                    <button type="button" class="portal-ghost-btn">Ã‡ap et</button>
+                    <button type="button" class="portal-ghost-btn">Çap et</button>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
-        <section class="mgs-data-card portal-reveal">
-            <div class="mgs-section-head"><div><h2>Ã–dÉ™niÅŸ Ã§Ä±xarÄ±ÅŸÄ±</h2><p><?= e((string) $summary['filtered_count']); ?> nÉ™ticÉ™dÉ™n <?= e((string) count($payments)); ?> qeyd gÃ¶stÉ™rilir.</p></div></div>
+        <section class="mgs-data-card portal-reveal" data-auto-filter-results="billing-payments-results" data-auto-filter-form="billing-payments-filter">
+            <div class="mgs-section-head"><div><h2>Ödəniş çıxarışı</h2><p><?= e((string) $summary['filtered_count']); ?> nəticədən <?= e((string) count($payments)); ?> qeyd göstərilir.</p></div></div>
             <?php if ($payments === []): ?>
-                <?php billing_render_empty_state('Ã–dÉ™niÅŸ tapÄ±lmadÄ±', 'AxtarÄ±ÅŸ vÉ™ filtr ÅŸÉ™rtlÉ™rini dÉ™yiÅŸib yenidÉ™n yoxlayÄ±n.', 'fa-receipt'); ?>
+                <?php billing_render_empty_state('Ödəniş tapılmadı', 'Axtarış və filtr şərtlərini dəyişib yenidən yoxlayın.', 'fa-receipt'); ?>
             <?php else: ?>
             <div class="portal-table-wrap">
                 <table class="portal-table">
-                    <thead><tr><th>â„–</th><th>MÃ¼ÅŸtÉ™ri</th><th>Terminal/metod</th><th>Ã–dÉ™niÅŸ</th><th>Transaction</th><th>Tarix</th><th>Profil</th></tr></thead>
+                    <thead><tr><th>№</th><th>Müştəri</th><th>Terminal/metod</th><th>Ödəniş</th><th>Transaction</th><th>Tarix</th><th>Profil</th></tr></thead>
                     <tbody>
                         <?php foreach ($payments as $payment): ?>
                             <tr>
@@ -569,7 +570,7 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                                 <td><?= e(billing_money($payment['amount'] ?? 0)); ?></td>
                                 <td><?= e((string) ($payment['transaction_id'] ?? '-')); ?></td>
                                 <td><?= e(billing_datetime($payment['created_at'] ?? null)); ?></td>
-                                <td><a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) ($payment['account_id'] ?? 0)); ?>#profile-payments">AÃ§</a></td>
+                                <td><a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) ($payment['account_id'] ?? 0)); ?>#profile-payments">Aç</a></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -577,14 +578,14 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
             </div>
             <?php endif; ?>
             <?php if ($totalPages > 1): ?>
-                <nav class="portal-pagination" aria-label="Ã–dÉ™niÅŸ sÉ™hifÉ™lÉ™ri">
+                <nav class="portal-pagination" aria-label="Ödəniş səhifələri">
                     <?php
                     $prevParams = $queryBase + ['page' => max(1, $page - 1)];
                     $nextParams = $queryBase + ['page' => min($totalPages, $page + 1)];
                     ?>
-                    <a class="portal-ghost-btn portal-inline-link<?= $page <= 1 ? ' portal-disabled-link' : ''; ?>" href="billing-payments.php?<?= e(http_build_query($prevParams)); ?>">ÆvvÉ™lki</a>
+                    <a class="portal-ghost-btn portal-inline-link<?= $page <= 1 ? ' portal-disabled-link' : ''; ?>" href="billing-payments.php?<?= e(http_build_query($prevParams)); ?>">Əvvəlki</a>
                     <span><?= e((string) $page); ?> / <?= e((string) $totalPages); ?></span>
-                    <a class="portal-ghost-btn portal-inline-link<?= $page >= $totalPages ? ' portal-disabled-link' : ''; ?>" href="billing-payments.php?<?= e(http_build_query($nextParams)); ?>">NÃ¶vbÉ™ti</a>
+                    <a class="portal-ghost-btn portal-inline-link<?= $page >= $totalPages ? ' portal-disabled-link' : ''; ?>" href="billing-payments.php?<?= e(http_build_query($nextParams)); ?>">Növbəti</a>
                 </nav>
             <?php endif; ?>
         </section>

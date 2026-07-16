@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/analytics-center-lib.php';
 require_once __DIR__ . '/billing-module-lib.php';
 require_once __DIR__ . '/finance-module-lib.php';
+require_once __DIR__ . '/ui-language-lib.php';
 
 function app_statistics_user_is_admin(array $user): bool
 {

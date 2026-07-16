@@ -62,6 +62,7 @@ function native_network_monitor_render(string $page = 'operations-center.php', s
 }
 
 $html = native_network_monitor_render('noc-devices.php', 'view=monitor');
+$source = (string) file_get_contents(dirname(__DIR__) . '/noc-devices.php');
 $markers = [
     'data-native-monitor-board',
     'data-noc-shell',
@@ -89,6 +90,12 @@ $markers = [
     'Scan tamamlandi. Tapilan cihazlari secib monitorinqe elave edin',
     'noc-scan-dialog is-empty',
     'noc-scan-dialog.is-open',
+    'data-noc-primary-stats',
+    'data-noc-secondary-stats',
+    'Ətraflı NOC göstəriciləri',
+    'data-noc-auto-filter',
+    'filterTimer',
+    "history.replaceState({noc: true}",
     'maintenance',
 ];
 
@@ -96,6 +103,45 @@ foreach ($markers as $marker) {
     if (!str_contains($html, $marker)) {
         native_network_monitor_fail('NOC monitor missing marker: ' . $marker, 4);
     }
+}
+
+$cssRuleBody = static function (string $css, string $selector): string {
+    $needle = $selector . '{';
+    $offset = 0;
+    $bodies = [];
+    while (($start = strpos($css, $needle, $offset)) !== false) {
+        $bodyStart = $start + strlen($needle);
+        $end = strpos($css, '}', $bodyStart);
+        if ($end === false) {
+            break;
+        }
+        $bodies[] = substr($css, $bodyStart, $end - $bodyStart);
+        $offset = $end + 1;
+    }
+    return implode(';', $bodies);
+};
+$scanDialogRule = $cssRuleBody($source, '.noc-scan-dialog.is-open');
+$scanResultsRule = $cssRuleBody($source, '.noc-scan-dialog.is-open>.noc-scan-results');
+
+if ($scanDialogRule === ''
+    || !str_contains($scanDialogRule, 'overflow:hidden')
+    || str_contains($scanDialogRule, 'overflow:auto')) {
+    native_network_monitor_fail('NOC scan overlay must not own a second scroll container', 4);
+}
+
+if ($scanResultsRule === ''
+    || !str_contains($scanResultsRule, 'overflow-y:auto')
+    || !str_contains($scanResultsRule, 'overscroll-behavior:contain')) {
+    native_network_monitor_fail('NOC scan result list must be the single modal scroll owner', 4);
+}
+
+$primaryStatsStart = strpos($html, 'data-noc-primary-stats');
+$secondaryStatsStart = strpos($html, 'data-noc-secondary-stats');
+$primaryStatsHtml = $primaryStatsStart !== false && $secondaryStatsStart !== false
+    ? substr($html, $primaryStatsStart, $secondaryStatsStart - $primaryStatsStart)
+    : '';
+if ($primaryStatsHtml === '' || substr_count($primaryStatsHtml, 'mgs-stat-card') !== 4) {
+    native_network_monitor_fail('NOC primary summary must contain exactly four operational KPIs', 4);
 }
 
 $scanModalHtml = native_network_monitor_render('noc-devices.php', 'view=monitor', [

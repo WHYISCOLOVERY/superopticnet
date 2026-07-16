@@ -161,6 +161,30 @@ readiness_add(
     $db instanceof PDO ? 'MySQL connection OK.' : 'MySQL connection failed.'
 );
 
+$expectedTimezone = 'Asia/Baku';
+$expectedOffsetMinutes = intdiv((new DateTimeZone($expectedTimezone))->getOffset(new DateTimeImmutable('now', new DateTimeZone($expectedTimezone))), 60);
+$dbOffsetMinutes = null;
+if ($db instanceof PDO) {
+    try {
+        $dbOffsetMinutes = (int) $db->query('SELECT TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW())')->fetchColumn();
+    } catch (Throwable) {
+        $dbOffsetMinutes = null;
+    }
+}
+$timezoneAligned = date_default_timezone_get() === $expectedTimezone
+    && app_timezone_offset() === '+04:00'
+    && $dbOffsetMinutes === $expectedOffsetMinutes;
+readiness_add(
+    $checks,
+    'timezone_alignment',
+    'critical',
+    $timezoneAligned,
+    'PHP=' . date_default_timezone_get()
+        . '; app_offset=' . app_timezone_offset()
+        . '; db_offset_minutes=' . ($dbOffsetMinutes === null ? 'unknown' : (string) $dbOffsetMinutes)
+        . '; required=' . $expectedTimezone . '.'
+);
+
 $dbUser = app_config('db_user');
 $dbPass = app_config('db_pass');
 readiness_add(
@@ -250,13 +274,12 @@ readiness_add(
     'Telegram token/chat are ' . (($telegramToken !== '' && $telegramChat !== '') ? 'configured' : 'missing') . '; required for alarm/ticket notifications.'
 );
 
-$smsEndpoint = function_exists('app_communication_runtime_setting')
-    ? app_communication_runtime_setting('sms_provider_endpoint', APP_COMMUNICATION_SMS_POCTGOYERCINI_SEND_ENDPOINT)
-    : app_config('sms_provider_endpoint');
-$smsToken = function_exists('app_communication_runtime_setting') ? app_communication_runtime_setting('sms_provider_token') : app_config('sms_provider_token');
-$smsDriver = strtolower(trim(function_exists('app_communication_runtime_setting') ? app_communication_runtime_setting('sms_provider_driver', 'poctgoyercini_json') : app_config('sms_provider_driver', 'json')));
-$smsUser = function_exists('app_communication_runtime_setting') ? app_communication_runtime_setting('sms_provider_user') : app_config('sms_provider_user');
-$smsPassword = function_exists('app_communication_runtime_setting') ? app_communication_runtime_setting('sms_provider_password') : app_config('sms_provider_password');
+$smsProvider = app_communication_provider_config('sms', '994000000000');
+$smsEndpoint = (string) ($smsProvider['endpoint'] ?? '');
+$smsToken = (string) ($smsProvider['token'] ?? '');
+$smsDriver = strtolower(trim((string) ($smsProvider['driver'] ?? '')));
+$smsUser = (string) ($smsProvider['user'] ?? '');
+$smsPassword = (string) ($smsProvider['password'] ?? '');
 $smsCredentialsOk = in_array($smsDriver, ['poctgoyercini_json', 'poctgoyercini_xml'], true)
     ? (!readiness_is_placeholder($smsUser) && !readiness_is_placeholder($smsPassword))
     : !readiness_is_placeholder($smsToken);
@@ -264,7 +287,7 @@ readiness_add(
     $checks,
     'sms_provider',
     'warning',
-    !$productionMode || (!readiness_is_placeholder($smsEndpoint) && $smsCredentialsOk),
+    !$productionMode || (!empty($smsProvider['configured']) && !readiness_is_placeholder($smsEndpoint) && $smsCredentialsOk),
     $productionMode
         ? 'SMS provider endpoint and credentials should be configured for billing fallback messages. Driver=' . ($smsDriver !== '' ? $smsDriver : 'json') . '.'
         : 'Local mode does not require SMS provider.'

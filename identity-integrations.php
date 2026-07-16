@@ -94,8 +94,8 @@ if ($db instanceof PDO) {
         <section class="portal-hero portal-reveal">
             <div>
                 <span class="portal-kicker">SSO / Identity</span>
-                <h1>MÃ¼ÅŸtÉ™ri vÉ™ É™mÉ™kdaÅŸ Ã¼Ã§Ã¼n MyGov ID hazÄ±rlÄ±q modulu</h1>
-                <p>Real API qoÅŸulmayana qÉ™dÉ™r modul passivdir. State, nonce, provider identity mapping vÉ™ callback skeleti hazÄ±r saxlanÄ±r.</p>
+                <h1>Müştəri və əməkdaş üçün MyGov ID hazırlıq modulu</h1>
+                <p>Real API qoşulmayana qədər modul passivdir. State, nonce, provider identity mapping və callback skeleti hazır saxlanır.</p>
             </div>
             <div class="portal-status-card">
                 <span>Konfiqurasiya</span>
@@ -112,17 +112,17 @@ if ($db instanceof PDO) {
         </section>
 
         <section class="mgs-action-strip portal-reveal">
-            <article class="mgs-action-tile"><i class="fa-solid fa-key"></i><strong>OIDC skeleti</strong><small>State, nonce vÉ™ callback qorumasÄ± É™vvÉ™lcÉ™dÉ™n ayrÄ±lÄ±b.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-id-card"></i><strong>FIN mapping</strong><small>MÃ¼ÅŸtÉ™ri vÉ™ É™mÉ™kdaÅŸ eyni provider identity modeli ilÉ™ baÄŸlanÄ±r.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-shield-halved"></i><strong>TÉ™hlÃ¼kÉ™siz giriÅŸ</strong><small>API qoÅŸulanda lokal parol É™vÉ™zinÉ™ vahid identifikasiya istifadÉ™ edilÉ™cÉ™k.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-clipboard-check"></i><strong>Audit hazÄ±rdÄ±r</strong><small>Kim baÄŸladÄ±, nÉ™ vaxt yoxlandÄ± vÉ™ hansÄ± hesaba dÃ¼ÅŸdÃ¼ saxlanÄ±r.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-key"></i><strong>OIDC skeleti</strong><small>State, nonce və callback qoruması əvvəlcədən ayrılıb.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-id-card"></i><strong>FIN mapping</strong><small>Müştəri və əməkdaş eyni provider identity modeli ilə bağlanır.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-shield-halved"></i><strong>Təhlükəsiz giriş</strong><small>API qoşulanda lokal parol əvəzinə vahid identifikasiya istifadə ediləcək.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-clipboard-check"></i><strong>Audit hazırdır</strong><small>Kim bağladı, nə vaxt yoxlandı və hansı hesaba düşdü saxlanır.</small></article>
         </section>
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card">
                 <div class="portal-card-head">
                     <h2>Gelecek API ayarlari</h2>
-                    <small>Bu deyerler dolanda login buttonu real MyGov authorize URL-É™ yonlenecek.</small>
+                    <small>Bu dəyərlər doldurulduqda giriş düyməsi real MyGov səlahiyyətləndirmə ünvanına yönləndiriləcək.</small>
                 </div>
                 <div class="mgs-command-actions" style="margin-bottom:16px;">
                     <a class="portal-ghost-btn portal-inline-link" href="admin-users.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Istifadeciler</a>
@@ -141,7 +141,7 @@ if ($db instanceof PDO) {
             <article class="portal-card">
                 <div class="portal-card-head">
                     <h2>Identity-ni hesaba bagla</h2>
-                    <small>Real API gÉ™lÉ™ndÉ™ bu mÉ™lumat avtomatik userinfo-dan gÉ™lÉ™cÉ™k. Ä°ndi test vÉ™ hazÄ±rlÄ±q Ã¼Ã§Ã¼ndÃ¼r.</small>
+                    <small>Real API gələndə bu məlumat avtomatik userinfo-dan gələcək. İndi test və hazırlıq üçündür.</small>
                 </div>
                 <form method="post" class="portal-stacked-form">
                     <input type="hidden" name="action" value="link_mygov_identity">
@@ -152,11 +152,11 @@ if ($db instanceof PDO) {
                     </div>
                     <div class="portal-form-row portal-grid-slim">
                         <div><label>FIN</label><input type="text" name="fin_code"></div>
-                        <div><label>ÅÉ™xsiyyÉ™t seriyasÄ±</label><input type="text" name="document_no"></div>
+                        <div><label>Şəxsiyyət seriyası</label><input type="text" name="document_no"></div>
                     </div>
                     <div class="portal-form-row portal-grid-slim">
-                        <div><label>TÉ™sdiqli ad soyad</label><input type="text" name="verified_full_name"></div>
-                        <div><label>DoÄŸum tarixi</label><input type="date" name="verified_birth_date"></div>
+                        <div><label>Təsdiqli ad soyad</label><input type="text" name="verified_full_name"></div>
+                        <div><label>Doğum tarixi</label><input type="date" name="verified_birth_date"></div>
                     </div>
                     <button type="submit" class="portal-primary-btn">Identity bagla</button>
                 </form>
@@ -165,8 +165,8 @@ if ($db instanceof PDO) {
 
         <section class="portal-card portal-reveal">
             <div class="portal-card-head">
-                <h2>Bagli MyGov identity-lÉ™r</h2>
-                <small>GÉ™lÉ™cÉ™kdÉ™ login bu mapping É™sasÄ±nda portal hesabÄ±na dÃ¼ÅŸÉ™cÉ™k.</small>
+                <h2>Bagli MyGov identity-lər</h2>
+                <small>Gələcəkdə login bu mapping əsasında portal hesabına düşəcək.</small>
             </div>
             <div class="portal-table-wrap">
                 <table class="portal-table">

@@ -8,6 +8,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
+require_once $root . '/config.php';
 $php = PHP_BINARY;
 $startedAt = microtime(true);
 
@@ -185,6 +186,8 @@ $tests = [
     ['analytics_center_context', ['tools/analytics-center-smoke.php'], 120],
     ['ai_module_role_ajax', ['tools/ai-module-separation-smoke.php'], 120],
     ['statistics_center_role_ajax', ['tools/statistics-center-smoke.php'], 120],
+    ['automatic_filter_contract', ['tools/automatic-filter-contract-smoke.php'], 120],
+    ['mojibake_repair', ['tools/mojibake-repair-smoke.php'], 120],
     ['ui_language_shell_standard', ['tools/ui-language-shell-smoke.php'], 120],
     ['four_module_ui_consistency', ['tools/four-module-ui-consistency-smoke.php'], 180],
     ['portal_workflow_guide', ['tools/portal-workflow-guide-smoke.php'], 120],

@@ -168,7 +168,7 @@ if ($db instanceof PDO) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RADIUS NAS cihazlarÄ±</title>
+    <title>RADIUS NAS cihazları</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <style>
@@ -177,7 +177,7 @@ if ($db instanceof PDO) {
     </style>
 </head>
 <body class="portal-body">
-    <?php billing_render_header('RADIUS NAS cihazlarÄ±', 'radius-nas', $lang); ?>
+    <?php billing_render_header('RADIUS NAS cihazları', 'radius-nas', $lang); ?>
 
     <main class="portal-layout">
         <?php if ($flash !== null): ?>
@@ -190,16 +190,16 @@ if ($db instanceof PDO) {
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">FreeRADIUS NAS</span>
-                <h1>Router / BNG / NAS cihazlarÄ±nÄ±n idarÉ™etmÉ™si</h1>
-                <p>Bu sÉ™hifÉ™ FreeRADIUS `nas` cÉ™dvÉ™lini idarÉ™ edir. Secret siyahÄ±da gÃ¶stÉ™rilmir; dÉ™yiÅŸiklik yalnÄ±z admin/NOC tÉ™rÉ™findÉ™n yazÄ±lÄ±r.</p>
+                <h1>Router / BNG / NAS cihazlarının idarəetməsi</h1>
+                <p>Bu səhifə FreeRADIUS `nas` cədvəlini idarə edir. Secret siyahıda göstərilmir; dəyişiklik yalnız admin/NOC tərəfindən yazılır.</p>
                 <div class="mgs-command-actions">
                     <a class="portal-primary-btn portal-inline-link" href="radius-active.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Online sessiyalar</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="radius-billing.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Tarif vÉ™ poollar</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="radius-billing.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Tarif və poollar</a>
                     <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">NAT log</a>
                 </div>
             </div>
             <div class="mgs-command-panel">
-                <span>NAS sayÄ±</span>
+                <span>NAS sayı</span>
                 <strong><?= e((string) $nasStats['nas_total']); ?></strong>
                 <small>Aktiv sessiya: <?= e((string) $nasStats['active_sessions']); ?></small>
                 <span>24 saat trafik</span>
@@ -216,12 +216,12 @@ if ($db instanceof PDO) {
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card">
-                <div class="portal-card-head"><h2>NAS É™lavÉ™ et / yenilÉ™</h2><small>Core router vÉ™ BNG-lÉ™r burada saxlanÄ±r.</small></div>
+                <div class="portal-card-head"><h2>NAS əlavə et / yenilə</h2><small>Core router və BNG-lər burada saxlanır.</small></div>
                 <form class="portal-stacked-form" method="post">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <input type="hidden" name="action" value="save_nas">
                     <div class="portal-form-row portal-grid-slim">
-                        <input type="text" name="nasname" placeholder="85.132.57.218 vÉ™ ya 172.16.5.5" required>
+                        <input type="text" name="nasname" placeholder="85.132.57.218 və ya 172.16.5.5" required>
                         <input type="text" name="shortname" placeholder="SPTECH Core">
                     </div>
                     <div class="portal-form-row portal-grid-slim">
@@ -231,7 +231,7 @@ if ($db instanceof PDO) {
                             <option value="juniper">Juniper</option>
                             <option value="other">Other</option>
                         </select>
-                        <input type="number" name="ports" min="0" placeholder="Port sayÄ±">
+                        <input type="number" name="ports" min="0" placeholder="Port sayı">
                     </div>
                     <div class="portal-form-row portal-grid-slim">
                         <input type="password" name="secret" placeholder="RADIUS secret">
@@ -246,34 +246,34 @@ if ($db instanceof PDO) {
             </article>
 
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Konfiqurasiya qeydi</h2><small>RouterÉ™ toxunmadan operator Ã¼Ã§Ã¼n checklist.</small></div>
+                <div class="portal-card-head"><h2>Konfiqurasiya qeydi</h2><small>Routerə toxunmadan operator üçün checklist.</small></div>
                 <div class="message-worker-list">
                     <div class="message-worker-row"><strong>Auth port</strong><span class="portal-pill">UDP 1812</span></div>
                     <div class="message-worker-row"><strong>Accounting port</strong><span class="portal-pill">UDP 1813</span></div>
-                    <div class="message-worker-row"><strong>Core router</strong><span class="portal-pill">Client kimi É™lavÉ™ olunmalÄ±dÄ±r</span></div>
-                    <div class="message-worker-row"><strong>Secret</strong><span class="portal-pill">Router vÉ™ FreeRADIUS eyni olmalÄ±dÄ±r</span></div>
+                    <div class="message-worker-row"><strong>Core router</strong><span class="portal-pill">Client kimi əlavə olunmalıdır</span></div>
+                    <div class="message-worker-row"><strong>Secret</strong><span class="portal-pill">Router və FreeRADIUS eyni olmalıdır</span></div>
                 </div>
                 <div class="portal-section-gap">
                     <code class="message-worker-code">client core-router { ipaddr = 85.132.57.218 secret = ***** }</code>
-                    <code class="message-worker-code">sql nas table = bu sÉ™hifÉ™dÉ™ki `nas` cÉ™dvÉ™li</code>
+                    <code class="message-worker-code">sql nas table = bu səhifədəki `nas` cədvəli</code>
                 </div>
             </article>
         </section>
 
         <section class="mgs-data-card portal-reveal">
-            <div class="mgs-section-head"><div><h2>NAS siyahÄ±sÄ±</h2><p><?= e((string) count($nasRows)); ?> cihaz gÃ¶stÉ™rilir.</p></div></div>
+            <div class="mgs-section-head"><div><h2>NAS siyahısı</h2><p><?= e((string) count($nasRows)); ?> cihaz göstərilir.</p></div></div>
             <?php if ($nasRows === []): ?>
-                <?php billing_render_empty_state('NAS yoxdur', 'Core router vÉ™ ya BNG É™lavÉ™ etdikdÉ™ burada gÃ¶rÃ¼nÉ™cÉ™k.', 'fa-server'); ?>
+                <?php billing_render_empty_state('NAS yoxdur', 'Core router və ya BNG əlavə etdikdə burada görünəcək.', 'fa-server'); ?>
             <?php else: ?>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
-                        <thead><tr><th>NAS</th><th>Tip</th><th>Secret</th><th>24h</th><th>Reload</th><th>Qeyd</th><th>ÆmÉ™liyyat</th></tr></thead>
+                        <thead><tr><th>NAS</th><th>Tip</th><th>Secret</th><th>24h</th><th>Reload</th><th>Qeyd</th><th>Əməliyyat</th></tr></thead>
                         <tbody>
                             <?php foreach ($nasRows as $nas): ?>
                                 <tr>
                                     <td><strong><?= e((string) ($nas['nasname'] ?? '-')); ?></strong><br><small><?= e((string) ($nas['shortname'] ?? '-')); ?></small></td>
                                     <td><?= e(radius_nas_type_label((string) ($nas['type'] ?? 'other'))); ?><br><small><?= e((string) ($nas['ports'] ?? '-')); ?> port</small></td>
-                                    <td><span class="radius-nas-secret">â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢</span><br><small><?= e((string) ($nas['server'] ?? '')); ?></small></td>
+                                    <td><span class="radius-nas-secret">••••••••</span><br><small><?= e((string) ($nas['server'] ?? '')); ?></small></td>
                                     <td><?= e((string) ($nas['sessions_24h'] ?? 0)); ?> sessiya<br><small><?= e(billing_bytes((float) ($nas['traffic_24h'] ?? 0))); ?></small></td>
                                     <td><?= e(billing_datetime($nas['reloadtime'] ?? null) ?: '-'); ?></td>
                                     <td><?= e((string) ($nas['description'] ?? '')); ?><br><small><?= e((string) ($nas['community'] ?? '')); ?></small></td>
@@ -302,13 +302,13 @@ if ($db instanceof PDO) {
         </section>
 
         <section class="mgs-data-card portal-reveal">
-            <div class="mgs-section-head"><div><h2>Son accounting qeydlÉ™ri</h2><p>NAS-lar Ã¼zrÉ™ É™n son radacct yazÄ±larÄ±.</p></div></div>
+            <div class="mgs-section-head"><div><h2>Son accounting qeydləri</h2><p>NAS-lar üzrə ən son radacct yazıları.</p></div></div>
             <?php if ($recentAccounting === []): ?>
-                <?php billing_render_empty_state('Accounting qeydi yoxdur', 'FreeRADIUS accounting qoÅŸulduqda son sessiyalar burada gÃ¶rÃ¼nÉ™cÉ™k.', 'fa-database'); ?>
+                <?php billing_render_empty_state('Accounting qeydi yoxdur', 'FreeRADIUS accounting qoşulduqda son sessiyalar burada görünəcək.', 'fa-database'); ?>
             <?php else: ?>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
-                        <thead><tr><th>Username</th><th>MÃ¼ÅŸtÉ™ri</th><th>NAS / IP</th><th>MAC</th><th>Status</th><th>Trafik</th></tr></thead>
+                        <thead><tr><th>Username</th><th>Müştəri</th><th>NAS / IP</th><th>MAC</th><th>Status</th><th>Trafik</th></tr></thead>
                         <tbody>
                             <?php foreach ($recentAccounting as $row): ?>
                                 <?php $online = trim((string) ($row['acctstoptime'] ?? '')) === ''; ?>
@@ -318,7 +318,7 @@ if ($db instanceof PDO) {
                                     <td><?= e((string) ($row['nasipaddress'] ?? '-')); ?><br><small><?= e((string) ($row['framedipaddress'] ?? '-')); ?></small></td>
                                     <td><?= e((string) ($row['callingstationid'] ?? '-')); ?></td>
                                     <td><span class="portal-pill <?= e($online ? 'portal-pill-success' : ''); ?>"><?= e($online ? 'Online' : ((string) ($row['acctterminatecause'] ?? 'Closed'))); ?></span><br><small><?= e(billing_datetime($row['acctstarttime'] ?? null)); ?></small></td>
-                                    <td>â†“ <?= e(billing_bytes((float) ($row['acctoutputoctets'] ?? 0))); ?><br><small>â†‘ <?= e(billing_bytes((float) ($row['acctinputoctets'] ?? 0))); ?></small></td>
+                                    <td>↓ <?= e(billing_bytes((float) ($row['acctoutputoctets'] ?? 0))); ?><br><small>↑ <?= e(billing_bytes((float) ($row['acctinputoctets'] ?? 0))); ?></small></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>

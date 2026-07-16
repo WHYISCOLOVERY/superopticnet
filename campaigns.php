@@ -11,12 +11,12 @@ $flash = null;
 function campaign_scope_label(string $scope): string
 {
     return match ($scope) {
-        'overdue_60d' => '60+ gÃ¼n Ã¶dÉ™niÅŸ etmÉ™yÉ™nlÉ™r',
-        'inactive_30d' => '30+ gÃ¼n passiv/deaktiv qalanlar',
-        'expiring_1d' => '1 gÃ¼n sonra xidmÉ™ti bitÉ™nlÉ™r',
-        'risk_high' => 'Risk balÄ± yÃ¼ksÉ™k olanlar',
-        'area' => 'SeÃ§ilmiÅŸ É™razi',
-        default => 'Aktiv mÃ¼ÅŸtÉ™rilÉ™r',
+        'overdue_60d' => '60+ gün ödəniş etməyənlər',
+        'inactive_30d' => '30+ gün passiv/deaktiv qalanlar',
+        'expiring_1d' => '1 gün sonra xidməti bitənlər',
+        'risk_high' => 'Risk balı yüksək olanlar',
+        'area' => 'Seçilmiş ərazi',
+        default => 'Aktiv müştərilər',
     };
 }
 
@@ -193,7 +193,7 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $csrfToken = $_POST['csrf_token'] ?? '';
     $action = clean_text((string) ($_POST['action'] ?? ''));
     if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
-        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasÄ± uÄŸursuz oldu.'];
+        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlaması uğursuz oldu.'];
     } elseif ($action === 'queue_campaign') {
         $scope = clean_text((string) ($_POST['scope'] ?? 'overdue_60d'));
         $area = clean_text((string) ($_POST['area'] ?? ''));
@@ -214,7 +214,7 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
         $flash = [
             'type' => $failed === 0 ? 'success' : 'error',
-            'message' => campaign_scope_label($scope) . ': uyÄŸun ' . count($accounts) . ', nÃ¶vbÉ™yÉ™ yazÄ±lan ' . $queued . ', xÉ™ta ' . $failed . '.',
+            'message' => campaign_scope_label($scope) . ': uyğun ' . count($accounts) . ', növbəyə yazılan ' . $queued . ', xəta ' . $failed . '.',
         ];
     }
 }
@@ -241,7 +241,7 @@ if ($db instanceof PDO) {
 $channelLabels = [
     'auto' => 'Avto fallback',
     'whatsapp' => 'WhatsApp',
-    'app' => 'Ã–z app / portal',
+    'app' => 'Öz app / portal',
     'telegram' => 'Telegram',
     'sms' => 'SMS provider',
 ];
@@ -279,32 +279,32 @@ $channelLabels = [
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">CRM / RETENTION</span>
-                <h1>Kampaniya vÉ™ mÃ¼ÅŸtÉ™ri geri qaytarma paneli</h1>
-                <p>Ã–dÉ™niÅŸi gecikÉ™n, passivlÉ™ÅŸÉ™n vÉ™ xidmÉ™ti bitmÉ™k Ã¼zrÉ™ olan mÃ¼ÅŸtÉ™rilÉ™r ayrÄ±ca qruplaÅŸdÄ±rÄ±lÄ±r. Mesajlar test rejimindÉ™ yoxlanÄ±b sonra nÃ¶vbÉ™yÉ™ yazÄ±la bilÉ™r.</p>
+                <h1>Kampaniya və müştəri geri qaytarma paneli</h1>
+                <p>Ödənişi gecikən, passivləşən və xidməti bitmək üzrə olan müştərilər ayrıca qruplaşdırılır. Mesajlar test rejimində yoxlanıb sonra növbəyə yazıla bilər.</p>
                 <div class="mgs-command-actions">
-                    <a class="portal-primary-btn portal-inline-link" href="#queue-campaign">Kampaniya hazÄ±rla</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="message-center.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Mesaj mÉ™rkÉ™zi</a>
+                    <a class="portal-primary-btn portal-inline-link" href="#queue-campaign">Kampaniya hazırla</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="message-center.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Mesaj mərkəzi</a>
                 </div>
             </div>
             <div class="mgs-command-panel">
-                <span>60+ gÃ¼n</span>
+                <span>60+ gün</span>
                 <strong><?= e((string) ($stats['overdue_60d'] ?? 0)); ?></strong>
-                <small>retention namizÉ™di</small>
+                <small>retention namizədi</small>
                 <span>Riskli</span>
                 <strong><?= e((string) ($stats['risk_high'] ?? 0)); ?></strong>
             </div>
         </section>
 
         <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('Aktiv baza', (string) ($stats['active'] ?? 0), 'mesaj Ã¼Ã§Ã¼n aktiv mÃ¼ÅŸtÉ™ri', 'fa-users', 'blue', 'campaigns.php?scope=active'); ?>
-            <?php billing_render_stat_card('1 gÃ¼n sonra bitir', (string) ($stats['expiring_1d'] ?? 0), 'Ã¶dÉ™niÅŸ xatÄ±rlatmasÄ±', 'fa-hourglass-half', 'orange', 'campaigns.php?scope=expiring_1d'); ?>
-            <?php billing_render_stat_card('60+ gÃ¼n Ã¶dÉ™niÅŸsiz', (string) ($stats['overdue_60d'] ?? 0), 'geri qaytarma kampaniyasÄ±', 'fa-rotate-left', 'navy', 'campaigns.php?scope=overdue_60d'); ?>
-            <?php billing_render_stat_card('Riskli', (string) ($stats['risk_high'] ?? 0), 'risk balÄ± 7+', 'fa-triangle-exclamation', 'red', 'campaigns.php?scope=risk_high'); ?>
+            <?php billing_render_stat_card('Aktiv baza', (string) ($stats['active'] ?? 0), 'mesaj üçün aktiv müştəri', 'fa-users', 'blue', 'campaigns.php?scope=active'); ?>
+            <?php billing_render_stat_card('1 gün sonra bitir', (string) ($stats['expiring_1d'] ?? 0), 'ödəniş xatırlatması', 'fa-hourglass-half', 'orange', 'campaigns.php?scope=expiring_1d'); ?>
+            <?php billing_render_stat_card('60+ gün ödənişsiz', (string) ($stats['overdue_60d'] ?? 0), 'geri qaytarma kampaniyası', 'fa-rotate-left', 'navy', 'campaigns.php?scope=overdue_60d'); ?>
+            <?php billing_render_stat_card('Riskli', (string) ($stats['risk_high'] ?? 0), 'risk balı 7+', 'fa-triangle-exclamation', 'red', 'campaigns.php?scope=risk_high'); ?>
         </section>
 
         <section class="mgs-filter-panel portal-reveal">
-            <div class="mgs-section-head"><div><h2>NamizÉ™d filteri</h2><p>Qrup seÃ§ vÉ™ kampaniyaya dÃ¼ÅŸÉ™cÉ™k ilk 100 mÃ¼ÅŸtÉ™rini yoxla.</p></div></div>
-            <form method="get" class="portal-stacked-form">
+            <div class="mgs-section-head"><div><h2>Namizəd filteri</h2><p>Qrup seç və kampaniyaya düşəcək ilk 100 müştərini yoxla.</p></div></div>
+            <form method="get" class="portal-stacked-form" id="campaign-filter" data-auto-filter data-auto-filter-targets="campaign-candidates">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
                     <div class="portal-form-row">
@@ -316,9 +316,9 @@ $channelLabels = [
                         </select>
                     </div>
                     <div class="portal-form-row">
-                        <label>Ærazi</label>
+                        <label>Ərazi</label>
                         <select name="area">
-                            <option value="">BÃ¼tÃ¼n É™razilÉ™r</option>
+                            <option value="">Bütün ərazilər</option>
                             <?php foreach ($areas as $option): ?>
                                 <option value="<?= e($option); ?>" <?= $area === $option ? 'selected' : ''; ?>><?= e($option); ?></option>
                             <?php endforeach; ?>
@@ -326,19 +326,20 @@ $channelLabels = [
                     </div>
                 </div>
                 <div class="portal-form-actions">
-                    <button class="portal-primary-btn" type="submit">NamizÉ™dlÉ™ri gÃ¶stÉ™r</button>
+                    <button class="portal-primary-btn" type="submit">Namizədləri göstər</button>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
         <section class="campaign-grid portal-reveal">
-            <div class="portal-card">
+            <div class="portal-card" data-auto-filter-results="campaign-candidates" data-auto-filter-form="campaign-filter">
                 <div class="portal-card-head">
                     <h2><?= e(campaign_scope_label($scope)); ?></h2>
-                    <small>Ä°lk 100 nÉ™ticÉ™. KÃ¼tlÉ™vi gÃ¶ndÉ™rimdÉ™ limit ayrÄ±ca seÃ§ilir.</small>
+                    <small>İlk 100 nəticə. Kütləvi göndərimdə limit ayrıca seçilir.</small>
                 </div>
                 <?php if ($candidates === []): ?>
-                    <?php billing_render_empty_state('NamizÉ™d yoxdur', 'Bu filter Ã¼zrÉ™ kampaniya namizÉ™di tapÄ±lmadÄ±.', 'fa-user-check'); ?>
+                    <?php billing_render_empty_state('Namizəd yoxdur', 'Bu filter üzrə kampaniya namizədi tapılmadı.', 'fa-user-check'); ?>
                 <?php else: ?>
                     <div class="campaign-card-list">
                         <?php foreach ($candidates as $candidate): ?>
@@ -347,13 +348,13 @@ $channelLabels = [
                                     <strong><?= e((string) ($candidate['subscriber_code'] ?? '-')); ?> - <?= e((string) ($candidate['full_name'] ?? '-')); ?></strong>
                                     <div class="campaign-meta">
                                         <span><?= e((string) ($candidate['area'] ?? '-')); ?></span>
-                                        <span>Son Ã¶dÉ™niÅŸ: <?= e(billing_datetime($candidate['campaign_last_payment_at'] ?? '')); ?></span>
-                                        <span>GÃ¼n fÉ™rqi: <?= e((string) (($candidate['campaign_days_since_payment'] ?? null) ?? '-')); ?></span>
-                                        <span>BitmÉ™: <?= e(billing_datetime($candidate['campaign_expires_at'] ?? '')); ?></span>
+                                        <span>Son ödəniş: <?= e(billing_datetime($candidate['campaign_last_payment_at'] ?? '')); ?></span>
+                                        <span>Gün fərqi: <?= e((string) (($candidate['campaign_days_since_payment'] ?? null) ?? '-')); ?></span>
+                                        <span>Bitmə: <?= e(billing_datetime($candidate['campaign_expires_at'] ?? '')); ?></span>
                                         <span>Qalan: <?= e((string) (($candidate['campaign_days_left'] ?? null) ?? '-')); ?></span>
                                         <span>Tarif: <?= e((string) (($candidate['campaign_tariff'] ?? '') ?: '-')); ?></span>
                                         <?php if ((int) ($candidate['campaign_risk_score'] ?? 0) >= 7): ?>
-                                            <span class="campaign-risk-high">Risk yÃ¼ksÉ™k</span>
+                                            <span class="campaign-risk-high">Risk yüksək</span>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -366,8 +367,8 @@ $channelLabels = [
 
             <aside class="portal-card" id="queue-campaign">
                 <div class="portal-card-head">
-                    <h2>KampaniyanÄ± nÃ¶vbÉ™yÉ™ yaz</h2>
-                    <small>Default test rejimidir. Test rejimi yalnÄ±z 1 mesaj yaradÄ±r.</small>
+                    <h2>Kampaniyanı növbəyə yaz</h2>
+                    <small>Default test rejimidir. Test rejimi yalnız 1 mesaj yaradır.</small>
                 </div>
                 <form method="post" class="portal-stacked-form">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
@@ -381,16 +382,16 @@ $channelLabels = [
                         </select>
                     </div>
                     <div class="portal-form-row">
-                        <label>Ærazi</label>
+                        <label>Ərazi</label>
                         <select name="area">
-                            <option value="">BÃ¼tÃ¼n É™razilÉ™r</option>
+                            <option value="">Bütün ərazilər</option>
                             <?php foreach ($areas as $option): ?>
                                 <option value="<?= e($option); ?>" <?= $area === $option ? 'selected' : ''; ?>><?= e($option); ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="portal-form-row">
-                        <label>Åablon</label>
+                        <label>Şablon</label>
                         <select name="template_code">
                             <?php foreach ($templates as $template): ?>
                                 <option value="<?= e((string) $template['code']); ?>" <?= (string) $template['code'] === 'retention_60d' ? 'selected' : ''; ?>><?= e((string) $template['title']); ?></option>
@@ -410,30 +411,30 @@ $channelLabels = [
                         <input type="number" name="limit" min="1" max="500" value="100">
                     </div>
                     <div class="portal-form-row">
-                        <label>FÉ™rdi kampaniya mÉ™tni</label>
-                        <textarea name="custom_message" maxlength="640" rows="5" data-ticket-message placeholder="BoÅŸ qalarsa seÃ§ilmiÅŸ ÅŸablon iÅŸlÉ™yÉ™cÉ™k"></textarea>
+                        <label>Fərdi kampaniya mətni</label>
+                        <textarea name="custom_message" maxlength="640" rows="5" data-ticket-message placeholder="Boş qalarsa seçilmiş şablon işləyəcək"></textarea>
                         <small class="portal-char-counter" data-char-counter>0 / 640</small>
                     </div>
                     <label class="portal-checkbox-line">
                         <input type="checkbox" name="test_mode" value="1" checked>
                         <span>TEST MESAJI kimi yoxla</span>
                     </label>
-                    <button class="portal-primary-btn" type="submit">NÃ¶vbÉ™yÉ™ yaz</button>
+                    <button class="portal-primary-btn" type="submit">Növbəyə yaz</button>
                 </form>
             </aside>
         </section>
 
         <section class="portal-card portal-reveal">
             <div class="portal-card-head">
-                <h2>Son kampaniya mesajlarÄ±</h2>
-                <small>Provider adapteri qoÅŸulana qÉ™dÉ™r status `queued/test` qalÄ±r.</small>
+                <h2>Son kampaniya mesajları</h2>
+                <small>Provider adapteri qoşulana qədər status `queued/test` qalır.</small>
             </div>
             <?php if ($recentCampaignMessages === []): ?>
-                <?php billing_render_empty_state('Kampaniya mesajÄ± yoxdur', 'Ä°lk test kampaniyasÄ±nÄ± yuxarÄ±dakÄ± formadan yaradÄ±n.', 'fa-message'); ?>
+                <?php billing_render_empty_state('Kampaniya mesajı yoxdur', 'İlk test kampaniyasını yuxarıdakı formadan yaradın.', 'fa-message'); ?>
             <?php else: ?>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
-                        <thead><tr><th>Tarix</th><th>MÃ¼ÅŸtÉ™ri</th><th>Kanal</th><th>Åablon</th><th>Status</th><th>Mesaj</th></tr></thead>
+                        <thead><tr><th>Tarix</th><th>Müştəri</th><th>Kanal</th><th>Şablon</th><th>Status</th><th>Mesaj</th></tr></thead>
                         <tbody>
                             <?php foreach ($recentCampaignMessages as $message): ?>
                                 <tr>

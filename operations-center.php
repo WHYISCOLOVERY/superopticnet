@@ -1893,10 +1893,11 @@ if (app_portal_is_admin($user)) {
         .spog-scan-result small{display:block;color:#64748b;margin-top:4px}
         .noc-scan-dialog{grid-column:1/-1;display:grid;gap:14px;margin-top:14px;padding:16px;border:1px solid rgba(11,123,135,.18);border-radius:22px;background:linear-gradient(135deg,rgba(238,248,247,.95),rgba(255,255,255,.96))}
         .noc-scan-dialog.is-empty[hidden]{display:none!important}
-        .noc-scan-dialog.is-open{position:fixed;z-index:620;inset:0;display:grid;align-content:center;justify-items:center;gap:0;margin:0;padding:24px;border:0;border-radius:0;background:rgba(15,23,42,.48);backdrop-filter:blur(7px);overflow:auto}
+        body:has(.noc-scan-dialog.is-open){overflow:hidden}
+        .noc-scan-dialog.is-open{position:fixed;z-index:620;inset:0;display:grid;grid-template-columns:minmax(0,1100px);grid-template-rows:auto minmax(0,min(68vh,720px));align-content:center;justify-content:center;gap:0;margin:0;padding:24px;border:0;border-radius:0;background:rgba(15,23,42,.48);backdrop-filter:blur(7px);overflow:hidden}
         .noc-scan-dialog.is-open>.noc-scan-head,.noc-scan-dialog.is-open>.noc-scan-results{width:min(1100px,calc(100vw - 32px));box-sizing:border-box}
         .noc-scan-dialog.is-open>.noc-scan-head{padding:18px 20px;border:1px solid rgba(148,163,184,.28);border-bottom:0;border-radius:22px 22px 0 0;background:linear-gradient(180deg,#fff,rgba(248,250,252,.98))}
-        .noc-scan-dialog.is-open>.noc-scan-results{max-height:min(68vh,720px);overflow:auto;padding:0 20px 20px;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 22px 22px;background:rgba(248,250,252,.98)}
+        .noc-scan-dialog.is-open>.noc-scan-results{min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:0 20px 20px;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 22px 22px;background:rgba(248,250,252,.98)}
         .noc-scan-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
         .noc-scan-head h3{margin:4px 0;color:#10233f}
         .noc-scan-head small{color:#64748b}
@@ -1916,6 +1917,10 @@ if (app_portal_is_admin($user)) {
         @media (max-width:1100px){.spog-service-grid,.spog-backup-grid,.spog-backup-quick-summary,.spog-update-forms{grid-template-columns:1fr}}
         @media (max-width:1100px){.spog-monitor-grid{grid-template-columns:1fr}.monitor-node{width:min(82vw,260px)}.native-monitor-board{min-height:min(72vh,680px)}}
         @media (max-width:760px){
+            .noc-scan-dialog.is-open{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);align-content:stretch;padding:10px}
+            .noc-scan-dialog.is-open>.noc-scan-head,.noc-scan-dialog.is-open>.noc-scan-results{width:100%}
+            .noc-scan-dialog.is-open>.noc-scan-head{padding:14px}
+            .noc-scan-dialog.is-open>.noc-scan-results{padding:0 14px 14px}
             .portal-operations-report>.portal-card-head{align-items:stretch}
             .portal-report-action-panel{min-width:0;max-width:none;width:100%}
             .portal-report-action-group,.portal-report-action-group.is-statistics{grid-template-columns:1fr 1fr}
@@ -3819,6 +3824,56 @@ if (app_portal_is_admin($user)) {
     </main>
 
     <script>
+    const portalDialogA11y = (() => {
+        const openers = new WeakMap();
+        const focusableSelector = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+        const controls = (dialog) => Array.from(dialog.querySelectorAll(focusableSelector))
+            .filter((control) => !control.hidden && control.getClientRects().length > 0);
+
+        return {
+            open(dialog) {
+                if (!dialog) return;
+                const active = document.activeElement;
+                if (active instanceof HTMLElement && active !== document.body) {
+                    openers.set(dialog, active);
+                }
+                requestAnimationFrame(() => {
+                    const first = controls(dialog)[0];
+                    if (first) first.focus();
+                });
+            },
+            close(dialog) {
+                const opener = dialog ? openers.get(dialog) : null;
+                if (opener instanceof HTMLElement && opener.isConnected) {
+                    requestAnimationFrame(() => opener.focus());
+                }
+            },
+            trap(event, dialog) {
+                if (!dialog || event.key !== 'Tab') return;
+                const items = controls(dialog);
+                if (items.length === 0) {
+                    event.preventDefault();
+                    return;
+                }
+                const first = items[0];
+                const last = items[items.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            },
+        };
+    })();
+
+    document.addEventListener('keydown', (event) => {
+        const dialog = document.querySelector('.finance-dialog:not([hidden]),.hr-dialog:not([hidden]),.inventory-dialog:not([hidden])');
+        portalDialogA11y.trap(event, dialog);
+    });
+
     (() => {
         let financeRequest = null;
 
@@ -3829,8 +3884,7 @@ if (app_portal_is_admin($user)) {
             document.body.appendChild(dialog);
             dialog.hidden = false;
             document.body.classList.add('finance-dialog-open');
-            const firstControl = dialog.querySelector('input:not([type="hidden"]),select,textarea,button');
-            if (firstControl) firstControl.focus();
+            portalDialogA11y.open(dialog);
         };
 
         const closeFinanceDialog = (dialog) => {
@@ -3843,6 +3897,7 @@ if (app_portal_is_admin($user)) {
             if (!document.querySelector('.finance-dialog:not([hidden])')) {
                 document.body.classList.remove('finance-dialog-open');
             }
+            portalDialogA11y.close(dialog);
         };
 
         const financeEndpoint = (canonicalUrl, fragment = '') => {
@@ -4063,8 +4118,7 @@ if (app_portal_is_admin($user)) {
             document.body.appendChild(dialog);
             dialog.hidden = false;
             document.body.classList.add('hr-dialog-open');
-            const firstControl = dialog.querySelector('input:not([type="hidden"]),select,textarea,button');
-            if (firstControl) firstControl.focus();
+            portalDialogA11y.open(dialog);
         };
 
         const closeHrDialog = (dialog) => {
@@ -4079,6 +4133,7 @@ if (app_portal_is_admin($user)) {
             if (!document.querySelector('.hr-dialog:not([hidden])')) {
                 document.body.classList.remove('hr-dialog-open');
             }
+            portalDialogA11y.close(dialog);
         };
 
         const hrEndpoint = (canonicalUrl, fragment = '') => {
@@ -4238,8 +4293,7 @@ if (app_portal_is_admin($user)) {
             document.body.appendChild(dialog);
             dialog.hidden = false;
             document.body.classList.add('inventory-dialog-open');
-            const firstControl = dialog.querySelector('input:not([type="hidden"]),select,textarea,button');
-            if (firstControl) firstControl.focus();
+            portalDialogA11y.open(dialog);
         };
 
         const closeInventoryDialog = (dialog) => {
@@ -4254,6 +4308,7 @@ if (app_portal_is_admin($user)) {
             if (!document.querySelector('.inventory-dialog:not([hidden])')) {
                 document.body.classList.remove('inventory-dialog-open');
             }
+            portalDialogA11y.close(dialog);
         };
 
         const inventoryEndpoint = (canonicalUrl, fragment = '') => {
@@ -4412,10 +4467,11 @@ if (app_portal_is_admin($user)) {
 
         document.addEventListener('input', (event) => {
             const control = event.target.closest(inputSelector);
-            if (!control || ['hidden', 'submit', 'button', 'reset'].includes(control.type)) {
+            const isTextFilter = control && (control.matches('textarea') || ['search', 'text'].includes(control.type));
+            if (!isTextFilter) {
                 return;
             }
-            schedule(control, control.type === 'search' || control.type === 'text' ? 320 : 180);
+            schedule(control, 320);
         });
 
         document.addEventListener('change', (event) => {

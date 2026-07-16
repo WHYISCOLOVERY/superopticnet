@@ -37,6 +37,39 @@ function app_config(string $key, string $default = ''): string
     return is_string($value) ? $value : $default;
 }
 
+function app_timezone(): string
+{
+    static $timezone = null;
+    if (is_string($timezone)) {
+        return $timezone;
+    }
+
+    $candidate = trim(app_config('app_timezone', 'Asia/Baku'));
+    if ($candidate === '') {
+        $candidate = 'Asia/Baku';
+    }
+    try {
+        new DateTimeZone($candidate);
+        $timezone = $candidate;
+    } catch (Throwable) {
+        $timezone = 'Asia/Baku';
+    }
+
+    date_default_timezone_set($timezone);
+    return $timezone;
+}
+
+function app_timezone_offset(): string
+{
+    $zone = new DateTimeZone(app_timezone());
+    $seconds = $zone->getOffset(new DateTimeImmutable('now', $zone));
+    $sign = $seconds < 0 ? '-' : '+';
+    $minutes = (int) floor(abs($seconds) / 60);
+    return sprintf('%s%02d:%02d', $sign, intdiv($minutes, 60), $minutes % 60);
+}
+
+app_timezone();
+
 function app_asset(string $path): string
 {
     $absolute = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $path);
@@ -149,48 +182,42 @@ function app_repair_mojibake(string $value): string
         'Ä°' => 'İ',
         'ÄŸ' => 'ğ',
         'Äž' => 'Ğ',
-        'â€œ' => '"',
-        'â€' => '"',
-        'â€˜' => "'",
-        'â€™' => "'",
-        'â€“' => '-',
-        'â€”' => '-',
         'Â°' => '°',
         'Â±' => '±',
         'Â' => '',
-        'Aktiv istifadÃ‰â„¢ÃƒÂ§ilÃ‰â„¢r vÃ‰â„¢ sessiyalar' => 'Aktiv istifadəçilər və sessiyalar',
-        'Referans sistemdÃ‰â„¢ki aktiv list modeli: username, IP, MAC, VLAN/status, 24 saat trafik, sessiya vÃ‰â„¢ disconnect Ã‰â„¢mÃ‰â„¢liyyatÃ„Â±na hazÃ„Â±r gÃƒÂ¶rÃƒÂ¼nÃƒÂ¼Ã…Å¸.' => 'Referans sistemdəki aktiv list modeli: username, IP, MAC, VLAN/status, 24 saat trafik, sessiya və disconnect əməliyyatına hazır görünüş.',
-        'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri siyahÃ„Â±sÃ„Â±' => 'Müştəri siyahısı',
-        'NAT log axtarÃ„Â±Ã…Å¸Ã„Â±' => 'NAT log axtarışı',
-        'radacct aÃƒÂ§Ã„Â±q sessiyalar' => 'radacct açıq sessiyalar',
-        'CÃ‰â„¢mi istifadÃ‰â„¢ÃƒÂ§i' => 'Cəmi istifadəçi',
-        'HazÃ„Â±rda online' => 'Hazırda online',
-        'Top trafik istifadÃ‰â„¢ÃƒÂ§ilÃ‰â„¢ri' => 'Top trafik istifadəçiləri',
-        'Son 24 saat ÃƒÂ¼ÃƒÂ§ÃƒÂ¼n download + upload xÃƒÂ¼lasÃ‰â„¢si.' => 'Son 24 saat üçün download + upload xülasəsi.',
-        'Son 24 saat ÃƒÂ¼ÃƒÂ§ÃƒÂ¼n RADIUS accounting trafiki tapÃ„Â±lmadÃ„Â±.' => 'Son 24 saat üçün RADIUS accounting trafiki tapılmadı.',
-        'NAS vÃ‰â„¢ status paylanmasÃ„Â±' => 'NAS və status paylanması',
-        'Aktiv list nÃ‰â„¢ticÃ‰â„¢sinÃ‰â„¢ gÃƒÂ¶rÃ‰â„¢ operativ bÃƒÂ¶lÃƒÂ¼nmÃ‰â„¢.' => 'Aktiv list nəticəsinə görə operativ bölünmə.',
-        'AxtarÃ„Â±Ã…Å¸ vÃ‰â„¢ filtr' => 'Axtarış və filtr',
-        'Ã„Â°stifadÃ‰â„¢ÃƒÂ§i, IP, MAC, telefon vÃ‰â„¢ mÃƒÂ¼Ã…Å¸tÃ‰â„¢ri adÃ„Â± ÃƒÂ¼zrÃ‰â„¢ axtar.' => 'İstifadəçi, IP, MAC, telefon və müştəri adı üzrə axtar.',
-        'AxtarÃ„Â±Ã…Å¸' => 'Axtarış',
-        'HamÃ„Â±sÃ„Â±' => 'Hamısı',
-        'DayandÃ„Â±rÃ„Â±lÃ„Â±b' => 'Dayandırılıb',
-        'SÃ„Â±fÃ„Â±rla' => 'Sıfırla',
-        'Disconnect sorÃ„Å¸ularÃ„Â±' => 'Disconnect sorğuları',
-        'Bu siyahÃ„Â± audit ÃƒÂ¼ÃƒÂ§ÃƒÂ¼ndÃƒÂ¼r. Sistem buradan canlÃ„Â± CoA vÃ‰â„¢ ya router disconnect Ã‰â„¢mri gÃƒÂ¶ndÃ‰â„¢rmir.' => 'Bu siyahı audit üçündür. Sistem buradan canlı CoA və ya router disconnect əmri göndərmir.',
-        'Admin/NOC icazÃ‰â„¢si var' => 'Admin/NOC icazəsi var',
-        'Admin/NOC icazÃ‰â„¢si lazÃ„Â±mdÃ„Â±r' => 'Admin/NOC icazəsi lazımdır',
-        'Disconnect sorÃ„Å¸usu yoxdur' => 'Disconnect sorğusu yoxdur',
-        'Online sessiyadan sorÃ„Å¸u yaradÃ„Â±ldÃ„Â±qda burada gÃƒÂ¶rÃƒÂ¼nÃ‰â„¢cÃ‰â„¢k.' => 'Online sessiyadan sorğu yaradıldıqda burada görünəcək.',
-        'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri' => 'Müştəri',
-        'SÃ‰â„¢bÃ‰â„¢b' => 'Səbəb',
-        'Ã„Â°stifadÃ‰â„¢ÃƒÂ§i siyahÃ„Â±sÃ„Â±' => 'İstifadəçi siyahısı',
-        'nÃ‰â„¢ticÃ‰â„¢ gÃƒÂ¶stÃ‰â„¢rilir.' => 'nəticə göstərilir.',
-        'Radius istifadÃ‰â„¢ÃƒÂ§isi tapÃ„Â±lmadÃ„Â±' => 'Radius istifadəçisi tapılmadı',
-        'AxtarÃ„Â±Ã…Å¸ vÃ‰â„¢ filtr Ã…Å¸Ã‰â„¢rtlÃ‰â„¢rinÃ‰â„¢ uyÃ„Å¸un sessiya vÃ‰â„¢ ya servis yoxdur.' => 'Axtarış və filtr şərtlərinə uyğun sessiya və ya servis yoxdur.',
-        'Ã†ÂmÃ‰â„¢liyyat' => 'Əməliyyat',
-        'Ã†ÂtraflÃ„Â±' => 'Ətraflı',
-        'Disconnect sorÃ„Å¸usu' => 'Disconnect sorğusu',
+        'Aktiv istifadəçilÉ™r vÉ™ sessiyalar' => 'Aktiv istifadəçilər və sessiyalar',
+        'Referans sistemdÉ™ki aktiv list modeli: username, IP, MAC, VLAN/status, 24 saat trafik, sessiya vÉ™ disconnect É™mÉ™liyyatına hazır görünüş.' => 'Referans sistemdəki aktiv list modeli: username, IP, MAC, VLAN/status, 24 saat trafik, sessiya və disconnect əməliyyatına hazır görünüş.',
+        'MüştÉ™ri siyahısı' => 'Müştəri siyahısı',
+        'NAT log axtarışı' => 'NAT log axtarışı',
+        'radacct açıq sessiyalar' => 'radacct açıq sessiyalar',
+        'CÉ™mi istifadəçi' => 'Cəmi istifadəçi',
+        'Hazırda online' => 'Hazırda online',
+        'Top trafik istifadəçilÉ™ri' => 'Top trafik istifadəçiləri',
+        'Son 24 saat üçün download + upload xülasÉ™si.' => 'Son 24 saat üçün download + upload xülasəsi.',
+        'Son 24 saat üçün RADIUS accounting trafiki tapılmadı.' => 'Son 24 saat üçün RADIUS accounting trafiki tapılmadı.',
+        'NAS vÉ™ status paylanması' => 'NAS və status paylanması',
+        'Aktiv list nÉ™ticÉ™sinÉ™ görÉ™ operativ bölünmÉ™.' => 'Aktiv list nəticəsinə görə operativ bölünmə.',
+        'Axtarış vÉ™ filtr' => 'Axtarış və filtr',
+        'İstifadəçi, IP, MAC, telefon vÉ™ müştÉ™ri adı üzrÉ™ axtar.' => 'İstifadəçi, IP, MAC, telefon və müştəri adı üzrə axtar.',
+        'Axtarış' => 'Axtarış',
+        'Hamısı' => 'Hamısı',
+        'Dayandırılıb' => 'Dayandırılıb',
+        'Sıfırla' => 'Sıfırla',
+        'Disconnect sorÄŸuları' => 'Disconnect sorğuları',
+        'Bu siyahı audit üçündür. Sistem buradan canlı CoA vÉ™ ya router disconnect É™mri göndÉ™rmir.' => 'Bu siyahı audit üçündür. Sistem buradan canlı CoA və ya router disconnect əmri göndərmir.',
+        'Admin/NOC icazÉ™si var' => 'Admin/NOC icazəsi var',
+        'Admin/NOC icazÉ™si lazımdır' => 'Admin/NOC icazəsi lazımdır',
+        'Disconnect sorÄŸusu yoxdur' => 'Disconnect sorğusu yoxdur',
+        'Online sessiyadan sorÄŸu yaradıldıqda burada görünÉ™cÉ™k.' => 'Online sessiyadan sorğu yaradıldıqda burada görünəcək.',
+        'MüştÉ™ri' => 'Müştəri',
+        'SÉ™bÉ™b' => 'Səbəb',
+        'İstifadəçi siyahısı' => 'İstifadəçi siyahısı',
+        'nÉ™ticÉ™ göstÉ™rilir.' => 'nəticə göstərilir.',
+        'Radius istifadəçisi tapılmadı' => 'Radius istifadəçisi tapılmadı',
+        'Axtarış vÉ™ filtr ÅŸÉ™rtlÉ™rinÉ™ uyÄŸun sessiya vÉ™ ya servis yoxdur.' => 'Axtarış və filtr şərtlərinə uyğun sessiya və ya servis yoxdur.',
+        'ƏmÉ™liyyat' => 'Əməliyyat',
+        'Ətraflı' => 'Ətraflı',
+        'Disconnect sorÄŸusu' => 'Disconnect sorğusu',
     ]);
 }
 
@@ -257,7 +284,7 @@ function app_start_html_text_repair(): void
 
     $started = true;
     ob_start(static function (string $buffer): string {
-        return app_repair_mojibake($buffer);
+        return app_repair_mojibake_dynamic(app_repair_mojibake($buffer));
     });
 }
 
@@ -1014,32 +1041,25 @@ function app_portal_is_admin(array $user): bool
 
 function app_portal_is_super_admin(array $user): bool
 {
-    $employeeRole = strtolower(trim((string) ($user['employee_role'] ?? '')));
-    $normalizedRole = str_replace([' ', '-'], '_', $employeeRole);
-    if (in_array($normalizedRole, ['super_admin', 'superadmin'], true)) {
-        return true;
+    $designatedLogin = strtolower(trim(app_config('super_admin_login', 's.abdullayev@superoptic.net')));
+    if ($designatedLogin === '') {
+        $designatedLogin = 's.abdullayev@superoptic.net';
     }
 
-    $role = strtolower(trim((string) ($user['role'] ?? '')));
-    $accountType = strtolower(trim((string) ($user['account_type'] ?? '')));
-    if ($role !== 'employee' && $accountType !== 'admin' && $employeeRole === '') {
+    if (strtolower(trim((string) ($user['login'] ?? ''))) !== $designatedLogin) {
         return false;
     }
 
-    $identifiers = [
-        strtolower(trim((string) ($user['login'] ?? ''))),
-        strtolower(trim((string) ($user['email'] ?? ''))),
-        strtolower(trim((string) ($user['username'] ?? ''))),
-        strtolower(trim((string) ($user['userName'] ?? ''))),
-    ];
-    foreach ($identifiers as $identifier) {
-        if (in_array($identifier, ['s.abdullayev@superoptic.net', 'serdar@sp.az'], true)) {
-            return true;
-        }
-    }
+    $employeeRole = strtolower(trim((string) ($user['employee_role'] ?? '')));
+    $normalizedRole = str_replace([' ', '-'], '_', $employeeRole);
+    $role = strtolower(trim((string) ($user['role'] ?? '')));
+    $accountType = strtolower(trim((string) ($user['account_type'] ?? '')));
+    $isActive = !array_key_exists('is_active', $user) || (int) $user['is_active'] === 1;
 
-    $fullName = strtolower(trim(preg_replace('/\s+/', ' ', (string) ($user['full_name'] ?? $user['name'] ?? '')) ?? ''));
-    return $fullName === 'serdar abdullayev';
+    return $isActive
+        && $role === 'employee'
+        && $accountType === 'admin'
+        && in_array($normalizedRole, ['super_admin', 'superadmin'], true);
 }
 
 function app_portal_module_catalog(string $lang = 'az'): array
@@ -3477,4 +3497,3 @@ if (PHP_SAPI !== 'cli') {
 }
 app_send_security_headers();
 app_start_html_text_repair();
-

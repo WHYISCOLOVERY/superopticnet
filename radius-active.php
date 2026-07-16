@@ -194,37 +194,37 @@ unset($queryBase['page']);
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">FreeRADIUS</span>
-                <h1>Aktiv istifadÉ™Ã§ilÉ™r vÉ™ sessiyalar</h1>
-                <p>Referans sistemdÉ™ki aktiv list modeli: username, IP, MAC, VLAN/status, 24 saat trafik, sessiya vÉ™ disconnect É™mÉ™liyyatÄ±na hazÄ±r gÃ¶rÃ¼nÃ¼ÅŸ.</p>
+                <h1>Aktiv istifadəçilər və sessiyalar</h1>
+                <p>Referans sistemdəki aktiv list modeli: username, IP, MAC, VLAN/status, 24 saat trafik, sessiya və disconnect əməliyyatına hazır görünüş.</p>
                 <div class="mgs-command-actions">
-                    <a class="portal-primary-btn portal-inline-link" href="billing-customers.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">MÃ¼ÅŸtÉ™ri siyahÄ±sÄ±</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">NAT log axtarÄ±ÅŸÄ±</a>
+                    <a class="portal-primary-btn portal-inline-link" href="billing-customers.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Müştəri siyahısı</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">NAT log axtarışı</a>
                 </div>
             </div>
             <div class="mgs-command-panel">
                 <span>Online</span>
                 <strong><?= e((string) $stats['online']); ?></strong>
-                <small>radacct aÃ§Ä±q sessiyalar</small>
+                <small>radacct açıq sessiyalar</small>
                 <span>24 saat trafik</span>
                 <strong><?= e(billing_bytes($stats['traffic24'])); ?></strong>
             </div>
         </section>
 
         <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('CÉ™mi istifadÉ™Ã§i', (string) $stats['total'], 'portal customer', 'fa-users', 'blue'); ?>
+            <?php billing_render_stat_card('Cəmi istifadəçi', (string) $stats['total'], 'portal customer', 'fa-users', 'blue'); ?>
             <?php billing_render_stat_card('Aktiv servis', (string) $stats['active'], 'billing_radius_services', 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('HazÄ±rda online', (string) $stats['online'], 'radacct open', 'fa-signal', 'orange'); ?>
+            <?php billing_render_stat_card('Hazırda online', (string) $stats['online'], 'radacct open', 'fa-signal', 'orange'); ?>
             <?php billing_render_stat_card('24 saat trafik', billing_bytes($stats['traffic24']), 'download + upload', 'fa-chart-line', 'navy'); ?>
         </section>
 
         <section class="mgs-dashboard-grid portal-reveal">
             <article class="mgs-chart-card">
                 <div class="mgs-chart-head">
-                    <div><h2>Top trafik istifadÉ™Ã§ilÉ™ri</h2><p>Son 24 saat Ã¼Ã§Ã¼n download + upload xÃ¼lasÉ™si.</p></div>
+                    <div><h2>Top trafik istifadəçiləri</h2><p>Son 24 saat üçün download + upload xülasəsi.</p></div>
                 </div>
                 <div class="mgs-bars">
                     <?php if ($topTrafficRows === []): ?>
-                        <?php billing_render_empty_state('Trafik yoxdur', 'Son 24 saat Ã¼Ã§Ã¼n RADIUS accounting trafiki tapÄ±lmadÄ±.', 'fa-chart-simple'); ?>
+                        <?php billing_render_empty_state('Trafik yoxdur', 'Son 24 saat üçün RADIUS accounting trafiki tapılmadı.', 'fa-chart-simple'); ?>
                     <?php endif; ?>
                     <?php foreach ($topTrafficRows as $trafficRow): ?>
                         <div class="mgs-bar-row">
@@ -237,7 +237,7 @@ unset($queryBase['page']);
             </article>
             <article class="mgs-chart-card">
                 <div class="mgs-chart-head">
-                    <div><h2>NAS vÉ™ status paylanmasÄ±</h2><p>Aktiv list nÉ™ticÉ™sinÉ™ gÃ¶rÉ™ operativ bÃ¶lÃ¼nmÉ™.</p></div>
+                    <div><h2>NAS və status paylanması</h2><p>Aktiv list nəticəsinə görə operativ bölünmə.</p></div>
                 </div>
                 <div class="mgs-mini-chart">
                     <?php foreach (array_slice($nasDistribution, 0, 5, true) as $nasIp => $count): ?>
@@ -257,44 +257,45 @@ unset($queryBase['page']);
         </section>
 
         <section class="mgs-filter-panel portal-reveal">
-            <div class="mgs-section-head"><div><h2>AxtarÄ±ÅŸ vÉ™ filtr</h2><p>Ä°stifadÉ™Ã§i, IP, MAC, telefon vÉ™ mÃ¼ÅŸtÉ™ri adÄ± Ã¼zrÉ™ axtar.</p></div></div>
-            <form method="get" class="portal-stacked-form">
+            <div class="mgs-section-head"><div><h2>Axtarış və filtr</h2><p>İstifadəçi, IP, MAC, telefon və müştəri adı üzrə axtar.</p></div></div>
+            <form method="get" class="portal-stacked-form" id="radius-active-filter" data-auto-filter data-auto-filter-targets="radius-active-results">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
-                    <div class="portal-form-row"><label>AxtarÄ±ÅŸ</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="username, IP, MAC, ad, telefon"></div>
+                    <div class="portal-form-row"><label>Axtarış</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="username, IP, MAC, ad, telefon"></div>
                     <div class="portal-form-row">
                         <label>Status</label>
                         <select name="status">
-                            <option value="">HamÄ±sÄ±</option>
+                            <option value="">Hamısı</option>
                             <option value="online" <?= $statusFilter === 'online' ? 'selected' : ''; ?>>Online</option>
                             <option value="offline" <?= $statusFilter === 'offline' ? 'selected' : ''; ?>>Offline</option>
                             <option value="active" <?= $statusFilter === 'active' ? 'selected' : ''; ?>>Aktiv</option>
                             <option value="expired" <?= $statusFilter === 'expired' ? 'selected' : ''; ?>>Vaxt bitib</option>
-                            <option value="suspended" <?= $statusFilter === 'suspended' ? 'selected' : ''; ?>>DayandÄ±rÄ±lÄ±b</option>
+                            <option value="suspended" <?= $statusFilter === 'suspended' ? 'selected' : ''; ?>>Dayandırılıb</option>
                         </select>
                     </div>
                     <div class="billing-filter-actions">
                         <button type="submit" class="portal-primary-btn">Axtar</button>
-                        <a class="portal-ghost-btn portal-inline-link" href="radius-active.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">SÄ±fÄ±rla</a>
+                        <a class="portal-ghost-btn portal-inline-link" href="radius-active.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sıfırla</a>
                     </div>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
         <section class="mgs-data-card portal-reveal">
             <div class="mgs-section-head">
                 <div>
-                    <h2>Disconnect sorÄŸularÄ±</h2>
-                    <p>Portal queue yaradir; canli Disconnect/CoA worker bu sorÄŸulari <?= e((string) ($radiusSettings['dynamic_author_client_ip'] ?: $radiusSettings['server_ip'])); ?> uzerinden routere oturur.</p>
+                    <h2>Disconnect sorğuları</h2>
+                    <p>Portal queue yaradir; canli Disconnect/CoA worker bu sorğulari <?= e((string) ($radiusSettings['dynamic_author_client_ip'] ?: $radiusSettings['server_ip'])); ?> uzerinden routere oturur.</p>
                 </div>
-                <span class="portal-pill <?= e($canRequestDisconnect && !empty($disconnectWorkerReadiness['ok']) ? 'portal-pill-success' : ''); ?>"><?= e($canRequestDisconnect ? 'Admin/NOC icazÉ™si var' : 'Admin/NOC icazÉ™si lazÄ±mdÄ±r'); ?> / <?= e(!empty($disconnectWorkerReadiness['ok']) ? 'CoA config hazirdir' : 'CoA config natamam'); ?></span>
+                <span class="portal-pill <?= e($canRequestDisconnect && !empty($disconnectWorkerReadiness['ok']) ? 'portal-pill-success' : ''); ?>"><?= e($canRequestDisconnect ? 'Admin/NOC icazəsi var' : 'Admin/NOC icazəsi lazımdır'); ?> / <?= e(!empty($disconnectWorkerReadiness['ok']) ? 'CoA config hazirdir' : 'CoA config natamam'); ?></span>
             </div>
             <?php if ($recentActions === []): ?>
-                <?php billing_render_empty_state('Disconnect sorÄŸusu yoxdur', 'Online sessiyadan sorÄŸu yaradÄ±ldÄ±qda burada gÃ¶rÃ¼nÉ™cÉ™k.', 'fa-shield-halved'); ?>
+                <?php billing_render_empty_state('Disconnect sorğusu yoxdur', 'Online sessiyadan sorğu yaradıldıqda burada görünəcək.', 'fa-shield-halved'); ?>
             <?php else: ?>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
-                        <thead><tr><th>#</th><th>Username</th><th>MÃ¼ÅŸtÉ™ri</th><th>IP / NAS</th><th>Status</th><th>SÉ™bÉ™b</th><th>Yaradan</th><th>Tarix</th></tr></thead>
+                        <thead><tr><th>#</th><th>Username</th><th>Müştəri</th><th>IP / NAS</th><th>Status</th><th>Səbəb</th><th>Yaradan</th><th>Tarix</th></tr></thead>
                         <tbody>
                             <?php foreach ($recentActions as $actionRow): ?>
                                 <tr>
@@ -314,10 +315,10 @@ unset($queryBase['page']);
             <?php endif; ?>
         </section>
 
-        <section class="mgs-data-card portal-reveal">
-            <div class="mgs-section-head"><div><h2>Ä°stifadÉ™Ã§i siyahÄ±sÄ±</h2><p><?= e((string) count($rows)); ?> nÉ™ticÉ™ gÃ¶stÉ™rilir.</p></div></div>
+        <section class="mgs-data-card portal-reveal" data-auto-filter-results="radius-active-results" data-auto-filter-form="radius-active-filter">
+            <div class="mgs-section-head"><div><h2>İstifadəçi siyahısı</h2><p><?= e((string) count($rows)); ?> nəticə göstərilir.</p></div></div>
             <?php if ($rows === []): ?>
-                <?php billing_render_empty_state('Radius istifadÉ™Ã§isi tapÄ±lmadÄ±', 'AxtarÄ±ÅŸ vÉ™ filtr ÅŸÉ™rtlÉ™rinÉ™ uyÄŸun sessiya vÉ™ ya servis yoxdur.', 'fa-user-magnifying-glass'); ?>
+                <?php billing_render_empty_state('Radius istifadəçisi tapılmadı', 'Axtarış və filtr şərtlərinə uyğun sessiya və ya servis yoxdur.', 'fa-user-magnifying-glass'); ?>
             <?php else: ?>
             <div class="mgs-session-grid">
                 <?php foreach (array_slice($rows, 0, 6) as $row): ?>
@@ -332,14 +333,14 @@ unset($queryBase['page']);
                         <div class="mgs-profile-kv">
                             <div><span>IP</span><strong><?= e($ip); ?></strong></div>
                             <div><span>MAC/NAS</span><strong><?= e((string) ($row['callingstationid'] ?? '-')); ?> / <?= e((string) ($row['nasipaddress'] ?? '-')); ?></strong></div>
-                            <div><span>Trafik</span><strong>â†“ <?= e(billing_bytes($row['download_bytes'] ?? 0)); ?> / â†‘ <?= e(billing_bytes($row['upload_bytes'] ?? 0)); ?></strong></div>
+                            <div><span>Trafik</span><strong>↓ <?= e(billing_bytes($row['download_bytes'] ?? 0)); ?> / ↑ <?= e(billing_bytes($row['upload_bytes'] ?? 0)); ?></strong></div>
                         </div>
                     </article>
                 <?php endforeach; ?>
             </div>
             <div class="portal-table-wrap">
                 <table class="portal-table radius-active-table">
-                    <thead><tr><th>Ä°stifadÉ™Ã§i</th><th>Tarif</th><th>IP</th><th>MAC / NAS</th><th>Status</th><th>24 saat trafik</th><th>Sessiya</th><th>ÆmÉ™liyyat</th></tr></thead>
+                    <thead><tr><th>İstifadəçi</th><th>Tarif</th><th>IP</th><th>MAC / NAS</th><th>Status</th><th>24 saat trafik</th><th>Sessiya</th><th>Əməliyyat</th></tr></thead>
                     <tbody>
                         <?php foreach ($visibleRows as $row): ?>
                             <?php
@@ -352,10 +353,10 @@ unset($queryBase['page']);
                                 <td><?= e($ip); ?></td>
                                 <td><?= e((string) ($row['callingstationid'] ?? '-')); ?><br><small><?= e((string) ($row['nasipaddress'] ?? '-')); ?> <?= e((string) ($row['nasportid'] ?? '')); ?></small></td>
                                 <td><span class="portal-pill <?= e($online ? 'portal-pill-success' : billing_status_class((string) ($row['status'] ?? ''))); ?>"><?= e($online ? 'Online' : (string) ($row['status'] ?? '-')); ?></span></td>
-                                <td>â†“ <?= e(billing_bytes($row['download_bytes'] ?? 0)); ?><br><small>â†‘ <?= e(billing_bytes($row['upload_bytes'] ?? 0)); ?></small></td>
+                                <td>↓ <?= e(billing_bytes($row['download_bytes'] ?? 0)); ?><br><small>↑ <?= e(billing_bytes($row['upload_bytes'] ?? 0)); ?></small></td>
                                 <td><?= e((string) ($row['sessions_24h'] ?? 0)); ?><br><small><?= e(billing_datetime($row['acctupdatetime'] ?? $row['acctstarttime'] ?? null)); ?></small></td>
                                 <td>
-                                    <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) ($row['account_id'] ?? 0)); ?>#profile-radius">ÆtraflÄ±</a>
+                                    <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) ($row['account_id'] ?? 0)); ?>#profile-radius">Ətraflı</a>
                                     <?php if ($online && $canRequestDisconnect): ?>
                                         <form method="post" class="portal-inline-form">
                                             <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
@@ -367,7 +368,7 @@ unset($queryBase['page']);
                                             <input type="hidden" name="nas_port_id" value="<?= e((string) ($row['nasportid'] ?? '')); ?>">
                                             <input type="hidden" name="calling_station_id" value="<?= e((string) ($row['callingstationid'] ?? '')); ?>">
                                             <input type="hidden" name="reason" value="Operator yoxlamasi: sessiyani yenile">
-                                            <button type="submit" class="portal-ghost-btn">Disconnect sorÄŸusu</button>
+                                            <button type="submit" class="portal-ghost-btn">Disconnect sorğusu</button>
                                         </form>
                                     <?php else: ?>
                                         <span class="billing-mini-muted"><?= e($online ? 'Disconnect ucun admin/NOC icazesi lazimdir.' : 'Offline sessiyada disconnect gerek deyil.'); ?></span>

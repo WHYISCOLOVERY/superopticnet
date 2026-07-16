@@ -107,8 +107,11 @@ foreach ($routes as $section => $route) {
 $pageSource = is_file($root . '/ai-section-page.php') ? (string) file_get_contents($root . '/ai-section-page.php') : '';
 $scriptSource = is_file($root . '/script/ai-center.js') ? (string) file_get_contents($root . '/script/ai-center.js') : '';
 $ajaxSource = $pageSource . "\n" . $scriptSource;
-foreach (['fetch(', 'AbortController', 'history.pushState', 'popstate'] as $marker) {
+foreach (['fetch(', 'AbortController', 'history.pushState', 'history.replaceState', 'popstate'] as $marker) {
     $expect(str_contains($ajaxSource, $marker), 'ai_ajax_marker_missing:' . $marker);
+}
+foreach (['scheduleFilter', "form.dataset.filterHistory = 'replace'", "module.addEventListener('input'", "module.addEventListener('change'"] as $marker) {
+    $expect(str_contains($scriptSource, $marker), 'ai_automatic_filter_marker_missing:' . $marker);
 }
 foreach (['[data-ai-nav]', 'sectionFromUrl', 'updateShell', 'dataset.aiSection'] as $marker) {
     $expect(str_contains($ajaxSource, $marker), 'ai_nav_ajax_marker_missing:' . $marker);
