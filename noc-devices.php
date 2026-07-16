@@ -1046,6 +1046,7 @@ if ($needsDeviceRows) {
     <title>NOC cihaz paneli</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
     <style>
         .noc-device-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
         .noc-device-card{display:grid;gap:12px;min-width:0;max-width:100%;padding:16px;border:1px solid rgba(148,163,184,.24);border-radius:24px;background:rgba(255,255,255,.9);box-shadow:0 18px 42px rgba(17,38,63,.08)}

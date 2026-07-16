@@ -10,10 +10,6 @@ $moduleNavLinkAttribute = in_array((string) ($moduleNavLinkAttribute ?? ''), $al
     ? (string) $moduleNavLinkAttribute
     : '';
 ?>
-<style>
-.module-group-nav.billing-shell-nav{width:100%;margin:10px 0 16px;padding:2px 0 10px;z-index:70}.module-group-nav .billing-nav-group{border-radius:8px}.module-group-nav .billing-nav-links{border-radius:8px}
-@media(max-width:760px){.module-group-nav.billing-shell-nav{width:100%!important;margin:8px 0 14px!important}}
-</style>
 <nav class="billing-shell-nav module-group-nav portal-reveal" data-module-group-nav aria-label="<?= e($moduleNavAria); ?>">
     <?php foreach ($moduleNavGroups as $group): ?>
         <?php

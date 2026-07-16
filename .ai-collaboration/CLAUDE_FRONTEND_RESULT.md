@@ -195,3 +195,35 @@ Status: `DONE`
 - İstifadəçiyə görünən `case`, `ticket` və `Screen Wall` terminləri monitorinq qeydi, CRM müraciəti və canlı monitor ifadələri ilə sadələşdirildi; daxili action, field, DB və URL dəyərləri qorundu.
 - Codex inteqrasiya baxışında radius 8px portal standartına uyğunlaşdırıldı.
 - Codex Playwright ilə əvvəlki chat/QR ssenariləri daxil olmaqla `22/22` desktop və mobil vizual yoxlamanı keçirdi; overflow və console xətası yoxdur.
+
+## SAR-5 shell keçidi
+
+Status: `DONE`
+
+CLAUDE_FRONTEND_TASK.md-də təyin olunan SAR-5 birinci mərhələ: Maliyyə, HR, Anbar və Billing modullarının ortaq shell-inin böyük inline `<style>` bloklarından təmizlənməsi, ortaq `css/operations-modules.css` faylına köçürülməsi və görünən mətnlərin düzgün Azərbaycan dilinə keçirilməsi.
+
+### Dəyişdirilən fayllar
+
+- `views/_module-group-nav.php` — inline `<style>` bloku (`.module-group-nav.billing-shell-nav` və `760px` media sorğusu) çıxarıldı. Struktur (`$moduleNavGroups`, `data-module-group-nav`, `data-module-nav-group`, `data-module-section`, `<details name>` davranışı) toxunulmadı.
+- `views/finance/module.php` — böyük inline `<style>` bloku (kpi/tabs/filter/dialog/chart/responsive qaydaları) çıxarıldı. Görünən mətn dəyişmədi (artıq təbii Azərbaycan dilində idi).
+- `views/hr/module.php` — eyni qaydada inline `<style>` bloku çıxarıldı. Görünən mətn dəyişmədi.
+- `views/inventory/module.php` — inline `<style>` bloku (ən böyük blok: command-strip, action-panel/grid/card daxil) çıxarıldı. İki yerdə qarışıq dil düzəldildi: baş mətndə "lifecycle" → "istismar dövrü", naviqasiya qrup etiketlərində "Tehvil ve assignment" → "Tehvil ve tayinat" və "Lifecycle ve hesabat" → "Istismar dovru ve hesabat". `repair-rma` tab açarı (URL/data dəyəri) toxunulmadı.
+- `views/billing/module.php` — inline `<style>` bloku (is-loading, panels, chart-grid, live-status daxil) çıxarıldı. Görünən mətn dəyişmədi.
+- **Yeni:** `css/operations-modules.css` — beş faylın bütün stilləri buraya köçürüldü. Dörd modulda hərfbəhərf eyni olan qaydalar (module-head, breadcrumb, tabs, kpi grid/kart, shortcuts, pagination, page-links, empty state, chart-grid/chart/track, dialog backdrop/close/open, portal-table mobil kart görünüşü) ortaq selektorlarla (`.finance-x,.hr-x,.inventory-x,.billing-x{...}`) birləşdirildi; modula xas fərqlər (kpi `strong` üçün clamp maksimumu: finance 1.25rem, digərləri 1.2rem; filter grid-template-columns; billing-in fərqli chart-grid gap-ı və chart-row birinci sütunu; inventory-in command-strip/action-panel/action-card blokları; hr-in çap (`@media print`) qaydası; finance-in tək-panelli dialoq, hr/inventory-in başlıq+gövdə bölünmüş dialoqu) ayrıca qaydalar kimi saxlanıldı.
+
+`operations-center.php` və `billing-section-page.php` (Codex mülkiyyətində) artıq `css/portal.css`-dən sonra `css/operations-modules.css`-i yükləyir — bu keçiddə yoxlanıldı, dəyişdirilmədi.
+
+Backend, DB, API, auth, permission, CSRF kodu, form `action`/`name`/`value`, URL/query parametrləri və `data-finance-nav`/`data-hr-nav`/`data-inventory-nav`/`data-module-*` atributları toxunulmadı.
+
+### İşlədilən testlər
+
+- Bütün 5 dəyişdirilən PHP faylı və yeni CSS faylı əl ilə tam oxunaraq review edildi: hər PHP faylda `<?php … ?>`, `if/foreach/endif/endforeach` cütləri və HTML teq balansı `<style>` bloku çıxarılmazdan əvvəlki versiya ilə sətir-sətir tutuşduruldu (yalnız `<style>` bloku silindi, ətraf HTML strukturu dəyişmədi).
+- `css/operations-modules.css`-də `{`/`}` balansı yoxlanıldı: **98/98** bərabər tapıldı.
+- Hər modulun əvvəlki inline CSS-inin son (source-order) hesablanmış nəticəsi yeni ortaq faylda seçici-seçici müqayisə edildi (məs. `.finance-kpi strong`-un iki ayrı qaydadan (bazadakı `font-size:1.25rem` + sondakı `clamp(...)` override) yaranan son görünüşü tək qaydada saxlanıldı) ki, vizual nəticə dəyişməsin.
+- `php -l` bu sessiyada da alət icazəsi almadı (əvvəlki keçidlərdə də eyni məhdudiyyət qeyd olunmuşdu); avtomatik icra əvəzinə tam əl ilə sintaksis review aparıldı.
+- Brauzerdə canlı smoke test aparılmadı. Tövsiyə olunan yoxlama: `operations-center.php` (Maliyyə/HR/Anbar tabları) və `billing-section-page.php`-i 1280px və 390px enlərdə aç; KPI mətninin qutudan daşmadığını, başlıq action düymələrinin üst-üstə düşmədiyini, modul naviqasiyasında ikinci horizontal scroll olmadığını, modal pəncərələrin (finance/hr/inventory) viewport daxilində qaldığını və filter/statistika submit-inin səhifəni tam reload etmədiyini təsdiqlə.
+
+### Qalan risk
+
+- Canlı brauzer/vizual regressiya bu sessiyada icra olunmadı — yuxarıdakı tövsiyə olunan yoxlama Codex və ya istifadəçi tərəfindən real serverdə aparılmalıdır.
+- CSS konsolidasiyası zamanı bəzi ekvivalent qaydalar (məs. `.finance-module,.finance-kpi{min-width:0}` + sonrakı override) tək yekun qaydaya sadələşdirildi; hesablanmış nəticə əl ilə yoxlanılsa da, brauzer devtools-da faktiki tərtibatın təsdiqlənməsi tövsiyə olunur.

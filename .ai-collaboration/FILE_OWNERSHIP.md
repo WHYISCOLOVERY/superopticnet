@@ -1,40 +1,38 @@
-# Fayl sahibliyi
+# Fayl sahibliyi - SAR-5 shell ve dil standarti
 
-Aktiv WhatsApp Monitoring tapsirigi ucun daraldilmis fayl serhedleri asagidadir.
+## Codex
 
-## A. Codex backend fayllari
+- `ui-language-lib.php`
+- `operations-center.php`
+- `billing-section-page.php`
+- `tools/ui-language-shell-smoke.php`
+- yeni ve movcud shell/vizual smoke testleri
+- `.ai-collaboration/**` contract ve yekun hesabat fayllari
 
-- `whatsapp-monitor-lib.php`
-- `api/whatsapp-monitor/**`
-- `whatsapp-monitor.php` daxilindeki auth, POST action ve AJAX data wiring
-- `whatsapp-bridge/server.js`
-- `tools/whatsapp-*.php`
-- `tools/full-system-regression.php`
+## Claude
 
-Claude bu fayllari yalniz oxuya biler; deyise bilmez.
+- `views/_module-group-nav.php`
+- `views/finance/module.php`
+- `views/hr/module.php`
+- `views/inventory/module.php`
+- `views/billing/module.php`
+- yeni `css/operations-modules.css`
+- netice qeydi ucun `.ai-collaboration/CLAUDE_FRONTEND_RESULT.md`
 
-## B. Claude frontend fayllari
+Claude bu siyahidan kenar source fayli deyismemelidir.
 
-- `views/whatsapp-monitor/**`
-- WhatsApp modulu ucun yeni `css/whatsapp-monitor.css`
-- WhatsApp modulu ucun yeni `script/whatsapp-monitor.js`
-- yalniz WhatsApp gorunusu yaradan yeni partial ve komponentler
+## Deyisdirilmez contract saheleri
 
-Codex inteqrasiya merhelesinde bu fayllari sebebsiz yeniden dizayn etmemelidir.
-
-## C. Qarisiq fayllar
-
-- `whatsapp-monitor.php`
-
-Claude `whatsapp-monitor.php` faylinda yalniz frontend script/style importu ve gorunus wiring hissesine toxuna biler. Auth, POST action, CSRF ve context yaratma hissesini deyise bilmez.
+- form `action`, `name`, `value` ve hidden input-lar
+- URL/query parametrleri ve `data-*` atributlari
+- auth, rol, permission, CSRF, DB ve API kodu
+- AJAX partial endpointleri ve movcud event wiring
 
 ## Runtime ve mexfi saheler
 
-Asagidaki yollar hec bir agente source deyisikliyi ucun verilmir:
-
 - `config.local.php`
-- `whatsapp-bridge/.env`
-- `whatsapp-bridge/.wwebjs_auth/**`
-- `whatsapp-bridge/.wwebjs_cache/**`
+- `.env*`
 - `tmp/**`
 - `.tools/**`
+- `whatsapp-bridge/.wwebjs_auth/**`
+- `whatsapp-bridge/.wwebjs_cache/**`

@@ -8,16 +8,16 @@ require_once __DIR__ . '/billing-ui.php';
 function app_billing_sections(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'customers' => 'Musteriler',
-        'packages' => 'Paketler',
-        'balances' => 'Balans ve borclar',
-        'payments' => 'Odenisler',
-        'services' => 'Xidmet aktivliyi',
-        'providers' => 'Provider inteqrasiyalari',
-        'documents' => 'Billing senedleri',
-        'reports' => 'Billing hesabatlari',
-        'statistics' => 'Billing statistikasi',
+        'overview' => 'Ümumi baxış',
+        'customers' => 'Müştərilər',
+        'packages' => 'Paketlər',
+        'balances' => 'Balans və borclar',
+        'payments' => 'Ödənişlər',
+        'services' => 'Xidmət aktivliyi',
+        'providers' => 'Provayder inteqrasiyaları',
+        'documents' => 'Billing sənədləri',
+        'reports' => 'Billing hesabatları',
+        'statistics' => 'Billing statistikası',
     ];
 }
 

@@ -8,16 +8,16 @@ require_once __DIR__ . '/finance-bonus-lib.php';
 function app_finance_tabs(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'invoices' => 'Qaimeler',
-        'payments' => 'Odenisler',
-        'income' => 'Gelirler',
-        'companies' => 'Sirketler',
-        'expenses' => 'Xercler',
-        'cash-bank' => 'Kassa ve bank',
-        'reconciliation' => 'Uzlasdirma',
-        'assets' => 'Esas vesaitler',
-        'employee-bonuses' => 'Emekdas Bonuslari',
+        'overview' => 'Ümumi baxış',
+        'invoices' => 'Qaimələr',
+        'payments' => 'Ödənişlər',
+        'income' => 'Gəlirlər',
+        'companies' => 'Şirkətlər',
+        'expenses' => 'Xərclər',
+        'cash-bank' => 'Kassa və bank',
+        'reconciliation' => 'Uzlaşdırma',
+        'assets' => 'Əsas vəsaitlər',
+        'employee-bonuses' => 'Əməkdaş bonusları',
         'statistics' => 'Statistika',
     ];
 }

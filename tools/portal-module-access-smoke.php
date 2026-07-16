@@ -139,7 +139,7 @@ $expect(str_contains($adminSource, '<option value="hr"'), 'hr_employee_role_opti
 
 $operationsSource = (string) file_get_contents(__DIR__ . '/../operations-center.php');
 foreach ([
-    "'finance' => 'Maliyye'",
+    "'finance' => 'Maliyyə'",
     "'hr' => 'HR'",
     "'inventory' => 'Anbar'",
     "'noc' => 'Sebeke'",

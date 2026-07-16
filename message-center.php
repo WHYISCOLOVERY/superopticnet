@@ -798,6 +798,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
     <title>Mesaj merkezi</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
     <link rel="stylesheet" href="<?= e(app_asset('css/message-center.css')); ?>">
 </head>
 <body class="portal-body">

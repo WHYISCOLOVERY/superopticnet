@@ -28,7 +28,7 @@ $canWrite = !empty($financeContext['data']['can_write']);
         ?><tr data-finance-row>
             <td><?= e((string) ($row['transaction_date'] ?? '-')); ?></td><td><?= e((string) ($row['title'] ?? '-')); ?></td><td><?= e((string) ($row['category'] ?? '-')); ?></td>
             <td><?= e((string) ($row['counterparty_name'] ?? '-')); ?></td><td><?= e((string) ($row['payment_source'] ?? '-')); ?></td>
-            <td><?= e(billing_money($row['amount'] ?? 0)); ?> <?= e((string) ($row['currency'] ?? 'AZN')); ?></td><td><?= e((string) ($row['status'] ?? 'posted')); ?></td>
+            <td><?= e(billing_money($row['amount'] ?? 0)); ?> <?= e((string) ($row['currency'] ?? 'AZN')); ?></td><td><?= e(app_ui_status((string) ($row['status'] ?? 'posted'))); ?></td>
             <td><?php if ($canWrite && ($row['status'] ?? 'posted') === 'posted'): ?>
                 <button class="portal-ghost-btn" type="button" data-finance-income-edit data-finance-dialog-open="income-create" data-income='<?= e(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}'); ?>'>Duzelt</button>
                 <form method="post" class="portal-inline-form" onsubmit="return confirm('Bu gelir qeydini legv etmek istediyinize eminsiniz?');"><input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>"><input type="hidden" name="action" value="void_finance_income"><input type="hidden" name="entry_id" value="<?= e((string) ($row['id'] ?? 0)); ?>"><input name="reason" placeholder="Legv sebebi" required><button class="portal-ghost-btn" type="submit">Legv et</button></form>

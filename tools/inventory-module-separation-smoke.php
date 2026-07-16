@@ -163,12 +163,12 @@ if ($mode !== '--queries') {
     $expect(str_contains($overview['html'], 'data-inventory-tab="overview"'), 'inventory_overview_marker_missing');
     $expect(str_contains($overview['html'], 'data-inventory-overview'), 'inventory_overview_content_missing');
     $expect(str_contains($overview['html'], 'data-inventory-quick-actions'), 'inventory_quick_action_panel_missing');
-    $expect(str_contains($overview['html'], 'data-inventory-command-strip'), 'inventory_command_strip_missing');
-    $expect(str_contains($overview['html'], 'Mal medaxil et') && str_contains($overview['html'], 'open=stock-intake'), 'inventory_intake_quick_action_missing');
+    $expect(!str_contains($overview['html'], 'data-inventory-command-strip'), 'inventory_duplicate_command_strip_remains');
+    $expect(str_contains($overview['html'], 'Mal mədaxil et') && str_contains($overview['html'], 'open=stock-intake'), 'inventory_intake_quick_action_missing');
     $expect(str_contains($overview['html'], 'Filiala transfer et') && str_contains($overview['html'], 'open=branch-transfer'), 'inventory_transfer_quick_action_missing');
-    $expect(str_contains($overview['html'], 'Texnike tehvil ver') && str_contains($overview['html'], 'open=handover-create'), 'inventory_handover_quick_action_missing');
+    $expect(str_contains($overview['html'], 'Texnikə təhvil ver') && str_contains($overview['html'], 'open=handover-create'), 'inventory_handover_quick_action_missing');
     $expect(str_contains($overview['html'], 'Qaytarma yarat') && str_contains($overview['html'], 'open=external-return'), 'inventory_return_quick_action_missing');
-    $expect(str_contains($overview['html'], 'Medaxil ve transfer'), 'inventory_nav_medaxil_transfer_label_missing');
+    $expect(str_contains($overview['html'], 'Mədaxil və transfer'), 'inventory_nav_medaxil_transfer_label_missing');
     foreach (['create_inventory_category', 'create_inventory_intake', 'create_inventory_branch_transfer', 'create_inventory_handover_local', 'create_inventory_external_request'] as $action) {
         $expect(!str_contains($overview['html'], 'name="action" value="' . $action . '"'), 'inventory_overview_contains_workflow:' . $action);
     }

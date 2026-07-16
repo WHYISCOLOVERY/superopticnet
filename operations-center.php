@@ -1568,7 +1568,7 @@ if (!in_array($activeOpsSection, $validOpsSections, true)) {
 $operationsPageTitles = [
     'overview' => 'Operations Center',
     'search' => 'Operations Center',
-    'finance' => 'Maliyye',
+    'finance' => 'Maliyyə',
     'hr' => 'HR',
     'inventory' => 'Anbar',
     'noc' => 'Sebeke',
@@ -1639,7 +1639,7 @@ $moduleCards = [
         'href' => spog_operations_url('inventory', $lang),
     ],
     [
-        'title' => 'Maliyye',
+        'title' => 'Maliyyə',
         'status' => $serviceHealth['finance'] ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-coins',
         'text' => 'Medaxil, mexaric, satis, filial kesri ve gunluk maliyye qeydleri.',
@@ -1796,6 +1796,7 @@ if (app_portal_is_admin($user)) {
     <title><?= e($operationsPageTitle); ?></title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
     <style>
         .spog-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}
         .spog-module-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:18px}

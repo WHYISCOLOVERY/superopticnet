@@ -71,7 +71,7 @@ $unitOptions = ['eded', 'metr', 'kq', 'paket', 'dest'];
                         <td><?= e($currentUnit); ?></td>
                         <td><?= e($inventoryFormat($row['quantity_on_hand'] ?? 0)); ?></td>
                         <td><?= e($inventoryFormat($row['minimum_quantity'] ?? 0)); ?></td>
-                        <td><?= e((string) ($row['status'] ?? '-')); ?></td>
+                        <td><?= e(app_ui_status((string) ($row['status'] ?? 'unknown'))); ?></td>
                         <td><?= e((string) ($row['updated_at'] ?? '-')); ?></td>
                         <?php if ($canWrite): ?>
                             <td>

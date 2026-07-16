@@ -186,6 +186,7 @@ $tests = [
     ['ai_module_role_ajax', ['tools/ai-module-separation-smoke.php'], 120],
     ['statistics_center_role_ajax', ['tools/statistics-center-smoke.php'], 120],
     ['ui_language_shell_standard', ['tools/ui-language-shell-smoke.php'], 120],
+    ['four_module_ui_consistency', ['tools/four-module-ui-consistency-smoke.php'], 180],
     ['portal_workflow_guide', ['tools/portal-workflow-guide-smoke.php'], 120],
     ['finance_bonus_module', ['tools/finance-bonus-module-smoke.php'], 120],
     ['finance_bonus_filter_and_rules_ui', ['tools/finance-bonus-filter-smoke.php'], 120],

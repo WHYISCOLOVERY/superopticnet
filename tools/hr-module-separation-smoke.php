@@ -142,7 +142,7 @@ if ($mode !== '--queries') {
     $expect($overview['exit_code'] === 0, 'hr_overview_render_failed:' . $overview['stderr']);
     $expect(str_contains($overview['html'], 'data-hr-module'), 'hr_module_marker_missing');
     $expect(str_contains($overview['html'], 'data-hr-tab="overview"'), 'hr_overview_marker_missing');
-    $expect(str_contains($overview['html'],'open=employee-create')&&str_contains($overview['html'],'Yeni emekdas'),'hr_employee_quick_action_missing');
+    $expect(str_contains($overview['html'],'open=employee-create')&&str_contains($overview['html'],'Yeni əməkdaş'),'hr_employee_quick_action_missing');
     foreach ([
         'save_hr_employee_compensation',
         'record_hr_score_event',

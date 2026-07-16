@@ -8,13 +8,13 @@ require_once __DIR__ . '/mgs-integration-lib.php';
 function app_hr_tabs(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'employees' => 'Emekdaslar',
-        'attendance' => 'Davamiyyet',
-        'leave-travel' => 'Mezuniyyet ve ezamiyyet',
+        'overview' => 'Ümumi baxış',
+        'employees' => 'Əməkdaşlar',
+        'attendance' => 'Davamiyyət',
+        'leave-travel' => 'Məzuniyyət və ezamiyyət',
         'performance' => 'Performans',
-        'payroll' => 'Maas ve vergiler',
-        'documents' => 'Senedler',
+        'payroll' => 'Maaş və vergilər',
+        'documents' => 'Sənədlər',
         'statistics' => 'Statistika',
     ];
 }

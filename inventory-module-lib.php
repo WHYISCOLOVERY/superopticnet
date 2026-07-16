@@ -7,18 +7,18 @@ require_once __DIR__ . '/inventory-operations-lib.php';
 function app_inventory_tabs(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'catalog' => 'Mehsul kataloqu',
+        'overview' => 'Ümumi baxış',
+        'catalog' => 'Məhsul kataloqu',
         'devices' => 'Cihazlar',
-        'materials' => 'Serfiyyat materiallari',
-        'cable-drums' => 'Kabel barabanlari',
-        'technicians' => 'Texniklerde olan mallar',
-        'customers' => 'Musterilerde olan cihazlar',
-        'handover' => 'Tehvil-teslim',
-        'returns-inspection' => 'Qaytarma ve inspection',
-        'repair-rma' => 'Temir / RMA',
-        'movements' => 'Medaxil ve transfer',
-        'approvals' => 'Transfer ve qaytarma',
+        'materials' => 'Sərfiyyat materialları',
+        'cable-drums' => 'Kabel barabanları',
+        'technicians' => 'Texniklərdə olan mallar',
+        'customers' => 'Müştərilərdə olan cihazlar',
+        'handover' => 'Təhvil-təslim',
+        'returns-inspection' => 'Qaytarma və yoxlama',
+        'repair-rma' => 'Təmir / RMA',
+        'movements' => 'Mədaxil və transfer',
+        'approvals' => 'Transfer və qaytarma',
         'statistics' => 'Statistika',
     ];
 }
