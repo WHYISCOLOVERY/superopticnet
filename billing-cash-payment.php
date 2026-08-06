@@ -116,6 +116,12 @@ $flash = null;
 $lookupCode = clean_text((string) ($_GET['subscriber_code'] ?? ($_POST['subscriber_code'] ?? '')));
 $lookupAccount = $lookupCode !== '' ? app_db_account_by_subscriber_code($lookupCode) : null;
 $recentCustomers = [];
+$billingDataErrorReference = $db instanceof PDO ? '' : app_runtime_error_reference('billing_cash_payment_database_unavailable');
+$cashPaymentIdempotency = (string) ($_SESSION['billing_cash_payment_idempotency'] ?? '');
+if ($cashPaymentIdempotency === '') {
+    $cashPaymentIdempotency = bin2hex(random_bytes(24));
+    $_SESSION['billing_cash_payment_idempotency'] = $cashPaymentIdempotency;
+}
 
 if ($lookupAccount === null && $lookupCode !== '' && !($db instanceof PDO)) {
     foreach (billing_mock_customer_rows() as $mockCustomer) {
@@ -143,10 +149,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $days = max(0, (int) ($_POST['days'] ?? 0));
         $method = clean_text((string) ($_POST['method'] ?? 'cash'));
         $transactionId = clean_text((string) ($_POST['transaction_id'] ?? ''));
+        $submittedIdempotency = trim((string) ($_POST['idempotency_key'] ?? ''));
         if ($lookupCode === '') {
             $flash = ['type' => 'error', 'message' => 'Müştəri kodu yazılmalıdır.'];
-        } elseif (app_billing_apply_customer_payment($lookupCode, $amount, $method, $days, $transactionId)) {
+        } elseif ($submittedIdempotency === '' || !hash_equals($cashPaymentIdempotency, $submittedIdempotency)) {
+            $flash = ['type' => 'error', 'message' => 'Odenis sorğusunun tesdiq acarini yenileyib tekrar cehd edin.'];
+        } elseif (app_billing_apply_customer_payment(
+            $lookupCode,
+            $amount,
+            $method,
+            $days,
+            $transactionId,
+            '',
+            null,
+            $submittedIdempotency
+        )) {
             $lookupAccount = app_db_account_by_subscriber_code($lookupCode);
+            $cashPaymentIdempotency = bin2hex(random_bytes(24));
+            $_SESSION['billing_cash_payment_idempotency'] = $cashPaymentIdempotency;
             $flash = ['type' => 'success', 'message' => 'Ödəniş qəbul edildi, xidmət aktivləşdirildi və Radius sync yeniləndi.'];
         } else {
             $flash = ['type' => 'error', 'message' => 'Ödənişi tətbiq etmək alınmadı. Müştəri kodunu, tarif qiymətini və DB/RADIUS sync-i yoxla.'];
@@ -188,6 +208,12 @@ $lookupRemainingDays = $lookupExpiresAt !== '' ? app_billing_remaining_days_text
     <?php billing_render_header('Nağd ödəniş', 'cash', $lang); ?>
 
     <main class="portal-layout">
+        <?php if ($billingDataErrorReference !== ''): ?>
+            <div class="portal-alert portal-alert-error">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <span>Odenis melumatlari yuklenmedi. Xeta arayisi: <?= e($billingDataErrorReference); ?></span>
+            </div>
+        <?php endif; ?>
         <?php if ($flash !== null): ?>
             <div class="portal-alert portal-alert-<?= e($flash['type']); ?>">
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
@@ -220,6 +246,7 @@ $lookupRemainingDays = $lookupExpiresAt !== '' ? app_billing_remaining_days_text
                 <div class="portal-card-head"><h2>Ödəniş formu</h2><small>Referans sistemdəki "Nağd ödəniş" axınına uyğun sadə kassa formu.</small></div>
                 <form method="post" class="portal-stacked-form">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="idempotency_key" value="<?= e($cashPaymentIdempotency); ?>">
                     <div class="portal-form-row">
                         <label>Müştəri kodu</label>
                         <input type="text" name="subscriber_code" value="<?= e($lookupCode); ?>" placeholder="1100000" required>

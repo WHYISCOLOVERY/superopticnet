@@ -5,6 +5,7 @@ require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/communication-provider.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/communication-campaign-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
@@ -12,6 +13,7 @@ $user = billing_require_employee();
 $flash = null;
 $providerTestResult = null;
 $db = app_db();
+$messageDataErrorReference = $db instanceof PDO ? '' : app_runtime_error_reference('message_center_database_unavailable');
 $telegramBotDefinitions = app_mgs_telegram_bot_definitions();
 
 function message_center_mask_destination(string $value): string
@@ -63,6 +65,49 @@ function message_center_status_label(string $status): string
     return app_ui_status($status);
 }
 
+function message_center_delivery_state_label(string $state): string
+{
+    static $labels = [
+        'pending' => 'Provider gozleyir',
+        'accepted' => 'Provider qebul edib',
+        'submitted' => 'Operatora oturulub',
+        'delivered' => 'Catdirilib',
+        'final_failed' => 'Catdirilmadi',
+    ];
+
+    $state = strtolower(trim($state));
+    return $labels[$state] ?? message_center_status_label($state);
+}
+
+function message_center_row_status_label(array $row): string
+{
+    $channel = strtolower(trim((string) ($row['channel'] ?? '')));
+    $status = message_center_reporting_status($row);
+    if ($channel === 'app') {
+        return match ($status) {
+            'queued', 'pending' => 'Portal bildirişi gözləyir',
+            'accepted', 'submitted', 'delivered', 'sent' => 'Portal bildirişi yaradılıb',
+            'final_failed', 'failed' => 'Portal bildirişi yaradılmadı',
+            'test' => 'Sınaq qeydi',
+            default => message_center_delivery_state_label($status),
+        };
+    }
+
+    return message_center_delivery_state_label($status);
+}
+
+function message_center_reporting_status(array $row): string
+{
+    $status = strtolower(trim((string) ($row['status'] ?? 'queued')));
+    $deliveryState = strtolower(trim((string) ($row['delivery_state'] ?? '')));
+    if (in_array($status, ['sent', 'failed'], true)
+        && in_array($deliveryState, ['pending', 'accepted', 'submitted', 'delivered', 'final_failed'], true)) {
+        return $deliveryState;
+    }
+
+    return $status;
+}
+
 function message_center_mode_label(string $mode): string
 {
     static $labels = [
@@ -82,6 +127,7 @@ function message_center_reason_label(string $reason): string
         'provider_not_configured_or_destination_missing' => 'Provider konfiqurasiyasi ve ya unvan catismir',
         'dry_run_no_provider_request_sent' => 'Dry-run: real provider sorgusu gonderilmedi',
         'provider_rejected' => 'Provider imtina etdi',
+        'external_delivery_paused' => 'Xarici göndəriş təhlükəsizlik kilidi ilə dayandırılıb',
         'not sent' => 'Gonderilmeyib',
         'unknown' => 'Bilinmir',
     ];
@@ -93,12 +139,16 @@ function message_center_reason_label(string $reason): string
 function message_center_filtered_message_where(string $status, string $channel, string $query, array &$params): array
 {
     $allowedStatuses = ['queued', 'sent', 'failed', 'test'];
+    $allowedDeliveryStates = ['pending', 'accepted', 'submitted', 'delivered', 'final_failed'];
     $allowedChannels = ['auto', 'whatsapp', 'app', 'telegram', 'sms'];
     $where = ['(m.account_id IS NOT NULL OR NULLIF(m.subscriber_code, "") IS NOT NULL)'];
 
     if (in_array($status, $allowedStatuses, true)) {
         $where[] = 'm.status = :status';
         $params['status'] = $status;
+    } elseif (in_array($status, $allowedDeliveryStates, true)) {
+        $where[] = 'm.delivery_state = :delivery_state';
+        $params['delivery_state'] = $status;
     }
 
     if (in_array($channel, $allowedChannels, true)) {
@@ -326,31 +376,81 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             ];
         }
     } elseif ($action === 'send_group' && app_portal_is_admin($user)) {
-        $result = app_message_queue_group(
-            clean_text((string) ($_POST['scope'] ?? 'active')),
-            clean_text((string) ($_POST['area'] ?? '')),
-            clean_text((string) ($_POST['template_code'] ?? '')),
-            clean_text((string) ($_POST['channel'] ?? 'auto')),
-            trim((string) ($_POST['custom_message'] ?? '')),
-            $user,
-            isset($_POST['test_mode'])
-        );
+        $templateCode = clean_text((string) ($_POST['template_code'] ?? ''));
+        $template = app_message_template_by_code($templateCode);
+        $testMode = isset($_POST['test_mode']);
+        if (!$testMode && app_communication_template_message_type($template) === 'holiday') {
+            $result = app_communication_campaign_prepare_holiday(
+                clean_text((string) ($_POST['scope'] ?? 'active')),
+                clean_text((string) ($_POST['area'] ?? '')),
+                $templateCode,
+                clean_text((string) ($_POST['channel'] ?? 'sms')),
+                trim((string) ($_POST['custom_message'] ?? '')),
+                $user
+            );
+            $flash = [
+                'type' => !empty($result['ok']) ? 'success' : 'error',
+                'message' => !empty($result['ok'])
+                    ? 'Bayram SMS kampaniyasi tesdiqe gonderildi: ' . (int) ($result['recipient_count'] ?? 0) . ' alici, ' . (int) ($result['estimated_parts'] ?? 0) . ' SMS hissesi.'
+                    : 'Kampaniya hazirlanmadi: ' . clean_text((string) ($result['reason'] ?? 'unknown')),
+            ];
+        } else {
+            $result = app_message_queue_group(
+                clean_text((string) ($_POST['scope'] ?? 'active')),
+                clean_text((string) ($_POST['area'] ?? '')),
+                $templateCode,
+                clean_text((string) ($_POST['channel'] ?? 'auto')),
+                trim((string) ($_POST['custom_message'] ?? '')),
+                $user,
+                $testMode
+            );
+            $flash = [
+                'type' => ((int) $result['failed']) === 0 ? 'success' : 'error',
+                'message' => 'Qrup mesajlari: uygun ' . (int) $result['matched'] . ', novbeye yazilan ' . (int) $result['queued'] . ', xeta ' . (int) $result['failed'] . '.',
+            ];
+        }
+    } elseif ($action === 'approve_message_campaign' && app_portal_is_admin($user)) {
+        $result = app_communication_campaign_approve_and_queue((int) ($_POST['campaign_id'] ?? 0), $user);
         $flash = [
-            'type' => ((int) $result['failed']) === 0 ? 'success' : 'error',
-            'message' => 'Qrup mesajlari: uygun ' . (int) $result['matched'] . ', novbeye yazilan ' . (int) $result['queued'] . ', xeta ' . (int) $result['failed'] . '.',
+            'type' => !empty($result['ok']) ? 'success' : 'error',
+            'message' => !empty($result['ok'])
+                ? 'Kampaniya tesdiqlendi ve ' . (int) ($result['queued'] ?? 0) . ' SMS novbeye yazildi.'
+                : 'Kampaniya tesdiqlenmedi: ' . clean_text((string) ($result['reason'] ?? 'unknown')),
+        ];
+    } elseif ($action === 'provider_test' && !app_demo_fixtures_enabled()) {
+        $flash = [
+            'type' => 'error',
+            'message' => 'Provider test funksiyasi production muhitinde deaktivdir.',
         ];
     } elseif ($action === 'provider_test' && app_portal_is_admin($user)) {
         $channel = clean_text((string) ($_POST['provider_channel'] ?? 'telegram'));
         $providerBotKey = clean_text((string) ($_POST['provider_bot_key'] ?? 'superpilot')) ?: 'superpilot';
         $destination = trim((string) ($_POST['provider_destination'] ?? ''));
+        $testSubscriberCode = clean_text((string) ($_POST['provider_test_subscriber_code'] ?? ''));
+        $providerConfirmation = strtoupper(trim((string) ($_POST['provider_confirm'] ?? '')));
         $message = trim((string) ($_POST['provider_message'] ?? ''));
         $applyProviderTest = isset($_POST['provider_apply']);
+        $allowedSmsTestSubscriber = trim((string) (getenv('SMS_LIVE_TEST_SUBSCRIBER_CODE') ?: '2320025'));
 
         if (!in_array($channel, ['telegram', 'sms', 'whatsapp', 'app'], true)) {
             $flash = ['type' => 'error', 'message' => 'Provider test kanali yanlisdir.'];
         } elseif ($channel === 'telegram' && !isset($telegramBotDefinitions[$providerBotKey])) {
             $flash = ['type' => 'error', 'message' => 'Telegram bot profili yanlisdir.'];
+        } elseif ($applyProviderTest && $providerConfirmation !== 'TEST GONDER') {
+            $flash = ['type' => 'error', 'message' => 'Real test ucun tesdiq sahesine TEST GONDER yazilmalidir.'];
+        } elseif ($applyProviderTest && in_array($channel, ['sms', 'whatsapp'], true) && $testSubscriberCode !== $allowedSmsTestSubscriber) {
+            $flash = ['type' => 'error', 'message' => 'SMS/WhatsApp real testi yalniz icazeli test abonenti ucun mumkundur.'];
         } else {
+            if (in_array($channel, ['sms', 'whatsapp'], true)) {
+                $testAccount = app_db_account_by_subscriber_code($testSubscriberCode);
+                $destination = is_array($testAccount) ? trim((string) ($testAccount['phone'] ?? '')) : '';
+                if ($applyProviderTest && $destination === '') {
+                    $flash = ['type' => 'error', 'message' => 'Test abonenti ve ya onun mobil nomresi tapilmadi.'];
+                }
+            }
+            if ($flash !== null) {
+                // Validation failed before any provider request.
+            } else {
             if ($message === '') {
                 $message = 'TEST MESAJI' . "\n" . 'SuperOptic MGS provider UI smoke test: ' . date('Y-m-d H:i:s');
             } elseif (!str_starts_with($message, 'TEST MESAJI')) {
@@ -406,39 +506,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     'message' => $providerTestResult['sent'] ? 'Provider TEST MESAJI gonderildi.' : 'Provider TEST MESAJI gonderilmedi.',
                 ];
             }
+            }
         }
     } elseif ($action === 'save_sms_provider_credentials' && app_portal_is_admin($user)) {
-        $smsUsername = clean_text((string) ($_POST['sms_provider_username'] ?? ''));
-        $smsPassword = trim((string) ($_POST['sms_provider_password'] ?? ''));
-        $existingSmsProvider = app_communication_provider_config('sms', '994000000000');
-        $existingPassword = (string) ($existingSmsProvider['password'] ?? '');
-        if ($smsUsername === '') {
-            $flash = ['type' => 'error', 'message' => 'SMS provider username bos ola bilmez.'];
-        } elseif ($smsPassword === '' && $existingPassword === '') {
-            $flash = ['type' => 'error', 'message' => 'SMS provider password bos ola bilmez.'];
-        } else {
-            $settings = [
-                'sms_provider_driver' => 'poctgoyercini_json',
-                'sms_provider_endpoint' => APP_COMMUNICATION_SMS_POCTGOYERCINI_SEND_ENDPOINT,
-                'sms_provider_user' => $smsUsername,
-                'sms_provider_password' => $smsPassword !== '' ? $smsPassword : $existingPassword,
-                'sms_provider_sender' => 'SuperOptic',
-                'sms_provider_purpose' => 'INF',
-                'sms_provider_encoding' => 'LATIN',
-            ];
-            $saved = 0;
-            foreach ($settings as $settingKey => $settingValue) {
-                if (app_mgs_set_runtime_setting($settingKey, $settingValue, $user)) {
-                    $saved++;
-                }
-            }
-            $flash = [
-                'type' => $saved === count($settings) ? 'success' : 'error',
-                'message' => $saved === count($settings)
-                    ? 'SMS provider melumatlari saxlanildi. API arxada poctgoyercini JSON modeli ile isleyir.'
-                    : 'SMS provider melumatlarinin bir hissesi saxlanmadi.',
-            ];
-        }
+        $flash = [
+            'type' => 'error',
+            'message' => 'API acarlari portalda ve DB-de saxlanmir. SMS_PROVIDER_PUBLIC_KEY ve SMS_PROVIDER_PRIVATE_KEY server environment-de deyisdirilmelidir.',
+        ];
     } elseif ($action === 'retry_message' && app_portal_is_admin($user)) {
         $messageId = (int) ($_POST['message_id'] ?? 0);
         if (!$db instanceof PDO || $messageId <= 0) {
@@ -488,6 +562,26 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     : 'Retry ucun uygun xetali mesaj tapilmadi.',
             ];
         }
+    } elseif ($action === 'update_channel_switches' && app_portal_is_admin($user)) {
+        $channelSettings = [
+            'channel_whatsapp_enabled',
+            'channel_app_enabled',
+            'channel_telegram_enabled',
+            'channel_sms_enabled',
+        ];
+        $saved = 0;
+        foreach ($channelSettings as $settingKey) {
+            $settingValue = isset($_POST[$settingKey]) ? '1' : '0';
+            if (app_mgs_set_runtime_setting($settingKey, $settingValue, $user)) {
+                $saved++;
+            }
+        }
+        $flash = [
+            'type' => $saved === count($channelSettings) ? 'success' : 'error',
+            'message' => $saved === count($channelSettings)
+                ? 'Mesaj kanallarinin aktivlik veziyyeti yenilendi.'
+                : 'Kanal ayarlarinin bir hissesi saxlanmadi.',
+        ];
     } elseif ($action === 'update_whatsapp_guard' && app_portal_is_admin($user)) {
         $settings = [
             'whatsapp_unknown_daily_limit' => max(1, min(50, (int) ($_POST['whatsapp_unknown_daily_limit'] ?? 5))),
@@ -515,12 +609,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
 $templates = app_message_templates();
 $stats = app_message_stats();
+$externalDeliveryEnabled = app_communication_external_delivery_enabled();
 $messageStatusFilter = clean_text((string) ($_GET['message_status'] ?? 'all'));
 $messageChannelFilter = clean_text((string) ($_GET['message_channel'] ?? 'all'));
 $messageSearch = clean_text((string) ($_GET['message_q'] ?? ''));
 $messageView = in_array((string) ($_GET['view'] ?? 'overview'), ['overview', 'single', 'group', 'templates', 'history', 'audit', 'test', 'settings'], true)
     ? (string) ($_GET['view'] ?? 'overview')
     : 'overview';
+if ($messageView === 'test' && !app_demo_fixtures_enabled()) {
+    $messageView = 'overview';
+}
 if (in_array($messageView, ['group', 'test', 'settings'], true) && !app_portal_is_admin($user)) {
     $messageView = 'overview';
 }
@@ -563,14 +661,22 @@ $providerReadiness = [
     'whatsapp' => app_communication_provider_public_status('whatsapp'),
 ];
 $smsProviderSettings = app_communication_provider_config('sms', '994000000000');
-$smsProviderUsername = (string) ($smsProviderSettings['user'] ?? '');
-$smsProviderHasPassword = (string) ($smsProviderSettings['password'] ?? '') !== '';
+$smsProviderCredentialsReady = !empty($smsProviderSettings['credentials_ready']);
+$channelSwitches = [
+    'whatsapp' => app_communication_channel_enabled('whatsapp'),
+    'app' => app_communication_channel_enabled('app'),
+    'telegram' => app_communication_channel_enabled('telegram'),
+    'sms' => app_communication_channel_enabled('sms'),
+];
 $whatsappBridge = is_array($providerReadiness['whatsapp']['bridge'] ?? null) ? $providerReadiness['whatsapp']['bridge'] : [];
 $whatsappQr = app_portal_is_admin($user) && $messageView === 'settings'
     ? app_communication_whatsapp_bridge_qr()
     : ['ok' => false, 'status' => 'not_requested', 'qr' => ''];
 $whatsappGuardLimits = app_communication_whatsapp_guard_limits();
 $whatsappGuardStats = message_center_whatsapp_guard_stats($db);
+$campaignApprovals = $db instanceof PDO && app_portal_is_admin($user)
+    ? app_communication_campaign_recent($db, 20)
+    : [];
 if ($db instanceof PDO) {
     $channelRows = $db->query(
         'SELECT channel, COUNT(*) AS total
@@ -590,9 +696,16 @@ if ($db instanceof PDO) {
     }
 
     $usageRows = $db->query(
-        'SELECT channel, status, COUNT(*) AS total
+        'SELECT channel,
+                CASE
+                    WHEN status IN ("sent", "failed")
+                         AND delivery_state IN ("pending", "accepted", "submitted", "delivered", "final_failed")
+                        THEN delivery_state
+                    ELSE status
+                END AS reporting_status,
+                COUNT(*) AS total
          FROM communication_messages
-         GROUP BY channel, status'
+         GROUP BY channel, reporting_status'
     )->fetchAll() ?: [];
     foreach ($usageRows as $row) {
         if (!is_array($row)) {
@@ -602,7 +715,7 @@ if ($db instanceof PDO) {
         if (!array_key_exists($key, $messageChannelUsage)) {
             $key = 'other';
         }
-        $statusKey = strtolower((string) ($row['status'] ?? 'queued'));
+        $statusKey = strtolower((string) ($row['reporting_status'] ?? 'queued'));
         $total = (int) ($row['total'] ?? 0);
         $messageChannelUsage[$key] += $total;
         $messageChannelStatusUsage[$key][$statusKey] = ($messageChannelStatusUsage[$key][$statusKey] ?? 0) + $total;
@@ -669,7 +782,7 @@ if ($db instanceof PDO) {
         $workerRuns = [];
     }
 }
-if ($templates === []) {
+if ($templates === [] && app_demo_fixtures_enabled()) {
     $templates = [
         ['code' => 'payment_received', 'title' => 'Odenis qebul edildi', 'category' => 'billing', 'body' => 'Hormetli {full_name}, {customer_code} kodlu xidmetiniz uzre odenis qebul edildi. Xidmetiniz aktivdir.'],
         ['code' => 'expires_tomorrow', 'title' => '1 gun sonra bitme', 'category' => 'billing', 'body' => 'Hormetli {full_name}, {customer_code} kodlu internet xidmetiniz 1 gun sonra bitecek. Davam etmek ucun odenis edin.'],
@@ -680,7 +793,7 @@ if ($templates === []) {
 if (($stats['templates'] ?? 0) === 0) {
     $stats['templates'] = count($templates);
 }
-if ($recent === []) {
+if ($recent === [] && app_demo_fixtures_enabled()) {
     $sampleCustomer = billing_mock_customer_rows()[0] ?? [];
     $recent = $sampleCustomer === [] ? [] : [[
         'created_at' => date('Y-m-d H:i:s'),
@@ -712,7 +825,7 @@ if ($db instanceof PDO) {
     } else {
         $customerRows = $db->query("SELECT * FROM portal_accounts WHERE role = 'customer' ORDER BY updated_at DESC LIMIT 15")->fetchAll() ?: [];
     }
-} else {
+} elseif (app_demo_fixtures_enabled()) {
     $mockRows = billing_mock_customer_rows();
     if ($customerQuery !== '') {
         $needle = strtolower($customerQuery);
@@ -726,6 +839,8 @@ if ($db instanceof PDO) {
         }));
     }
     $customerRows = array_slice($mockRows, 0, 15);
+} else {
+    $customerRows = [];
 }
 
 $channelLabels = [
@@ -752,7 +867,7 @@ if (array_sum($messageChannelUsage) === 0 && $recent !== []) {
         if (!array_key_exists($key, $messageChannelUsage)) {
             $key = 'other';
         }
-        $statusKey = strtolower((string) ($message['status'] ?? 'queued'));
+        $statusKey = message_center_reporting_status($message);
         $messageChannelUsage[$key]++;
         $messageChannelStatusUsage[$key][$statusKey] = ($messageChannelStatusUsage[$key][$statusKey] ?? 0) + 1;
     }
@@ -805,6 +920,12 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
     <?php billing_render_header('Mesaj merkezi', 'messages', $lang); ?>
 
     <main class="portal-layout message-center-layout" data-message-shell data-message-view="<?= e($messageView); ?>">
+        <?php if ($messageDataErrorReference !== ''): ?>
+            <div class="portal-alert portal-alert-error">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <span>Mesaj melumatlari yuklenmedi. Xeta arayisi: <?= e($messageDataErrorReference); ?></span>
+            </div>
+        <?php endif; ?>
         <?php if ($flash !== null): ?>
             <div class="portal-alert portal-alert-<?= e($flash['type']); ?>" data-autohide-alert>
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
@@ -814,14 +935,14 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
 
         <section class="portal-hero portal-reveal">
             <div>
-                <span class="portal-kicker">Mesaj merkezi</span>
-                <h1>Gundelik mesaj emeliyyatlari</h1>
-                <p>Musteriye WhatsApp, tetbiq, Telegram ve ya SMS ile mesaj gonderin. "Avtomatik secim" uygun kanali WhatsApp -> tetbiq -> Telegram -> SMS ardicilligi ile ozu tapir.</p>
+                <span class="portal-kicker">Göndərişlər</span>
+                <h1>Müştəri bildirişləri və təsdiqli kampaniyalar</h1>
+                <p>Portal bildirişlərini, SMS və Telegram növbəsini burada hazırlayın və izləyin. CRM müraciətləri ayrıca CRM modulunda, WhatsApp əməkdaş nömrələri isə ayrıca monitorinq modulunda saxlanılır.</p>
             </div>
             <div class="portal-status-card">
-                <span>Novbe statusu</span>
-                <strong>Gonderime hazir</strong>
-                <small>Mesajlar novbeye yazilir ve sirayla gonderilir</small>
+                <span>Xarici göndəriş</span>
+                <strong><?= $externalDeliveryEnabled ? 'Aktivdir' : 'Dayandırılıb'; ?></strong>
+                <small><?= $externalDeliveryEnabled ? 'Növbə provider-lərə göndərilə bilər' : 'SMS, Telegram və WhatsApp növbədə saxlanılır; provider sorğusu edilmir'; ?></small>
             </div>
         </section>
 
@@ -839,13 +960,13 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
         $messageSendLinks = [$messageLink('single','Ferdi mesaj')];
         if (app_portal_is_admin($user)) $messageSendLinks[] = $messageLink('group','Qrup mesaj');
         $moduleNavGroups = [
-            ['label'=>'Umumi baxis','icon'=>'fa-gauge-high','links'=>[$messageLink('overview','Umumi baxis')]],
-            ['label'=>'Mesaj gonder','icon'=>'fa-paper-plane','links'=>$messageSendLinks],
-            ['label'=>'Mezmun','icon'=>'fa-file-lines','links'=>[$messageLink('templates','Sablonlar')]],
-            ['label'=>'Tarixce ve audit','icon'=>'fa-clock-rotate-left','links'=>[$messageLink('history','Tarixce'),$messageLink('audit','Gonderim auditi')]],
+            ['label'=>'Göndərişlərə baxış','icon'=>'fa-gauge-high','links'=>[$messageLink('overview','Ümumi baxış')]],
+            ['label'=>'Yeni göndəriş','icon'=>'fa-paper-plane','links'=>$messageSendLinks],
+            ['label'=>'Şablonlar','icon'=>'fa-file-lines','links'=>[$messageLink('templates','Mesaj şablonları')]],
+            ['label'=>'Göndəriş tarixçəsi','icon'=>'fa-clock-rotate-left','links'=>[$messageLink('history','Tarixçə'),$messageLink('audit','Provider auditi')]],
         ];
         if (app_portal_is_admin($user)) $moduleNavGroups[] = ['label'=>'Ayarlar','icon'=>'fa-sliders','links'=>[['key'=>'settings','label'=>'Kanal ve provider ayarlari','href'=>$smsProviderSettingsHref]]];
-        if (app_portal_is_admin($user)) $moduleNavGroups[] = ['label'=>'Provider testi','icon'=>'fa-vial','links'=>[$messageLink('test','Provider testi')]];
+        if (app_portal_is_admin($user) && app_demo_fixtures_enabled()) $moduleNavGroups[] = ['label'=>'Provider testi','icon'=>'fa-vial','links'=>[$messageLink('test','Provider testi')]];
         $moduleNavActive = $messageView;
         $moduleNavAria = 'Mesaj merkezi bolmeleri';
         $moduleNavName = 'message-module-nav';
@@ -855,8 +976,8 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
 
         <div class="message-command-strip portal-reveal" data-message-command-strip>
             <div>
-                <strong>Mesaj emeliyyatlari</strong>
-                <small>Gonderim, tarixce ve kanal ayarlarina sehife yenilenmeden kecin.</small>
+                <strong>İş sahələri</strong>
+                <small>Göndəriş, CRM və Telegram bot idarəetməsi bir-birindən ayrılıb.</small>
             </div>
             <div class="message-command-actions">
                 <a class="portal-primary-btn portal-inline-link" data-message-nav data-module-section="single" href="<?= e($messageHref('single')); ?>"><i class="fa-solid fa-paper-plane"></i> Ferdi mesaj</a>
@@ -864,8 +985,10 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="group" href="<?= e($messageHref('group')); ?>"><i class="fa-solid fa-users"></i> Qrup mesaj</a>
                 <?php endif; ?>
                 <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="history" href="<?= e($messageHref('history')); ?>"><i class="fa-solid fa-clock-rotate-left"></i> Tarixce</a>
+                <a class="portal-ghost-btn portal-inline-link" href="crm.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-ticket"></i> CRM ve ticketler</a>
                 <?php if (app_portal_is_admin($user)): ?>
                     <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="settings" href="<?= e($smsProviderSettingsHref); ?>"><i class="fa-solid fa-sliders"></i> Kanal ayarlari</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="mgs-integration.php?view=bots<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-brands fa-telegram"></i> Telegram botlari</a>
                 <?php endif; ?>
             </div>
         </div>
@@ -893,10 +1016,10 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                             </span>
                             <span class="message-channel-total"><?= e((string) $row['total']); ?> / <?= e((string) $row['percent']); ?>%</span>
                             <span class="message-channel-statuses">
-                                <?php foreach (['queued', 'sent', 'failed', 'test'] as $statusKey): ?>
+                                <?php foreach (['queued', 'pending', 'accepted', 'submitted', 'delivered', 'final_failed', 'sent', 'failed', 'test'] as $statusKey): ?>
                                     <?php $statusTotal = (int) (($row['statuses'][$statusKey] ?? 0)); ?>
                                     <?php if ($statusTotal <= 0) { continue; } ?>
-                                    <span><?= e(message_center_status_label($statusKey)); ?>: <?= e((string) $statusTotal); ?></span>
+                                    <span><?= e(message_center_delivery_state_label($statusKey)); ?>: <?= e((string) $statusTotal); ?></span>
                                 <?php endforeach; ?>
                             </span>
                         </div>
@@ -919,7 +1042,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     <strong class="portal-kicker">Provider statusu</strong>
                     <div class="message-worker-list">
                         <?php foreach ($providerReadiness as $providerName => $status): ?>
-                            <?php $ready = !empty($status['configured']) || ($providerName === 'sms' && !empty($status['has_endpoint']) && !empty($status['has_credentials'])); ?>
+                            <?php $ready = $providerName === 'sms' ? !empty($status['status_configured']) : !empty($status['configured']); ?>
                             <div class="message-worker-row">
                                 <strong><?= e($providerName); ?></strong>
                                 <span class="portal-pill <?= $ready ? 'message-ready' : 'message-waiting'; ?>"><?= $ready ? 'hazir' : 'ayar gozleyir'; ?></span>
@@ -941,50 +1064,77 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
             <div class="portal-card">
                 <div class="portal-card-head">
                     <h2>Kanal ve provider ayarlari</h2>
-                    <small>SMS giris melumatlari, WhatsApp baglantisi ve gonderim limitleri yalniz bu bolmede deyisdirilir.</small>
+                    <small>Aktiv kanallar, provider hazirligi, WhatsApp baglantisi ve gonderim limitleri bu bolmede idare olunur.</small>
                 </div>
-                <form method="post" class="portal-stacked-form portal-section-gap" id="sms-provider-settings" data-sms-provider-config>
-                    <input type="hidden" name="action" value="save_sms_provider_credentials">
+                <div class="message-provider-note">
+                    <strong>Xarici göndəriş <?= $externalDeliveryEnabled ? 'aktivdir' : 'dayandırılıb'; ?>.</strong>
+                    <?= $externalDeliveryEnabled
+                        ? 'SMS, Telegram və WhatsApp provider sorğuları icra oluna bilər.'
+                        : 'Hazırlanan xarici mesajlar növbədə qalır. Aktivləşdirmə yalnız serverdə COMMUNICATION_EXTERNAL_SEND_ENABLED=1 ilə edilir.'; ?>
+                </div>
+                <form method="post" class="portal-stacked-form portal-section-gap" data-channel-switches>
+                    <input type="hidden" name="action" value="update_channel_switches">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
-                    <strong class="portal-kicker">SMS provider</strong>
-                    <div class="portal-form-row portal-grid-slim">
-                        <div>
-                            <label for="smsProviderUsername">Istifadeci adi</label>
-                            <input id="smsProviderUsername" name="sms_provider_username" type="text" value="<?= e($smsProviderUsername); ?>" autocomplete="off" placeholder="SMS provider istifadeci adi">
-                        </div>
-                        <div>
-                            <label for="smsProviderPassword">Sifre</label>
-                            <input id="smsProviderPassword" name="sms_provider_password" type="password" autocomplete="new-password" placeholder="<?= $smsProviderHasPassword ? 'Saxlanib, deyismek ucun yazin' : 'Provider sifresi'; ?>">
-                        </div>
+                    <strong class="portal-kicker">Aktiv mesaj kanallari</strong>
+                    <div class="message-guard-grid">
+                        <?php foreach ([
+                            'whatsapp' => ['WhatsApp', 'Sirketin esas bildiris ve OTP provider nomresi'],
+                            'app' => ['Tetbiq', 'Musterinin portal bildirisleri'],
+                            'telegram' => ['Telegram', 'Bot ve emeliyyat qruplari'],
+                            'sms' => ['SMS', 'PG365 / Posta Goyercini provider'],
+                        ] as $channelKey => [$channelLabel, $channelHelp]): ?>
+                            <label class="message-guard-card">
+                                <span><?= e($channelLabel); ?></span>
+                                <strong><?= !empty($channelSwitches[$channelKey]) ? 'Aktiv' : 'Deaktiv'; ?></strong>
+                                <small><?= e($channelHelp); ?></small>
+                                <input type="checkbox" name="channel_<?= e($channelKey); ?>_enabled" value="1" <?= !empty($channelSwitches[$channelKey]) ? 'checked' : ''; ?>>
+                            </label>
+                        <?php endforeach; ?>
                     </div>
-                    <button type="submit" class="message-soft-btn">SMS provider saxla</button>
-                    <small>API unvani sistemde sabitdir: api.poctgoyercini.com. Istifadeci adi ve sifre yalniz gonderim zamani tehlukesiz provider sorgusunda istifade olunur.</small>
+                    <small>Deaktiv kanal avtomatik secimde kecilir ve birbasa gonderim telebi provider-e catmadan dayandirilir.</small>
+                    <button class="portal-primary-btn" type="submit">Kanal ayarlarini saxla</button>
                 </form>
-                <div class="message-whatsapp-bridge">
+                <div class="portal-stacked-form portal-section-gap" id="sms-provider-settings" data-sms-provider-config>
+                    <strong class="portal-kicker">SMS provider</strong>
+                    <div class="message-worker-row">
+                        <strong>Public/Private Key</strong>
+                        <span class="portal-pill <?= $smsProviderCredentialsReady ? 'message-ready' : 'message-waiting'; ?>"><?= $smsProviderCredentialsReady ? 'environment hazirdir' : 'environment gozlenilir'; ?></span>
+                    </div>
+                    <small>Acarlari serverde <code>SMS_PROVIDER_PUBLIC_KEY</code> ve <code>SMS_PROVIDER_PRIVATE_KEY</code> kimi saxlayin. Portal, DB, audit ve HTML acarin ozunu qebul etmir ve gostermir.</small>
+                </div>
+                <div class="message-worker-row portal-section-gap">
                     <div>
-                        <strong class="portal-kicker">WhatsApp Web bridge</strong>
-                        <h3>QR sessiyasi ve yerli xidmetin veziyyeti</h3>
+                        <strong>Telegram botları və qruplar</strong>
+                        <small>Yeni bot yaratmaq, Chat ID-ni yeniləmək və registry statusunu görmək üçün ayrıca idarəetmə səhifəsi.</small>
+                    </div>
+                    <a class="message-soft-btn portal-inline-link" href="mgs-integration.php?view=bots<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">Bot idarəetməsini aç</a>
+                </div>
+                <div class="message-whatsapp-bridge" id="whatsapp-provider-settings" data-whatsapp-provider-panel data-status-endpoint="api/provider/whatsapp-status.php" data-csrf-token="<?= e(app_csrf_token()); ?>">
+                    <div>
+                        <strong class="portal-kicker">Sirket WhatsApp provideri</strong>
+                        <h3>Bildiris ve parol reset nomresinin QR sessiyasi</h3>
                         <p>
-                            Status: <strong><?= e(message_center_status_label((string) ($whatsappBridge['status'] ?? 'unknown'))); ?></strong>.
-                            Xidmet aciqdir: <strong><?= !empty($whatsappBridge['reachable']) ? 'beli' : 'xeyr'; ?></strong>.
-                            WhatsApp qosulub: <strong><?= !empty($whatsappBridge['connected']) ? 'beli' : 'xeyr'; ?></strong>.
+                            Status: <strong data-whatsapp-provider-status><?= e(message_center_status_label((string) ($whatsappBridge['status'] ?? 'unknown'))); ?></strong>.
+                            Xidmet aciqdir: <strong data-whatsapp-provider-reachable><?= !empty($whatsappBridge['reachable']) ? 'beli' : 'xeyr'; ?></strong>.
+                            WhatsApp qosulub: <strong data-whatsapp-provider-connected><?= !empty($whatsappBridge['connected']) ? 'beli' : 'xeyr'; ?></strong>.
+                            Provider nomresi: <strong data-whatsapp-provider-number><?= !empty($whatsappBridge['provider_number']) ? e((string) $whatsappBridge['provider_number']) : 'hele qosulmayib'; ?></strong>.
                         </p>
                         <?php if (!empty($whatsappBridge['last_error'])): ?>
-                            <small>Xeta: <?= e((string) $whatsappBridge['last_error']); ?></small>
+                            <small data-whatsapp-provider-note>Xeta: <?= e((string) $whatsappBridge['last_error']); ?></small>
                         <?php elseif ((string) ($whatsappQr['status'] ?? '') === 'qr'): ?>
-                            <small>Telefonunuzda WhatsApp Web QR oxudun. Bundan sonra mesaj worker WhatsApp kanalindan gondere bilecek.</small>
+                            <small data-whatsapp-provider-note>Sirket bildirisleri ve parol reset kodlari ucun istifade olunacaq nomre ile bu QR-i oxudun. Emekdas monitorinq nomreleri bu provider-e qosulmur.</small>
                         <?php else: ?>
-                            <small>WhatsApp elcatan deyilse mesaj diger aktiv kanalla gonderilmeye davam edir.</small>
+                            <small data-whatsapp-provider-note>Bu provider elcatan deyilse parol reset kodu gonderilmir; adi bildirisler ise qaydaya uygun diger aktiv kanala kece biler.</small>
                         <?php endif; ?>
+                        <div class="message-provider-refresh-row">
+                            <button class="message-soft-btn" type="button" data-whatsapp-provider-refresh><i class="fa-solid fa-rotate"></i> Sessiyani yenile</button>
+                            <small data-whatsapp-provider-updated><?= !empty($whatsappBridge['last_qr_at']) ? 'Son QR: ' . e((string) $whatsappBridge['last_qr_at']) : 'Canli QR gozlenilir'; ?></small>
+                        </div>
                     </div>
                     <div class="message-whatsapp-qr">
-                        <?php if (!empty($whatsappQr['qr'])): ?>
-                            <img src="<?= e((string) $whatsappQr['qr']); ?>" alt="WhatsApp QR">
-                        <?php elseif (!empty($whatsappBridge['connected'])): ?>
-                            <span class="portal-pill portal-pill-success">WhatsApp qosulub</span>
-                        <?php else: ?>
-                            <span class="portal-pill message-waiting">QR gozlenilir</span>
-                        <?php endif; ?>
+                        <img data-whatsapp-provider-qr src="<?= e((string) ($whatsappQr['qr'] ?? '')); ?>" alt="Sirket WhatsApp provider QR"<?= empty($whatsappQr['qr']) ? ' hidden' : ''; ?>>
+                        <span class="portal-pill portal-pill-success" data-whatsapp-provider-ready<?= empty($whatsappBridge['connected']) ? ' hidden' : ''; ?>>WhatsApp qosulub</span>
+                        <span class="portal-pill message-waiting" data-whatsapp-provider-waiting<?= !empty($whatsappQr['qr']) || !empty($whatsappBridge['connected']) ? ' hidden' : ''; ?>>Canli QR gozlenilir</span>
                     </div>
                 </div>
                 <div class="message-guard-grid">
@@ -1092,7 +1242,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
         </section>
         <?php endif; ?>
 
-        <?php if (app_portal_is_admin($user) && $messageView === 'test'): ?>
+        <?php if (app_portal_is_admin($user) && app_demo_fixtures_enabled() && $messageView === 'test'): ?>
             <section class="portal-card portal-reveal">
                 <div class="portal-card-head">
                     <h2>Provider test paneli</h2>
@@ -1133,8 +1283,14 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                             <small>Telegram testleri generic qrupa yox, secilen botun qrupuna gedir.</small>
                         </div>
                         <div>
-                            <label for="providerDestination">Unvan / chat ID</label>
-                            <input id="providerDestination" name="provider_destination" type="text" placeholder="Telegram bos qalarsa secilen bot qrupu / SMS ucun 994...">
+                            <label for="providerDestination">Telegram chat ID</label>
+                            <input id="providerDestination" name="provider_destination" type="text" placeholder="Bos qalarsa secilen bot qrupu">
+                            <small>SMS ve WhatsApp ucun telefon elle qebul edilmir.</small>
+                        </div>
+                        <div>
+                            <label for="providerTestSubscriber">SMS/WhatsApp test abonenti</label>
+                            <input id="providerTestSubscriber" name="provider_test_subscriber_code" type="text" value="2320025" inputmode="numeric" autocomplete="off">
+                            <small>Real test yalniz serverde icaze verilen test abonentine geder.</small>
                         </div>
                     </div>
                     <div class="portal-form-row">
@@ -1146,6 +1302,11 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                         <input type="checkbox" name="provider_apply" value="1">
                         <span>Real TEST MESAJI gonder. DB/ticket/alarm yaradilmiyacaq.</span>
                     </label>
+                    <div class="portal-form-row">
+                        <label for="providerConfirm">Real gonderis tesdiqi</label>
+                        <input id="providerConfirm" name="provider_confirm" type="text" placeholder="TEST GONDER" autocomplete="off">
+                        <small>Dry-run ucun bos saxlayin. Real testde TEST GONDER yazin.</small>
+                    </div>
                     <button class="portal-primary-btn" type="submit">Provider test et</button>
                 </form>
             </section>
@@ -1283,7 +1444,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                             <label for="groupChannel">Kanal</label>
                             <select id="groupChannel" name="channel">
                                 <?php foreach ($channelLabels as $value => $label): ?>
-                                    <option value="<?= e($value); ?>"><?= e($label); ?></option>
+                                    <option value="<?= e($value); ?>" <?= $value === 'sms' ? 'selected' : ''; ?>><?= e($label); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -1299,6 +1460,44 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     </label>
                     <button type="submit" class="portal-primary-btn">Qrup mesajini hazirla</button>
                 </form>
+                <div class="portal-card-head portal-section-gap">
+                    <h3>Bayram SMS tesdiq novbesi</h3>
+                    <small>Yaradan admin oz kampaniyasini tesdiq ede bilmez. Tesdiqden sonra auditoriya snapshot-i SMS novbesine yazilir.</small>
+                </div>
+                <div class="portal-table-wrap">
+                    <table class="portal-table mgs-compact-table">
+                        <thead><tr><th>Vaxt</th><th>Sablon / qrup</th><th>Alici</th><th>Hisse / kodlama</th><th>Status</th><th>Emeliyyat</th></tr></thead>
+                        <tbody>
+                        <?php if ($campaignApprovals === []): ?>
+                            <tr><td colspan="6">Tesdiq novbesinde kampaniya yoxdur.</td></tr>
+                        <?php endif; ?>
+                        <?php foreach ($campaignApprovals as $campaign): ?>
+                            <?php $isCreator = (int) ($campaign['created_by_account_id'] ?? 0) === (int) ($user['id'] ?? 0); ?>
+                            <tr>
+                                <td data-label="Vaxt"><?= e((string) ($campaign['created_at'] ?? '')); ?><br><small><?= e((string) ($campaign['created_by_name'] ?? '')); ?></small></td>
+                                <td data-label="Sablon / qrup"><code><?= e((string) ($campaign['template_code'] ?? '')); ?></code><br><small><?= e((string) ($campaign['scope'] ?? '')); ?> <?= e((string) ($campaign['area'] ?? '')); ?></small></td>
+                                <td data-label="Alici"><?= e((string) ($campaign['recipient_count'] ?? 0)); ?></td>
+                                <td data-label="Hisse / kodlama"><?= e((string) ($campaign['estimated_parts'] ?? 0)); ?> / <?= e((string) ($campaign['encoding'] ?? '')); ?><br><small><?= e((string) ($campaign['provider_purpose'] ?? '')); ?></small></td>
+                                <td data-label="Status"><span class="portal-pill"><?= e((string) ($campaign['approval_status'] ?? '')); ?></span></td>
+                                <td data-label="Emeliyyat">
+                                    <?php if ((string) ($campaign['approval_status'] ?? '') === 'pending_approval' && !$isCreator): ?>
+                                        <form method="post" class="message-inline-action">
+                                            <input type="hidden" name="action" value="approve_message_campaign">
+                                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                            <input type="hidden" name="campaign_id" value="<?= e((string) ($campaign['id'] ?? 0)); ?>">
+                                            <button type="submit">Tesdiq et ve novbeye yaz</button>
+                                        </form>
+                                    <?php elseif ((string) ($campaign['approval_status'] ?? '') === 'pending_approval' && $isCreator): ?>
+                                        <small>Ikinci adminin tesdiqi gozlenilir.</small>
+                                    <?php else: ?>
+                                        <small><?= e((string) ($campaign['approved_by_name'] ?? '-')); ?></small>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
             </section>
         <?php endif; ?>
 
@@ -1335,7 +1534,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     <small>Provider qosulmayibsa mesaj novbede qalir. Filterler toplu retry ucun de istifade olunur.</small>
                 </div>
                 <div class="message-provider-note">
-                    Real SMS/WhatsApp/Telegram adapteri qosulanda bu cedvel gonderim workerinin giris novbesi olacaq.
+                    Portal bildirişləri daxili qeyddir və xarici provider göndərişi sayılmır. SMS, WhatsApp və Telegram göndərişləri yalnız xarici göndəriş kilidi aktiv olduqda provider-ə ötürülür.
                 </div>
                 <form method="get" class="message-filter-bar" data-message-auto-filter data-message-filter-delay="350">
                     <input type="hidden" name="view" value="history">
@@ -1345,8 +1544,10 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     <div>
                         <label for="messageStatus">Status</label>
                         <select id="messageStatus" name="message_status">
-                            <?php foreach (['all', 'queued', 'sent', 'failed', 'test'] as $value): ?>
-                                <?php $label = message_center_status_label($value); ?>
+                            <?php foreach (['all', 'queued', 'pending', 'accepted', 'submitted', 'delivered', 'final_failed', 'sent', 'failed', 'test'] as $value): ?>
+                                <?php $label = in_array($value, ['pending', 'accepted', 'submitted', 'delivered', 'final_failed'], true)
+                                    ? message_center_delivery_state_label($value)
+                                    : message_center_status_label($value); ?>
                                 <option value="<?= e($value); ?>" <?= $messageStatusFilter === $value ? 'selected' : ''; ?>><?= e($label); ?></option>
                             <?php endforeach; ?>
                         </select>
@@ -1387,10 +1588,17 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                                     <td data-label="Vaxt"><?= e((string) ($message['created_at'] ?? '')); ?></td>
                                     <td data-label="Musteri"><?= e((string) ($message['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($message['recipient_name'] ?? $message['full_name'] ?? '')); ?></small></td>
                                     <td data-label="Kanal"><?= e(message_center_channel_label((string) ($message['channel'] ?? '-'))); ?><br><small><?= e((string) ($message['fallback_chain'] ?? '')); ?></small></td>
-                                    <td data-label="Status"><span class="portal-pill message-status-<?= e((string) ($message['status'] ?? 'queued')); ?>"><?= e(message_center_status_label((string) ($message['status'] ?? 'queued'))); ?></span></td>
+                                    <?php $reportingStatus = message_center_reporting_status($message); ?>
+                                    <td data-label="Status"><span class="portal-pill message-status-<?= e($reportingStatus); ?>"><?= e(message_center_row_status_label($message)); ?></span></td>
                                     <?php $messageBody = (string) ($message['message_body'] ?? ''); ?>
-                                    <td data-label="Mesaj" title="<?= e($messageBody); ?>">
-                                        <?= e(message_center_text_preview($messageBody)); ?>
+                                    <td data-label="Mesaj">
+                                        <details class="message-details message-history-details">
+                                            <summary><?= e(message_center_text_preview($messageBody, 90)); ?></summary>
+                                            <div class="message-details-body">
+                                                <p class="message-history-full-body"><?= nl2br(e($messageBody)); ?></p>
+                                                <small>Qeyd ID: <?= e((string) ($message['id'] ?? '-')); ?> · Kanal: <?= e(message_center_channel_label((string) ($message['channel'] ?? '-'))); ?> · Vaxt: <?= e((string) ($message['created_at'] ?? '-')); ?></small>
+                                            </div>
+                                        </details>
                                         <?php if (app_portal_is_admin($user) && (string) ($message['status'] ?? '') === 'failed'): ?>
                                             <form method="post" class="message-inline-action">
                                                 <input type="hidden" name="action" value="retry_message">
@@ -1402,6 +1610,9 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
+                            <?php if ($recent === []): ?>
+                                <tr><td colspan="5">Seçilmiş filtrə uyğun göndəriş qeydi yoxdur.</td></tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -1439,7 +1650,8 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                                 <tr>
                                     <td data-label="Vaxt"><?= e((string) ($attempt['attempted_at'] ?? '')); ?></td>
                                     <td data-label="Kanal"><?= e(message_center_channel_label((string) ($attempt['channel'] ?? '-'))); ?></td>
-                                    <td data-label="Status"><span class="portal-pill message-status-<?= e((string) ($attempt['status'] ?? 'failed')); ?>"><?= e(message_center_status_label((string) ($attempt['status'] ?? 'failed'))); ?></span></td>
+                                    <?php $attemptStatus = message_center_reporting_status($attempt); ?>
+                                    <td data-label="Status"><span class="portal-pill message-status-<?= e($attemptStatus); ?>"><?= e(message_center_row_status_label($attempt)); ?></span></td>
                                     <td data-label="Musteri"><?= e((string) ($attempt['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($attempt['recipient_name'] ?? '')); ?></small></td>
                                     <td data-label="Unvan"><code><?= e((string) ($attempt['destination_masked'] ?? '')); ?></code></td>
                                     <td data-label="Provider"><?= e((string) ($attempt['delivery'] ?? '-')); ?></td>

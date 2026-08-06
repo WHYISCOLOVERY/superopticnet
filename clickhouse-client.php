@@ -13,7 +13,7 @@ function app_clickhouse_config(): array
         'host' => $host,
         'port' => $port,
         'user' => app_config('clickhouse_user', 'default'),
-        'password' => app_config('clickhouse_password', ''),
+        'password' => app_environment_secret('CLICKHOUSE_PASSWORD'),
         'database' => app_config('clickhouse_database', 'superoptic_analytics'),
         'secure' => $secure,
         'timeout' => max(1, (int) app_config('clickhouse_timeout_seconds', '20')),

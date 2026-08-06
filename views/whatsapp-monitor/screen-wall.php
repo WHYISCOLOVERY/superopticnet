@@ -44,6 +44,28 @@ $waDeviceStatusLabel = static fn (string $status): string => match ($status) {
                 $policyAccepted = !empty($device['monitoring_policy_accepted']);
                 $streamUrl = trim((string) ($device['stream_url'] ?? ''));
                 $canShowStream = $streamUrl !== '' && $policyAccepted && !empty($device['monitoring_enabled']) && $status !== 'disabled';
+                $streamReason = match (true) {
+                    $status === 'disabled' => 'Cihaz deaktiv edilib',
+                    !$policyAccepted => 'Monitorinq razılığı gözlənilir',
+                    empty($device['monitoring_enabled']) => 'Monitorinq aktiv deyil',
+                    $streamUrl === '' => 'Stream ünvanı təyin olunmayıb',
+                    default => 'Stream hazırda əlçatan deyil',
+                };
+                ob_start();
+                ?>
+                <form method="post" class="portal-stacked-form portal-section-gap">
+                    <input type="hidden" name="action" value="create_case">
+                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="device_id" value="<?= e((string) ($device['id'] ?? 0)); ?>">
+                    <div class="wa-form-grid">
+                        <label>Növ <select name="case_type"><option value="unanswered">Cavab gözləyir</option><option value="technical">Texniki</option><option value="payment">Ödəniş</option><option value="complaint">Şikayət</option><option value="sales">Satış</option></select></label>
+                        <label>Prioritet <select name="priority"><option value="normal">Normal</option><option value="high">Yüksək</option><option value="critical">Kritik</option><option value="low">Aşağı</option></select></label>
+                        <textarea name="notes" rows="2" placeholder="Qısa qeyd"></textarea>
+                    </div>
+                    <button class="portal-primary-btn" type="submit">Qeyd yarat</button>
+                </form>
+                <?php
+                $caseForm = ob_get_clean();
                 ?>
                 <article class="wa-card wa-screen-card is-<?= e($status); ?>">
                     <div class="portal-card-head">
@@ -58,27 +80,18 @@ $waDeviceStatusLabel = static fn (string $status): string => match ($status) {
                         <small><i class="fa-solid fa-clock" aria-hidden="true"></i> Son aktivlik: <?= e((string) ($device['last_seen_at'] ?? '-')); ?></small>
                         <small><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Açıq qeyd: <?= e((string) ($device['open_case_count'] ?? 0)); ?></small>
                     </div>
-                    <?php if (!$policyAccepted): ?>
-                        <small class="portal-pill message-waiting">Monitorinq razılığı gözləyir</small>
-                    <?php endif; ?>
-                    <div class="wa-screen-frame">
-                        <?php if ($canShowStream): ?>
+                    <?php if ($canShowStream): ?>
+                        <div class="wa-screen-frame">
                             <iframe src="<?= e($streamUrl); ?>" loading="lazy" referrerpolicy="no-referrer" title="<?= e((string) ($device['device_name'] ?? 'WhatsApp stream')); ?>"></iframe>
-                        <?php else: ?>
-                            <span><?= !$policyAccepted ? 'Razılıq yoxdur' : ($streamUrl === '' ? 'Stream URL yoxdur' : 'Stream deaktivdir'); ?></span>
-                        <?php endif; ?>
-                    </div>
-                    <form method="post" class="portal-stacked-form portal-section-gap">
-                        <input type="hidden" name="action" value="create_case">
-                        <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
-                        <input type="hidden" name="device_id" value="<?= e((string) ($device['id'] ?? 0)); ?>">
-                        <div class="wa-form-grid">
-                            <label>Növ <select name="case_type"><option value="unanswered">Cavab gözləyir</option><option value="technical">Texniki</option><option value="payment">Ödəniş</option><option value="complaint">Şikayət</option><option value="sales">Satış</option></select></label>
-                            <label>Prioritet <select name="priority"><option value="normal">Normal</option><option value="high">Yüksək</option><option value="critical">Kritik</option><option value="low">Aşağı</option></select></label>
-                            <textarea name="notes" rows="2" placeholder="Qısa qeyd"></textarea>
                         </div>
-                        <button class="portal-primary-btn" type="submit">Qeyd yarat</button>
-                    </form>
+                        <?= $caseForm; ?>
+                    <?php else: ?>
+                        <p class="wa-screen-status-line"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> <?= e($streamReason); ?></p>
+                        <details class="wa-case-toggle">
+                            <summary><i class="fa-solid fa-note-sticky" aria-hidden="true"></i> Qeyd yarat</summary>
+                            <?= $caseForm; ?>
+                        </details>
+                    <?php endif; ?>
                 </article>
             <?php endforeach; ?>
         </div>

@@ -8,10 +8,9 @@ if (PHP_SAPI !== 'cli') {
     exit('CLI only');
 }
 
-function provider_smoke_finish(array $payload, int $code = 0): never
+function provider_smoke_finish(array $payload, int $code = 0): void
 {
     echo json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-    exit($code);
 }
 
 $db = app_db();
@@ -20,12 +19,14 @@ if (!$db instanceof PDO) {
         'status' => 'skipped',
         'reason' => 'database_unavailable',
     ]);
+    exit(0);
 }
 
 $subscriberCode = 'SMOKE-PROVIDER-' . date('His') . random_int(100, 999);
 $transactionId = 'SMOKE-TX-' . date('YmdHis') . random_int(100, 999);
 $externalId = app_provider_external_id('emanat', $transactionId);
 $accountId = 0;
+$exitCode = 1;
 
 try {
     $payload = [
@@ -96,13 +97,21 @@ try {
             'remaining_days' => $summaryAfter['remaining_days'] ?? null,
         ],
     ], ($appliedFirst && $appliedSecond && $paymentCount === 1) ? 0 : 3);
+    $exitCode = ($appliedFirst && $appliedSecond && $paymentCount === 1) ? 0 : 3;
 } catch (Throwable $exception) {
     provider_smoke_finish([
         'status' => 'failed',
         'reason' => $exception->getMessage(),
     ], 2);
+    $exitCode = 2;
 } finally {
     if ($accountId > 0) {
+        $db->prepare('DELETE r FROM billing_payment_reversals r JOIN billing_payment_operations o ON o.id = r.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE e FROM billing_payment_operation_events e JOIN billing_payment_operations o ON o.id = e.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE a FROM billing_payment_service_attempts a JOIN billing_payment_service_actions s ON s.id = a.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE b FROM billing_payment_outbox b JOIN billing_payment_service_actions s ON s.id = b.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE s FROM billing_payment_service_actions s JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE FROM billing_payment_operations WHERE account_id = :id')->execute(['id' => $accountId]);
         $db->prepare('DELETE FROM billing_payments WHERE subscriber_code = :code OR external_id = :external_id')->execute([
             'code' => $subscriberCode,
             'external_id' => $externalId,
@@ -113,3 +122,5 @@ try {
         $db->prepare('DELETE FROM portal_accounts WHERE id = :id')->execute(['id' => $accountId]);
     }
 }
+
+exit($exitCode);

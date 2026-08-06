@@ -40,7 +40,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'maxHosts' => max(1, min(1024, (int) ($_POST['scan_max_hosts'] ?? 64))),
             'concurrency' => max(1, min(128, (int) ($_POST['scan_concurrency'] ?? 24))),
         ];
-        $result = app_mgs_service_request_json('/api/service/network-scan', 'POST', $payload, 60);
+        $result = app_mgs_noc_service_request_json(
+            '/api/service/network-scan',
+            'POST',
+            $payload,
+            $user,
+            'scan_network',
+            [],
+            60
+        );
         if (!empty($result['ok'])) {
             $scanState = is_array($result['data'] ?? null) ? $result['data'] : [];
             if (!array_key_exists('target', $scanState)) {
@@ -73,7 +81,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? 'private')),
             'driverMode' => clean_text((string) ($_POST['driver_mode'] ?? 'real')),
         ];
-        $result = app_mgs_service_request_json('/api/service/devices', 'POST', $payload, 60);
+        $result = app_mgs_noc_service_request_json(
+            '/api/service/devices',
+            'POST',
+            $payload,
+            $user,
+            'create_monitor_device',
+            ['management_network' => (string) ($payload['location'] ?? '')],
+            60
+        );
         $flash = [
             'type' => !empty($result['ok']) ? 'success' : 'error',
             'message' => !empty($result['ok'])
@@ -82,17 +98,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ];
     } elseif ($action === 'set_management_path') {
         $enabled = (string) ($_POST['enabled'] ?? '0') === '1';
-        app_mgs_set_runtime_setting('monitor_management_vlan_connected', $enabled ? '1' : '0', $user);
-        $result = app_mgs_refresh_device_reachability($db, false);
-        app_mgs_record_operation_action([
-            'action_type' => 'management_path_toggle',
-            'entity_type' => 'management_network',
-            'entity_id' => 'vlan550',
-            'status' => 'executed',
-            'actor' => $user,
-            'summary' => $enabled ? 'VLAN 550 management path enabled' : 'VLAN 550 management path disabled',
-            'payload' => $result,
-        ]);
+        $result = app_mgs_set_management_path($enabled, $user, $db);
         $flash = [
             'type' => !empty($result['ok']) ? 'success' : 'error',
             'message' => $enabled
@@ -100,7 +106,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 : 'VLAN 550 monitorinq yolu passiv edildi. Internal cihaz offline alarmlari bloklanir.',
         ];
     } elseif ($action === 'probe_devices') {
-        $result = app_mgs_refresh_device_reachability($db, true);
+        $result = app_mgs_refresh_device_reachability($db, true, $user);
         app_mgs_record_operation_action([
             'action_type' => 'device_probe',
             'entity_type' => 'device_learning_profiles',
@@ -118,7 +124,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $apply = isset($_POST['apply_backup']) && app_portal_is_admin($user);
         $backupType = clean_text((string) ($_POST['backup_type'] ?? 'profile_snapshot'));
         $limit = (int) ($_POST['limit'] ?? 5);
-        $backupWorkerResult = app_mgs_run_backup_worker($db, $apply, $limit, $backupType);
+        $backupWorkerResult = app_mgs_run_backup_worker($db, $apply, $limit, $backupType, $user);
         $flash = [
             'type' => !empty($backupWorkerResult['ok']) ? 'success' : 'error',
             'message' => !empty($backupWorkerResult['ok'])
@@ -127,7 +133,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ];
     } elseif ($action === 'probe_single_device') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
-        $deviceActionResult = app_mgs_probe_single_device($deviceKey, $db);
+        $deviceActionResult = app_mgs_probe_single_device($deviceKey, $db, $user);
         $flash = [
             'type' => !empty($deviceActionResult['ok']) && (($deviceActionResult['mode'] ?? '') !== 'probe' || !empty($deviceActionResult['reachable'])) ? 'success' : ((!empty($deviceActionResult['ok'])) ? 'warning' : 'error'),
             'message' => !empty($deviceActionResult['ok'])
@@ -142,11 +148,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
         $backupType = clean_text((string) ($_POST['backup_type'] ?? 'profile_snapshot'));
         $apply = isset($_POST['apply_backup']) && app_portal_is_admin($user);
-        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
         if (!is_array($device)) {
             $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
         } else {
-            $deviceActionResult = app_mgs_store_device_backup($device, $backupType, $apply);
+            $deviceActionResult = app_mgs_store_device_backup($device, $backupType, $apply, $user, $db);
             $flash = [
                 'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
                 'message' => !empty($deviceActionResult['ok'])
@@ -156,11 +162,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     } elseif ($action === 'run_cli_discovery') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
-        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
         if (!is_array($device)) {
             $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
         } else {
-            $deviceActionResult = app_mgs_store_device_backup($device, 'cli_discovery_snapshot', true);
+            $deviceActionResult = app_mgs_store_device_backup($device, 'cli_discovery_snapshot', true, $user, $db);
             $flash = [
                 'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
                 'message' => !empty($deviceActionResult['ok'])
@@ -204,7 +210,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $flash = ['type' => 'error', 'message' => 'Command map ucun admin icazesi lazimdir.'];
         } else {
             $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
-            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
             $commandMapText = trim((string) ($_POST['command_map_text'] ?? ''));
             $commandMap = [];
             foreach (preg_split('/\R/', $commandMapText) ?: [] as $line) {
@@ -224,32 +230,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             } elseif ($commandMap === []) {
                 $flash = ['type' => 'error', 'message' => 'Command map bosdur. key=command formatinda yazin.'];
             } else {
-                $statement = $db->prepare(
-                    'UPDATE device_learning_profiles
-                     SET command_map_json = :command_map_json, updated_at = NOW()
-                     WHERE device_key = :device_key'
-                );
-                $statement->execute([
-                    'command_map_json' => app_db_json_encode($commandMap),
-                    'device_key' => $deviceKey,
-                ]);
-                app_mgs_record_operation_action([
-                    'action_type' => 'device_command_map_update',
-                    'entity_type' => 'device_learning',
-                    'entity_id' => $deviceKey,
-                    'status' => 'executed',
-                    'actor' => $user,
-                    'summary' => 'Device command map updated: ' . (string) ($device['device_name'] ?? $deviceKey),
-                    'payload' => ['keys' => array_keys($commandMap)],
-                ]);
-                $flash = ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': command map yadda saxlandi.'];
+                $deviceActionResult = app_mgs_sync_device_command_map($deviceKey, $commandMap, $user, $db);
+                $flash = !empty($deviceActionResult['ok'])
+                    ? ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': command map yadda saxlandi.']
+                    : ['type' => 'error', 'message' => 'Command map xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown')];
             }
         }
     } elseif ($action === 'apply_vendor_access_defaults') {
         $vendor = clean_text((string) ($_POST['vendor'] ?? 'HSGQ'));
         $deviceActionResult = app_mgs_apply_vendor_access_defaults($vendor, $user, $db);
         if (!empty($deviceActionResult['ok'])) {
-            app_mgs_refresh_device_reachability($db, true);
+            app_mgs_refresh_device_reachability($db, true, $user);
         }
         $flash = [
             'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
@@ -262,11 +253,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $pon = clean_text((string) ($_POST['pon'] ?? ''));
         $ontId = clean_text((string) ($_POST['ont_id'] ?? ''));
         $accountId = (int) ($_POST['account_id'] ?? 0);
-        $device = app_mgs_hsgq_device_by_olt_name($oltName, $db);
+        $device = app_mgs_hsgq_device_by_olt_name($oltName, $db, $user);
         if (!is_array($device)) {
             $flash = ['type' => 'error', 'message' => 'Live OLT query ucun HSGQ cihaz profili tapilmadi.'];
         } else {
-            $liveOntResult = app_mgs_hsgq_live_ont_snapshot($device, $pon, $ontId, $db);
+            $liveOntResult = app_mgs_hsgq_live_ont_snapshot($device, $pon, $ontId, $user, $db);
             if (!empty($liveOntResult['ok'])) {
                 $liveOntResult['account_id'] = $accountId;
                 $liveOntResult['olt'] = $oltName;
@@ -293,7 +284,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
             $commandText = trim((string) ($_POST['commands'] ?? ''));
             $allowDangerous = isset($_POST['allow_dangerous']);
-            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
             if (!is_array($device)) {
                 $flash = ['type' => 'error', 'message' => 'Real command ucun cihaz profili tapilmadi.'];
             } elseif ($commandText === '') {
@@ -334,11 +325,11 @@ $selectedDeviceKey = clean_text((string) ($_GET['device'] ?? ''));
 $needsDeviceRows = in_array($activeNocView, ['monitor', 'devices'], true);
 $needsBackupRows = $activeNocView === 'backups';
 
-$summary = $db instanceof PDO ? app_mgs_summary($db, false) : ['db' => false];
-$devices = ($db instanceof PDO && $needsDeviceRows) ? app_mgs_device_learning_rows($db) : [];
+$summary = $db instanceof PDO ? app_mgs_summary($db, false, $user) : ['db' => false];
+$devices = ($db instanceof PDO && $needsDeviceRows) ? app_mgs_device_learning_rows($db, $user) : [];
 $bridge = app_mgs_bridge_status();
-$backups = $needsBackupRows ? app_mgs_recent_rows('device_config_backups', 10) : [];
-$dedupRows = $needsBackupRows ? app_mgs_recent_rows('mgs_dedup_registry', 8) : [];
+$backups = $needsBackupRows ? app_mgs_noc_recent_rows('device_config_backups', 10, $user) : [];
+$dedupRows = $needsBackupRows ? app_mgs_noc_recent_rows('mgs_dedup_registry', 8, $user) : [];
 $managementPathReady = app_mgs_management_path_ready();
 $snmpDefaults = app_mgs_snmp_defaults();
 $scanResults = app_noc_scan_results_from_state($scanState);
@@ -998,13 +989,13 @@ function noc_enrich_ont_results(PDO $db, array $rows): array
     return $rows;
 }
 
-function noc_attach_device_context(PDO $db, array $rows): array
+function noc_attach_device_context(PDO $db, array $rows, array $user): array
 {
     foreach ($rows as &$row) {
         if (!is_array($row)) {
             continue;
         }
-        $device = app_mgs_hsgq_device_by_olt_name((string) ($row['olt'] ?? ''), $db);
+        $device = app_mgs_hsgq_device_by_olt_name((string) ($row['olt'] ?? ''), $db, $user);
         $row['device_key'] = (string) ($device['device_key'] ?? '');
         $row['device_ip'] = (string) ($device['ip_address'] ?? '');
         $row['live_capable'] = is_array($device) && app_mgs_management_path_ready();
@@ -1021,10 +1012,10 @@ if ($ontQuery !== '') {
     $ontResults = noc_collect_ont_matches($ontAccounts, $ontQuery, $db instanceof PDO, 24);
     if ($db instanceof PDO && $ontResults !== []) {
         $ontResults = noc_enrich_ont_results($db, $ontResults);
-        $ontResults = noc_attach_device_context($db, $ontResults);
+        $ontResults = noc_attach_device_context($db, $ontResults, $user);
     }
     if ($db instanceof PDO) {
-        $modemBotPreview = app_mgs_build_modem_search_reply($ontQuery, true, $db);
+        $modemBotPreview = app_mgs_build_modem_search_reply($ontQuery, true, $db, $user);
     }
 }
 $monitorPoints = $needsDeviceRows ? noc_monitor_points($devices) : [];
@@ -1548,8 +1539,8 @@ if ($needsDeviceRows) {
                         $tone = noc_state_tone($state);
                         $features = noc_device_feature_list($device);
                         $serviceItems = noc_service_summary($device);
-                        $accessProfile = app_mgs_device_access_profile($device, $db);
-                        $cliDiscovery = app_mgs_latest_cli_discovery_summary($device, $db);
+                        $accessProfile = app_mgs_device_access_profile($device, $db, $user);
+                        $cliDiscovery = app_mgs_latest_cli_discovery_summary($device, $db, $user);
                         $learnedCommandMap = is_array($cliDiscovery['derived_command_map'] ?? null) ? $cliDiscovery['derived_command_map'] : [];
                         $savedPasswordState = noc_secret_status((string) ($accessProfile['ssh_password'] ?? ''));
                         $deviceKey = (string) ($device['device_key'] ?? '');
@@ -1700,7 +1691,7 @@ if ($needsDeviceRows) {
                                     </form>
                                     <?php
                                     $commandMapLines = [];
-                                    foreach (app_mgs_device_command_map($device, $db) as $mapKey => $mapCommand) {
+                                    foreach (app_mgs_device_command_map($device, $db, $user) as $mapKey => $mapCommand) {
                                         $commandMapLines[] = (string) $mapKey . '=' . (string) $mapCommand;
                                     }
                                     ?>

@@ -83,7 +83,7 @@ foreach ([
     'inventory_overview' => 'inventory',
 ] as $pageKey => $module) {
     $html = $pages[$pageKey]['html'];
-    $groupCount = substr_count($html, 'data-module-nav-group');
+    $groupCount = substr_count($html, 'class="billing-nav-group');
     $expect(substr_count($html, 'data-module-group-nav') === 1, $module . '_grouped_navigation_count_invalid:' . $pageKey);
     $expect($groupCount >= 3 && $groupCount <= 5, $module . '_group_count_invalid:' . $groupCount);
 

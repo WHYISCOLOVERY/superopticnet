@@ -190,8 +190,12 @@ $missing = gateway_contains_all($installer, [
 ]);
 gateway_add_check($checks, 'installer', $missing === [], $missing === [] ? 'installer copies files and points to nginx -t' : 'missing: ' . implode(', ', $missing));
 
+// The health payload deliberately self-identifies as the unified canonical
+// portal ('superoptic-portal'), not the retired separate MGS Node service -
+// see tools/unified-portal-architecture-smoke.php's health_uses_portal_identity
+// check, which asserts this exact string.
 $missing = gateway_contains_all($health, [
-    'superoptic-mgs',
+    'superoptic-portal',
     'status',
     'ok',
 ]);

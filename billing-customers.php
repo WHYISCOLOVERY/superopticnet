@@ -4,12 +4,17 @@ declare(strict_types=1);
 require_once __DIR__ . '/billing-module-lib.php';
 require_once __DIR__ . '/customer-intelligence-lib.php';
 require_once __DIR__ . '/billing-customer-identity-lib.php';
+require_once __DIR__ . '/router-registry-lib.php';
+require_once __DIR__ . '/design-system-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
 
 $db = app_db();
 app_billing_ensure_identity_schema($db);
+$routerRegistryReady = $db instanceof PDO && router_registry_ensure_schema($db);
+$activeRouters = $routerRegistryReady ? router_registry_list($db, true, $user) : [];
+$canManageRouterBindings = router_registry_actor_can_manage_bindings($user);
 $flash = null;
 $billingCustomerPerfEnabled = PHP_SAPI === 'cli' && isset($_GET['perf']);
 $billingCustomerPerfStart = microtime(true);
@@ -278,7 +283,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $existingCustomer = $subscriberCode !== '' ? app_db_account_by_subscriber_code($subscriberCode) : null;
         $identityValidation = app_billing_validate_customer_identity($db, $_POST);
 
-        if (empty($identityValidation['ok'])) {
+        if (!$routerRegistryReady) {
+            $flash = ['type' => 'error', 'message' => 'Router registry hazir deyil. Musteri yaradilmadi.'];
+        } elseif (!$canManageRouterBindings) {
+            $flash = ['type' => 'error', 'message' => 'Musteri yaratmaq ve router teyin etmek ucun admin ve ya NOC icazesi lazimdir.'];
+        } elseif (empty($identityValidation['ok'])) {
             $flash = ['type' => 'error', 'message' => ($identityValidation['error'] ?? '') === 'duplicate_fin' ? 'Bu FIN kod aktiv musteride movcuddur.' : 'FIN, sexsiyyet vesiqesi, mobil nomre ve unvan mutleq doldurulmalidir.'];
         } elseif ($subscriberCode === '' || $fullName === '' || !is_array($tariff) || !is_array($pool)) {
             $flash = ['type' => 'error', 'message' => 'Musteri kodu, ad, tarif ve pool mutleq doldurulmalidir. Erazi secilibse kod avtomatik verilmelidir.'];
@@ -392,7 +401,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $payload['internet_services'][0]['stable_due_day'] = $stableDueDay;
             }
 
-            $saveResult = app_billing_upsert_customer_with_identity($db, [
+            $saveResult = router_registry_create_customer_with_binding($db, [
                 'login' => $subscriberCode,
                 'password' => trim((string) ($_POST['portal_password'] ?? '')) ?: billing_customer_random_password(10),
                 'role' => 'customer',
@@ -409,14 +418,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'status' => 'Aktiv',
                 'is_active' => 1,
                 'payload' => $payload,
-            ], $_POST, $user, $password);
+            ], $_POST, $user, $password, (int) ($_POST['router_id'] ?? 0));
             $saved = !empty($saveResult['ok']) && is_array($saveResult['account'] ?? null) ? $saveResult['account'] : null;
             $synced = $saved !== null && !empty($saveResult['radius_synced']);
+            $creationError = (string) ($saveResult['error'] ?? 'customer_creation_failed');
+            $errorMessage = match ($creationError) {
+                'binding_authorization_required' => 'Musteri yaratmaq ve router teyin etmek ucun admin ve ya NOC icazesi lazimdir.',
+                'no_active_router' => 'Aktiv router yoxdur. Evvelce Router Registry-de aktiv router yaradib sonra musterini yaradin.',
+                'router_required' => 'Birden cox aktiv router var. Musteri ucun router secin.',
+                'router_inactive_or_missing' => 'Secilen router artiq aktiv deyil ve ya tapilmadi. Siyahini yenileyib yeniden secin.',
+                'customer_already_exists' => 'Bu login ve ya musteri kodu artiq movcuddur. Yeni unikal kod secin.',
+                'duplicate_fin' => 'Bu FIN kod aktiv musteride movcuddur.',
+                'radius_sync_failed' => 'RADIUS yazilisi ugursuz oldu. Musteri, RADIUS ve router binding emeliyyatlari geri qaytarildi.',
+                default => 'Musteri yaradilmadi. Hesab, RADIUS ve router binding emeliyyatlari geri qaytarildi.',
+            };
             $flash = [
                 'type' => $synced ? 'success' : 'error',
                 'message' => $synced
-                    ? 'Musteri yaradildi ve Radius SQL cedvellerine yazildi. PPPoE sifre: ' . ($password !== '' ? $password : 'IPoE')
-                    : 'Musteri saxlanmadi ve ya Radius sync alinmadi.',
+                    ? 'Musteri, router binding ve Radius SQL yazilisi bir emeliyyatda saxlandi. PPPoE sifre: ' . ($password !== '' ? $password : 'IPoE')
+                    : $errorMessage,
             ];
         }
     }
@@ -732,6 +752,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
     <title>Billing musterileri</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/design-system.css')); ?>">
     <style>
         .billing-customers-layout{display:flex;flex-direction:column;gap:14px}
         .billing-customers-layout .mgs-command-hero{order:1;margin-bottom:0;padding:14px 18px;border-radius:18px}
@@ -748,7 +769,10 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             z-index:2147483200;
             margin:0;
             padding:clamp(14px,2vw,28px);
-            overflow:hidden;
+            overflow-x:hidden;
+            overflow-y:auto;
+            overscroll-behavior:contain;
+            scrollbar-gutter:stable;
             border:0;
             border-radius:0;
             background:rgba(15,31,52,.58);
@@ -764,6 +788,9 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             background:rgba(255,255,255,.98);
         }
         .billing-create-panel[open] .billing-create-summary{
+            position:sticky;
+            top:clamp(14px,2vw,28px);
+            z-index:3;
             display:flex;
             justify-content:space-between;
             align-items:center;
@@ -776,16 +803,30 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         }
         .billing-create-panel[open] .billing-create-summary::-webkit-details-marker{display:none}
         .billing-create-panel[open] .billing-create-inner{
-            max-height:calc(100dvh - 112px);
-            overflow-x:hidden;
-            overflow-y:auto;
-            overscroll-behavior:contain;
+            max-height:none;
+            min-width:0;
+            overflow:visible;
             padding:18px;
             border:1px solid rgba(17,38,64,.12);
             border-top:0;
             border-radius:0 0 22px 22px;
             box-shadow:0 28px 70px rgba(13,31,54,.28);
         }
+        .billing-create-panel .portal-stacked-form{min-width:0}
+        .billing-create-footer{
+            position:sticky;
+            bottom:clamp(14px,2vw,28px);
+            z-index:2;
+            display:flex;
+            justify-content:flex-end;
+            margin:16px -18px -18px;
+            padding:12px 18px 18px;
+            border-top:1px solid rgba(17,38,64,.1);
+            border-radius:0 0 22px 22px;
+            background:rgba(255,255,255,.97);
+            box-shadow:0 -12px 24px rgba(13,31,54,.08);
+        }
+        .billing-create-footer .portal-primary-btn{max-width:100%}
         .billing-create-close{border:0;cursor:pointer}
         body.billing-modal-open{overflow:hidden}
         .billing-create-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
@@ -820,15 +861,19 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         @media (max-width: 1000px){.billing-create-grid{grid-template-columns:1fr}.billing-create-grid .wide{grid-column:auto}}
         @media (max-width:700px){
             .billing-create-panel[open]{
-                padding:8px 0;
+                padding:
+                    max(8px,env(safe-area-inset-top))
+                    max(8px,env(safe-area-inset-right))
+                    max(8px,env(safe-area-inset-bottom))
+                    max(8px,env(safe-area-inset-left));
+                scrollbar-gutter:auto;
             }
             .billing-create-panel[open] .billing-create-summary,
             .billing-create-panel[open] .billing-create-inner{
                 width:100%;
             }
             .billing-create-panel[open] .billing-create-summary{
-                position:sticky;
-                top:8px;
+                top:max(8px,env(safe-area-inset-top));
                 z-index:2;
                 display:grid;
                 grid-template-columns:1fr;
@@ -844,9 +889,17 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                 display:none;
             }
             .billing-create-panel[open] .billing-create-inner{
-                max-height:calc(100dvh - 78px);
                 padding:12px;
                 border-radius:0 0 18px 18px;
+            }
+            .billing-create-footer{
+                bottom:max(8px,env(safe-area-inset-bottom));
+                margin:14px -12px -12px;
+                padding:10px 12px max(12px,env(safe-area-inset-bottom));
+                border-radius:0 0 18px 18px;
+            }
+            .billing-create-footer .portal-primary-btn{
+                width:100%;
             }
             .billing-create-panel .portal-card-head{
                 margin-bottom:10px;
@@ -890,7 +943,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         }
     </style>
 </head>
-<body class="portal-body billing-customers-body<?= $openCreateModal ? ' billing-modal-open' : ''; ?>">
+<body class="portal-body billing-customers-body<?= $openCreateModal ? ' billing-modal-open' : ''; ?>"<?= app_design_system_body_attribute(); ?>>
     <?php billing_render_header('Musteriler', 'customers', $lang); ?>
 
     <main class="portal-layout billing-customers-layout">
@@ -976,6 +1029,33 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                             <?php endforeach; ?>
                         </select>
                     </div>
+                    <?php if (!$canManageRouterBindings): ?>
+                        <div class="portal-form-row wide">
+                            <div class="portal-alert portal-alert-error">Router binding ile musteri yaratmaq yalniz admin ve NOC ucun aktivdir.</div>
+                        </div>
+                    <?php elseif (count($activeRouters) > 1): ?>
+                        <div class="portal-form-row">
+                            <label>Router</label>
+                            <select name="router_id" required>
+                                <option value="">Secin</option>
+                                <?php foreach ($activeRouters as $router): ?>
+                                    <option value="<?= e((string) ((int) ($router['id'] ?? 0))); ?>" <?= (int) ($_POST['router_id'] ?? 0) === (int) ($router['id'] ?? 0) ? 'selected' : ''; ?>>
+                                        <?= e((string) ($router['router_name'] ?? '-')); ?> / <?= e((string) ($router['management_ip'] ?? '-')); ?><?= trim((string) ($router['branch_name'] ?? '')) !== '' ? ' / ' . e((string) $router['branch_name']) : ''; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    <?php elseif (count($activeRouters) === 1): ?>
+                        <div class="portal-form-row">
+                            <label>Router</label>
+                            <input type="hidden" name="router_id" value="<?= e((string) ((int) ($activeRouters[0]['id'] ?? 0))); ?>">
+                            <div class="portal-muted-card"><?= e((string) ($activeRouters[0]['router_name'] ?? '-')); ?> / avtomatik</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="portal-form-row wide">
+                            <div class="portal-alert portal-alert-error">Aktiv router yoxdur. Musteri yaratmazdan evvel Router Registry-de aktiv router elave edin.</div>
+                        </div>
+                    <?php endif; ?>
                     <div class="portal-form-row">
                         <label>Xidmet</label>
                         <select name="service_type" id="customerServiceType" data-service-type-select>
@@ -1075,7 +1155,9 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                 <datalist id="customerFreeStaticIps">
                     <?php foreach ($freeStaticIps as $ip): ?><option value="<?= e((string) ($ip['ip_address'] ?? '')); ?>"><?= e((string) ($ip['pool_name'] ?? '')); ?></option><?php endforeach; ?>
                 </datalist>
-                    <button type="submit" class="portal-primary-btn">Musterini yarat ve Radius-a yaz</button>
+                    <div class="billing-create-footer">
+                        <button type="submit" class="portal-primary-btn">Musterini yarat ve Radius-a yaz</button>
+                    </div>
                 </form>
             </div>
         </details>
@@ -1488,6 +1570,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
     })();
     </script>
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
     <?php if ($billingCustomerPerfEnabled): ?>
         <?php billing_customer_perf_mark(true, $billingCustomerPerfMarks, 'render_done', $billingCustomerPerfStart); ?>
         <?php file_put_contents('php://stderr', json_encode(['billing_customers_perf' => $billingCustomerPerfMarks], JSON_UNESCAPED_UNICODE) . PHP_EOL); ?>

@@ -3,10 +3,19 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/finance-operations-lib.php';
+require_once __DIR__ . '/finance-schema-lib.php';
 
 function app_bonus_ensure_schema(PDO $db): void
 {
-    app_finance_ensure_operational_schema($db);
+    app_bonus_require_schema($db);
+}
+
+/**
+ * @deprecated Schema changes and default rows belong to explicit CLI migration/seed commands.
+ */
+function app_bonus_create_schema_legacy(PDO $db): void
+{
+    app_finance_create_operational_schema_legacy($db);
     $db->exec("CREATE TABLE IF NOT EXISTS bonus_rule_settings (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         setting_key VARCHAR(96) NOT NULL,

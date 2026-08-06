@@ -1,39 +1,38 @@
-# Aktiv tapşırıq
+# Aktiv tapsiriq
 
-Status: `COMPLETE`
+Status: `IN_PROGRESS`
 
-## Məqsəd
+## Round: Cross-module defect duzelisi (2026-08-02)
 
-`SAR-5` birinci mərhələ: Maliyyə, HR, Anbar və Billing modullarının ortaq
-shell quruluşunu sadə, responsive və eyni dil standartına keçirmək.
+Bu round evvelki WhatsApp provider/monitorinq UX roundunu legv etmir, onu evez edir. Evvelki round-un tam kontrakti ve neticesi asagida "Evvelki round" bolmesinde ve git tarixinde qorunur.
 
-## Tamamlanan işlər
+## Rol bolgüsü (bu round üçün)
 
-- Dörd modulun böyük inline CSS blokları `css/operations-modules.css` faylına
-  çıxarıldı; ortaq qrup naviqasiyası NOC və Mesaj Mərkəzinə də qoşuldu.
-- Başlıq, qrup naviqasiyası, KPI, filtr, cədvəl və modal responsive qaydaları
-  eyniləşdirildi; uzun KPI məbləğləri qutudan daşmır.
-- Modul daxilində təkrarlanan "Əsas portal" keçidləri və Anbarın təkrarlanan
-  əməliyyat zolaqları çıxarıldı; əsas izahlı əməliyyat kartları saxlanıldı.
-- Mobil Superpilot düyməsi sənəd axınına keçirildi və məzmunun üstünə düşmür.
-- Mərkəzi tab/section adları və görünən statuslar düzgün Azərbaycan dilinə
-  keçirildi; DB/action/query açarları dəyişmədi.
-- Maliyyə xərcində əməkdaş siyahısı boş olsa belə "Məsul əməkdaş" sahəsi və
-  aydın boş vəziyyət görünür.
+- **Claude Code**: tam implementasiya lideri. Bu roundda frontend ile yanasi backend, service, API, DB ve permission qatinda da duzelis edir. Istifadeci (Serdar) bu rolu bu tapsiriqda acıq sekilde tesdiqleyib; evvelki "Codex evvelceden kontrakt freeze edir, Claude yalniz frontend" modeli bu round ucun deyisib.
+- **Codex**: implementasiyadan sonra, production-a cixmadan evvel review edir; regression ve production tehlukesizliyini yoxlayir.
+- **Istifadeci (Serdar)**: scope ve sahiblik qerarini tesdiqleyib.
 
-## Müqavilə
+## Meqsed
 
-`action`, `name`, `value`, URL parametrləri, DB status açarları, CSRF,
-permission və AJAX contract-ları qorunub. Maliyyə, HR və Anbar statistika
-naviqasiyası tam səhifə yenilənmədən işləyir.
+`docs/32`-`38` funksional auditlerini kod ile yeniden tesdiqleyerek Billing, Maliyye, HR, Anbar, Sebeke/NOC, Mesaj Merkezi (SMS/Telegram/WhatsApp), Statistika, CRM, rol/admin konfiqurasiyasi ve portal shell-de en yuksek tesirli, koherent duzelis paketini tetbiq etmek.
 
-## Yoxlama
+## Tehlukesizlik serhedleri (deyismir)
 
-- Modul vizual smoke: `11/11` keçdi (8 layout + 3 AJAX).
-- Billing UI render smoke: `45/45` keçdi.
-- Maliyyə, HR, Anbar və Billing separation smoke-ları keçdi.
-- Tam sistem regresiyası: `130 pass`, `0 fail`, `0 timeout`, `4 skip`.
-- Hesabat: `tmp/full-system-regression-20260716-184153.json`.
+- Production-a yazma/deploy, real SMS/Telegram/WhatsApp gonderisi, canli RADIUS/OLT/router emeliyyati yoxdur.
+- Destruktiv schema deyisikliyi yoxdur; yeni schema yalniz versiyali migration + rollback ile.
+- Movcud Stage 0/Stage 1 tehlukesizlik ve odenis idempotency arxitekturasi geriye getmir.
+- Ikinci backend ve ya tekrar biznes qaydasi yaradilmir; movcud service/API qati istifade olunur.
+- Dirty worktree-de istifadeci ve Codex-in movcud deyisiklikleri qorunur; geri qaytarilmir, silinmir.
+- Sirr, token, parol ve musteri mexfi datasi log/kod/chat-a yazilmir.
+- `--dangerously-skip-permissions`, `git reset --hard`, `git clean`, force-push istifade olunmur; commit ve push edilmir.
 
-Skip-lər yalnız əvvəlcədən qəsdən dayandırılan canlı əməliyyatlardır: real
-router CoA, OLT/ONT restart, ödənişli real SMS və Telegram live polling.
+## Qebul ve review qapisi
+
+- Her toxunulan is axini ucun fokuslu regression/contract smoke testi elave olunur ve ishe salinir.
+- Toxunulan PHP fayllarda lint yoxlanilir.
+- Netice bu sessiyanin sonunda `.ai-collaboration/CLAUDE_IMPLEMENTATION_RESULT.md`-de qeyd olunur.
+- Bu sened production go-live tesdiqi vermir; go-live-dan evvel Codex review-u mecburidir.
+
+## Evvelki round (COMPLETE, deyisdirilmeyib)
+
+WhatsApp provider QR ve emekdas monitorinq UX. Tam kontrakt ve netice: git tarixi (`847a290`..`65dffbd` arasi commitler), `.ai-collaboration/CLAUDE_FRONTEND_RESULT.md`, `.ai-collaboration/CLAUDE_FRONTEND_TASK.md`, `.ai-collaboration/INTEGRATION_REPORT.md`. Bu fayllar deyisdirilmeyib.

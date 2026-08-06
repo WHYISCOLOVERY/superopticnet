@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/billing-customer-identity-lib.php';
+require_once __DIR__ . '/portal-security-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
@@ -18,6 +19,9 @@ $flashMap = [
     'reason_required' => ['type' => 'error', 'message' => 'Tarif, gun, bitme tarixi ve ya status deyisirse sebeb mutleq yazilmalidir.'],
     'customer_not_found' => ['type' => 'error', 'message' => 'Musteri tapilmadi.'],
     'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu.'],
+    'password_reset' => ['type' => 'success', 'message' => 'Musteri ucun muveqqeti portal sifresi yaradildi. Sifre asagida yalniz bir defe gosterilir.'],
+    'password_reset_failed' => ['type' => 'error', 'message' => 'Musteri sifresi yenilenmedi. Sebebi ve icazenizi yoxlayin.'],
+    'password_reset_reason_required' => ['type' => 'error', 'message' => 'Sifre reseti ucun musteri muracietinin sebebi mutleq yazilmalidir.'],
 ];
 $flash = $flashMap[$status] ?? null;
 
@@ -28,6 +32,13 @@ $account = $accountId > 0 ? app_db_account_by_id($accountId) : ($subscriberCode 
 if (!$db instanceof PDO || $account === null || (string) ($account['role'] ?? '') !== 'customer') {
     header('Location: billing-customers.php?status=customer_not_found' . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''));
     exit;
+}
+$temporaryPassword = is_array($_SESSION['billing_customer_temporary_password'] ?? null)
+    ? $_SESSION['billing_customer_temporary_password']
+    : null;
+unset($_SESSION['billing_customer_temporary_password']);
+if (is_array($temporaryPassword) && (int) ($temporaryPassword['account_id'] ?? 0) !== (int) $account['id']) {
+    $temporaryPassword = null;
 }
 $oldInput=is_array($_SESSION['billing_customer_edit_old'][$accountId]??null)?$_SESSION['billing_customer_edit_old'][$accountId]:[];unset($_SESSION['billing_customer_edit_old'][$accountId]);
 
@@ -78,6 +89,30 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $csrfToken = $_POST['csrf_token'] ?? '';
     if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
         header('Location: billing-customer-edit.php?id=' . rawurlencode((string) ($account['id'] ?? 0)) . '&status=csrf_failed' . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''));
+        exit;
+    }
+
+    $postedAction = clean_text((string) ($_POST['action'] ?? ''));
+    if ($postedAction === 'operator_reset_customer_password') {
+        $resetReason = clean_text((string) ($_POST['reset_reason'] ?? ''));
+        if ($resetReason === '') {
+            header('Location: billing-customer-edit.php?id=' . rawurlencode((string) $account['id']) . '&status=password_reset_reason_required');
+            exit;
+        }
+        $reset = app_portal_privileged_password_reset($account, $user, $resetReason, 'customer_operator');
+        if (!empty($reset['ok'])) {
+            $_SESSION['billing_customer_temporary_password'] = [
+                'account_id' => (int) $account['id'],
+                'login' => (string) ($reset['login'] ?? $account['login'] ?? ''),
+                'password' => (string) ($reset['password'] ?? ''),
+            ];
+        }
+        header('Location: billing-customer-edit.php?id=' . rawurlencode((string) $account['id']) . '&status=' . (!empty($reset['ok']) ? 'password_reset' : 'password_reset_failed'));
+        exit;
+    }
+
+    if ($postedAction !== 'save_billing_customer_edit') {
+        header('Location: billing-customer-edit.php?id=' . rawurlencode((string) $account['id']) . '&status=save_failed');
         exit;
     }
 
@@ -466,6 +501,31 @@ $profileHref = 'billing-customer-profile.php?id=' . rawurlencode((string) ($acco
         </article>
 
         <aside class="portal-stack billing-edit-aside">
+            <article class="portal-card">
+                <div class="portal-card-head">
+                    <h2>Portal sifresini reset et</h2>
+                    <small>Yalniz musteri operatora muraciet etdikde istifade edin. Emeliyyat jurnalda saxlanilir.</small>
+                </div>
+                <?php if (is_array($temporaryPassword)): ?>
+                    <div class="portal-alert portal-alert-success">
+                        <span>
+                            Login: <strong><?= e((string) ($temporaryPassword['login'] ?? '')); ?></strong><br>
+                            Muveqqeti sifre: <strong><?= e((string) ($temporaryPassword['password'] ?? '')); ?></strong><br>
+                            Bu sifre sehife baglandiqdan sonra yeniden gosterilmeyecek.
+                        </span>
+                    </div>
+                <?php endif; ?>
+                <form method="post" class="portal-stacked-form" autocomplete="off">
+                    <input type="hidden" name="action" value="operator_reset_customer_password">
+                    <input type="hidden" name="account_id" value="<?= e((string) $account['id']); ?>">
+                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <div class="portal-form-row">
+                        <label for="customerPasswordResetReason">Reset sebebi</label>
+                        <textarea id="customerPasswordResetReason" name="reset_reason" rows="3" required placeholder="Meselen: Musteri zeng ederek sexsiyyet melumatlarini tesdiqledi"></textarea>
+                    </div>
+                    <button type="submit" class="portal-primary-btn">Muveqqeti sifre yarat</button>
+                </form>
+            </article>
             <article class="portal-card">
                 <div class="portal-card-head">
                     <h2>Cari billing xulasesi</h2>

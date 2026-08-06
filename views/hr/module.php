@@ -23,7 +23,7 @@ $hrTabTitle = (string) ($hrTabs[$hrTab] ?? 'HR');
         ['label' => 'Ümumi baxış', 'icon' => 'fa-gauge-high', 'links' => [$hrLink('overview')]],
         ['label' => 'Əməkdaş və sənədlər', 'icon' => 'fa-users', 'links' => [$hrLink('employees'), $hrLink('documents')]],
         ['label' => 'İş və performans', 'icon' => 'fa-id-card-clip', 'links' => [$hrLink('attendance'), $hrLink('leave-travel'), $hrLink('performance')]],
-        ['label' => 'Maaş və statistika', 'icon' => 'fa-chart-line', 'links' => [$hrLink('payroll'), $hrLink('statistics')]],
+        ['label' => 'Statistika', 'icon' => 'fa-chart-line', 'links' => [$hrLink('statistics')]],
     ];
     $moduleNavActive = $hrTab;
     $moduleNavAria = 'HR bölmələri';

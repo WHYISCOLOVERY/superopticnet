@@ -113,6 +113,8 @@ function page_render_header(string $lang, string $title, string $description, st
     $currentPage = basename((string) ($_SERVER['PHP_SELF'] ?? 'index.php'));
     $supportPhoneDisplay = '+994 12 525 88 11';
     $supportPhoneHref = 'tel:+994125258811';
+    $portalLoginUrl = rtrim(app_config('portal_url', 'https://mgt.superoptic.net/portal-login.php'), '/');
+    $portalLangQuery = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
     ?>
 <!DOCTYPE html>
 <html lang="<?= e($lang); ?>">
@@ -125,10 +127,13 @@ function page_render_header(string $lang, string $title, string $description, st
     <link rel="shortcut icon" href="images/favicon.png">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="stylesheet" href="css/fontawesome-lite.css">
-    <link rel="stylesheet" href="<?= e(app_asset('css/style.css')); ?>">
-    <link rel="stylesheet" href="<?= e(app_asset('css/stylemedia.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/fiber-site.css')); ?>">
+    <script>try{var _t=localStorage.getItem('so-theme');if(_t)document.documentElement.setAttribute('data-theme',_t);}catch(e){}</script>
 </head>
 <body>
+    <canvas id="fiber-bg" aria-hidden="true"></canvas>
+    <canvas id="cursor-trail" aria-hidden="true"></canvas>
+    <div class="fiber-veil" aria-hidden="true"></div>
     <header class="site-header">
         <div class="container header-inner">
             <a href="<?= e(page_url('index.php', $lang)); ?>" class="brand" aria-label="Home">
@@ -140,7 +145,7 @@ function page_render_header(string $lang, string $title, string $description, st
             </a>
 
             <button class="mobile-nav-toggle" type="button" aria-label="Menu" data-mobile-nav-toggle>
-                <i class="fa-solid fa-bars"></i>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
             </button>
 
             <nav class="main-nav" data-mobile-nav>
@@ -155,19 +160,24 @@ function page_render_header(string $lang, string $title, string $description, st
 
             <div class="header-actions" data-mobile-actions>
                 <a class="header-link header-link-phone" href="<?= e($supportPhoneHref); ?>">
-                    <i class="fa-solid fa-phone-volume"></i>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 2 6a2 2 0 0 1 2-2z"/></svg>
                     <span class="header-link-stack">
                         <strong><?= e($supportPhoneDisplay); ?></strong>
                         <small><?= e($labels['call_note']); ?></small>
                     </span>
                 </a>
-                <a class="header-link header-link-portal header-link-muted" href="<?= e(page_url('portal-login.php', $lang)); ?>"><?= e($labels['cabinet']); ?></a>
+                <a class="header-link header-link-portal header-link-muted" href="<?= e($portalLoginUrl . $portalLangQuery); ?>"><?= e($labels['cabinet']); ?></a>
+
+                <button class="theme-toggle" type="button" data-theme-toggle aria-label="Theme">
+                    <span class="tt-moon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span>
+                    <span class="tt-sun"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span>
+                </button>
 
                 <div class="language-dropdown">
                     <button class="language-button" type="button" aria-label="Language">
                         <img src="images/<?= e($flagMap[$lang] ?? 'azerbaijan.png'); ?>" alt="<?= e(strtoupper($lang)); ?>">
                         <span><?= e(strtoupper($lang)); ?></span>
-                        <i class="fa-solid fa-chevron-down"></i>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
                     </button>
                     <div class="language-menu">
                         <a href="<?= e(page_url($currentPage, 'az')); ?>" class="lang-option" data-lang="az"><img src="images/azerbaijan.png" alt="AZ"> <span>AZ</span></a>
@@ -196,10 +206,10 @@ function page_render_footer(string $lang): void
                     </span>
                 </a>
                 <p><?= e($labels['footer_text']); ?></p>
-                <div class="footer-links">
-                    <a href="https://www.instagram.com/superoptiktech/" target="_blank" rel="noreferrer" aria-label="Instagram"><i class="fa-brands fa-instagram"></i></a>
-                    <a href="mailto:info@superoptic.net" aria-label="Email"><i class="fa-solid fa-envelope"></i></a>
-                    <a href="tel:+994125258811" aria-label="Phone"><i class="fa-solid fa-phone"></i></a>
+                <div class="footer-socials">
+                    <a href="https://www.instagram.com/superoptiktech/" target="_blank" rel="noreferrer" aria-label="Instagram"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17" cy="7" r="1" fill="currentColor"/></svg></a>
+                    <a href="mailto:info@superoptic.net" aria-label="Email"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m3 6 9 7 9-7"/></svg></a>
+                    <a href="tel:+994125258811" aria-label="Phone"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 2 6a2 2 0 0 1 2-2z"/></svg></a>
                     <a href="https://e-complaint.icta.az/" target="_blank" rel="noreferrer" aria-label="ICT complaint">ICT</a>
                 </div>
             </div>
@@ -233,7 +243,7 @@ function page_render_footer(string $lang): void
     </footer>
 
     <a class="whatsapp-float" href="https://wa.me/994512055566?text=Super%20Optik%20Tech" target="_blank" rel="noreferrer" aria-label="WhatsApp">
-        <i class="fa-brands fa-whatsapp"></i>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21l1.5-5A9 9 0 1 1 12 21a9 9 0 0 1-4.5-1.2L3 21z"/><path d="M9 10c0 3 2 5 5 5 1 0 1.5-1 1.5-1.5L14 12l-1.5 1c-1-.5-2-1.5-2.5-2.5L11 9l-.5-1.5C10 7 9 7.5 9 8.5z"/></svg>
         <span class="whatsapp-float-text">
             <strong><?= e($labels['whatsapp_label']); ?></strong>
             <small><?= e($labels['whatsapp_note']); ?></small>
@@ -241,6 +251,8 @@ function page_render_footer(string $lang): void
     </a>
 
     <script src="<?= e(app_asset('script/main.js')); ?>"></script>
+    <script src="<?= e(app_asset("script/fiber-bg.js")); ?>" defer></script>
+    <script>(function(){var t=document.querySelector("[data-theme-toggle]");if(t)t.addEventListener("click",function(){var c=document.documentElement.getAttribute("data-theme")==="light"?"dark":"light";document.documentElement.setAttribute("data-theme",c);try{localStorage.setItem("so-theme",c);}catch(e){}});})();</script>
 </body>
 </html>
 <?php

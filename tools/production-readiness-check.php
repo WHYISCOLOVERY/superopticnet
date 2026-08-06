@@ -9,13 +9,15 @@ require_once dirname(__DIR__) . '/live-cutover-lib.php';
 $args = array_slice($_SERVER['argv'] ?? [], 1);
 $productionMode = in_array('--production', $args, true) || in_array('--mode=production', $args, true);
 $overrideConfigPath = '';
+$overrideConfigRequested = '';
 foreach ($args as $arg) {
     if (str_starts_with($arg, '--config=')) {
         $overrideConfigPath = trim(substr($arg, strlen('--config=')));
         break;
     }
 }
-if ($overrideConfigPath !== '') {
+$overrideConfigRequested = $overrideConfigPath;
+if ($overrideConfigPath !== '' && !$productionMode) {
     $candidatePath = $overrideConfigPath;
     if (!str_contains($candidatePath, ':') && !str_starts_with($candidatePath, DIRECTORY_SEPARATOR)) {
         $candidatePath = dirname(__DIR__) . DIRECTORY_SEPARATOR . $candidatePath;
@@ -31,6 +33,8 @@ if ($overrideConfigPath !== '') {
         }
         $overrideConfigPath = $candidatePath;
     }
+} elseif ($productionMode) {
+    $overrideConfigPath = '';
 }
 
 function readiness_add(array &$checks, string $name, string $level, bool $ok, string $message): void
@@ -80,6 +84,15 @@ function readiness_is_placeholder(string $value): bool
         || $value === 'CORE_ROUTER_RADIUS_SOURCE_IP';
 }
 
+function readiness_env_secret(string $name): string
+{
+    $value = getenv($name, true);
+    if ($value === false) {
+        $value = getenv($name);
+    }
+    return is_string($value) ? trim($value) : '';
+}
+
 function readiness_windows_scheduled_task(string $taskName): ?array
 {
     if (PHP_OS_FAMILY !== 'Windows') {
@@ -111,6 +124,16 @@ function readiness_windows_scheduled_task(string $taskName): ?array
 }
 
 $checks = [];
+$productionOverrideSafe = !$productionMode || $overrideConfigRequested === '';
+readiness_add(
+    $checks,
+    'production_environment_override',
+    'critical',
+    $productionOverrideSafe,
+    $productionOverrideSafe
+        ? 'No process-only config override is used for production readiness.'
+        : 'Production readiness rejects --config overrides; validate the real service environment instead.'
+);
 $mode = $productionMode ? 'production' : 'local';
 
 $appUrl = rtrim(app_config('app_url'), '/');
@@ -161,7 +184,7 @@ readiness_add(
     $db instanceof PDO ? 'MySQL connection OK.' : 'MySQL connection failed.'
 );
 
-$expectedTimezone = 'Asia/Baku';
+$expectedTimezone = app_timezone();
 $expectedOffsetMinutes = intdiv((new DateTimeZone($expectedTimezone))->getOffset(new DateTimeImmutable('now', new DateTimeZone($expectedTimezone))), 60);
 $dbOffsetMinutes = null;
 if ($db instanceof PDO) {
@@ -172,7 +195,7 @@ if ($db instanceof PDO) {
     }
 }
 $timezoneAligned = date_default_timezone_get() === $expectedTimezone
-    && app_timezone_offset() === '+04:00'
+    && app_timezone_offset() === sprintf('%+03d:%02d', intdiv($expectedOffsetMinutes, 60), abs($expectedOffsetMinutes) % 60)
     && $dbOffsetMinutes === $expectedOffsetMinutes;
 readiness_add(
     $checks,
@@ -186,13 +209,49 @@ readiness_add(
 );
 
 $dbUser = app_config('db_user');
-$dbPass = app_config('db_pass');
+$dbPass = readiness_env_secret('DB_PASS');
 readiness_add(
     $checks,
     'database_credentials',
     'critical',
     !$productionMode || ($dbUser !== '' && !readiness_is_placeholder($dbPass)),
     $productionMode ? 'Production DB user/password must be configured and must not use placeholders.' : 'Local DB credentials are accepted for XAMPP tests.'
+);
+
+$sensitiveLocalKeys = [
+    'db_pass', 'radius_shared_secret', 'radius_sql_password', 'import_api_token',
+    'provider_api_token', 'provider_api_hmac_secret', 'copilot_api_token', 'recaptcha_secret',
+    'telegram_token', 'telegram_modem_search_bot_token', 'sms_provider_password', 'sms_provider_token',
+    'whatsapp_provider_token', 'billing_sso_shared_secret', 'mygov_client_secret',
+    'mgs_service_shared_secret', 'olt_sso_shared_secret', 'olt_user_sync_secret',
+];
+$localSecretKeys = [];
+$localConfig = app_local_config();
+foreach ($sensitiveLocalKeys as $secretKey) {
+    if (trim((string) ($localConfig[$secretKey] ?? '')) !== '') {
+        $localSecretKeys[] = $secretKey;
+    }
+}
+$runtimeSecretCount = 0;
+if ($db instanceof PDO) {
+    try {
+        $runtimeSecretCount = (int) $db->query(
+            "SELECT COUNT(*) FROM mgs_runtime_settings
+             WHERE setting_value <> ''
+               AND setting_key REGEXP '(token|password|secret|private_key|api_key)'"
+        )->fetchColumn();
+    } catch (Throwable) {
+        $runtimeSecretCount = 0;
+    }
+}
+readiness_add(
+    $checks,
+    'environment_only_secrets',
+    'critical',
+    !$productionMode || ($localSecretKeys === [] && $runtimeSecretCount === 0),
+    $productionMode
+        ? 'Local config secret fields=' . count($localSecretKeys) . '; runtime DB secret rows=' . $runtimeSecretCount . '. Values are never printed.'
+        : 'Local development may still contain migration-only secrets; production requires environment-only secret storage.'
 );
 
 if ($db instanceof PDO) {
@@ -244,7 +303,7 @@ readiness_add(
     $mgsSchemaOk ? 'MGS integration schema is ready.' : 'MGS integration schema could not be prepared.'
 );
 
-$radiusSecret = app_config('radius_shared_secret');
+$radiusSecret = readiness_env_secret('RADIUS_SHARED_SECRET');
 readiness_add(
     $checks,
     'radius_shared_secret',
@@ -264,7 +323,7 @@ readiness_add(
     'Core router NAS source IP should be configured before FreeRADIUS cutover.'
 );
 
-$telegramToken = app_config('telegram_token');
+$telegramToken = readiness_env_secret('TELEGRAM_TOKEN');
 $telegramChat = app_config('telegram_chat_id');
 readiness_add(
     $checks,
@@ -280,9 +339,11 @@ $smsToken = (string) ($smsProvider['token'] ?? '');
 $smsDriver = strtolower(trim((string) ($smsProvider['driver'] ?? '')));
 $smsUser = (string) ($smsProvider['user'] ?? '');
 $smsPassword = (string) ($smsProvider['password'] ?? '');
-$smsCredentialsOk = in_array($smsDriver, ['poctgoyercini_json', 'poctgoyercini_xml'], true)
-    ? (!readiness_is_placeholder($smsUser) && !readiness_is_placeholder($smsPassword))
-    : !readiness_is_placeholder($smsToken);
+$smsCredentialsOk = $smsDriver === 'pg365_json'
+    ? !empty($smsProvider['credentials_ready'])
+    : (in_array($smsDriver, ['poctgoyercini_json', 'poctgoyercini_xml'], true)
+        ? (!readiness_is_placeholder($smsUser) && !readiness_is_placeholder($smsPassword))
+        : !readiness_is_placeholder($smsToken));
 readiness_add(
     $checks,
     'sms_provider',
@@ -294,7 +355,7 @@ readiness_add(
 );
 
 $whatsappEndpoint = app_config('whatsapp_provider_endpoint');
-$whatsappToken = app_config('whatsapp_provider_token');
+$whatsappToken = readiness_env_secret('WHATSAPP_PROVIDER_TOKEN');
 $whatsappEnabled = in_array(strtolower((string) app_setting('whatsapp_provider_enabled', '0')), ['1', 'true', 'yes', 'on'], true);
 readiness_add(
     $checks,
@@ -308,13 +369,13 @@ readiness_add(
         : 'Local mode does not require WhatsApp provider.'
 );
 
-$ticketSecret = app_config('portal_ticket_close_secret', app_config('olt_sso_shared_secret'));
+$ticketSecret = readiness_env_secret('PORTAL_TICKET_CLOSE_SECRET');
 readiness_add(
     $checks,
     'ticket_close_secret',
     'critical',
     !$productionMode || !readiness_is_placeholder($ticketSecret),
-    $productionMode ? 'Ticket close token signing secret must be configured.' : 'Local ticket close secret can use test defaults.'
+    $productionMode ? 'Ticket close token signing secret must be configured.' : 'Local mode may omit the secret; ticket close links remain disabled.'
 );
 
 $billingMode = app_config('billing_mode', 'mock');
@@ -326,8 +387,12 @@ readiness_add(
     'billing_mode=' . $billingMode . '; production should not depend on mock mode.'
 );
 
-$providerApiToken = app_config('provider_api_token');
-$providerHmacSecret = app_config('provider_api_hmac_secret');
+$providerApiToken = readiness_env_secret('PROVIDER_API_TOKEN');
+$providerHmacSecret = readiness_env_secret('PROVIDER_API_HMAC_SECRET');
+$emanatProviderToken = readiness_env_secret('EMANAT_PROVIDER_API_TOKEN');
+$emanatProviderHmac = readiness_env_secret('EMANAT_PROVIDER_HMAC_SECRET');
+$unitedProviderToken = readiness_env_secret('UNITEDPAYMENT_PROVIDER_API_TOKEN');
+$unitedProviderHmac = readiness_env_secret('UNITEDPAYMENT_PROVIDER_HMAC_SECRET');
 readiness_add(
     $checks,
     'provider_api_token',
@@ -348,13 +413,33 @@ readiness_add(
 );
 readiness_add(
     $checks,
+    'emanat_provider_credentials',
+    'critical',
+    !$productionMode
+        || (!readiness_is_placeholder($emanatProviderToken) && !readiness_is_placeholder($emanatProviderHmac)),
+    $productionMode
+        ? 'Emanat must have a dedicated API token and HMAC secret; shared provider credentials are not accepted.'
+        : 'Local mode can omit dedicated Emanat credentials.'
+);
+readiness_add(
+    $checks,
+    'unitedpayment_provider_credentials',
+    'critical',
+    !$productionMode
+        || (!readiness_is_placeholder($unitedProviderToken) && !readiness_is_placeholder($unitedProviderHmac)),
+    $productionMode
+        ? 'United Payment must have a dedicated API token and HMAC secret; shared provider credentials are not accepted.'
+        : 'Local mode can omit dedicated United Payment credentials.'
+);
+readiness_add(
+    $checks,
     'provider_api_files',
     'critical',
     is_file(dirname(__DIR__) . '/api/provider/customer-lookup.php') && is_file(dirname(__DIR__) . '/api/provider/payment.php'),
     'Provider customer lookup and payment callback endpoints must exist under /api/provider/.'
 );
 
-$copilotApiToken = app_config('copilot_api_token');
+$copilotApiToken = readiness_env_secret('COPILOT_API_TOKEN');
 readiness_add(
     $checks,
     'copilot_api_token',
@@ -432,7 +517,7 @@ readiness_add(
 );
 
 $billingSsoEntry = app_config('billing_sso_entrypoint');
-$billingSsoSecret = app_config('billing_sso_shared_secret');
+$billingSsoSecret = readiness_env_secret('BILLING_SSO_SHARED_SECRET');
 if ($billingSsoEntry !== '') {
     readiness_add(
         $checks,
@@ -444,7 +529,7 @@ if ($billingSsoEntry !== '') {
 }
 
 $oltSsoEntry = app_config('olt_sso_entrypoint');
-$oltSsoSecret = app_config('olt_sso_shared_secret');
+$oltSsoSecret = readiness_env_secret('OLT_SSO_SHARED_SECRET');
 if ($oltSsoEntry !== '') {
     readiness_add(
         $checks,
@@ -609,7 +694,9 @@ readiness_add(
 
 $copilotContextEndpoint = dirname(__DIR__) . '/mgs-copilot-context.php';
 $copilotContextExport = dirname(__DIR__) . '/tools/export-mgs-copilot-context.php';
-$copilotContext = $db instanceof PDO ? app_mgs_copilot_context($db) : ['ok' => false];
+$copilotContext = $db instanceof PDO
+    ? app_mgs_copilot_context($db, app_noc_system_actor('system-audit-worker'))
+    : ['ok' => false];
 readiness_add(
     $checks,
     'copilot_context_files',
@@ -627,6 +714,53 @@ readiness_add(
     !empty($copilotContext['ok'])
         ? 'Copilot context generates read-only status without exposing secrets.'
         : 'Copilot context could not be generated.'
+);
+
+$serviceVisibilityPath = dirname(__DIR__) . '/tmp/service-secret-visibility.json';
+$serviceVisibility = [];
+if (is_file($serviceVisibilityPath)) {
+    $decodedVisibility = json_decode((string) file_get_contents($serviceVisibilityPath), true);
+    $serviceVisibility = is_array($decodedVisibility) ? $decodedVisibility : [];
+}
+$visibilityCheckedAt = strtotime((string) ($serviceVisibility['checked_at'] ?? '')) ?: 0;
+$visibilityAge = $visibilityCheckedAt > 0 ? time() - $visibilityCheckedAt : PHP_INT_MAX;
+$serviceVisibilityReady = !empty($serviceVisibility['ok'])
+    && in_array(($serviceVisibility['context'] ?? ''), ['apache-http', 'apache-https'], true)
+    && ($serviceVisibility['sapi'] ?? '') !== 'cli'
+    && (int) ($serviceVisibility['required_count'] ?? 0) > 0
+    && (array) ($serviceVisibility['missing_keys'] ?? []) === []
+    && empty($serviceVisibility['secrets_exposed'])
+    && $visibilityAge >= -60
+    && $visibilityAge <= 900;
+$taskVisibilityReady = true;
+if (PHP_OS_FAMILY === 'Windows') {
+    $taskVisibilityPath = dirname(__DIR__) . '/tmp/task-secret-visibility.json';
+    $taskVisibility = [];
+    if (is_file($taskVisibilityPath)) {
+        $decodedTaskVisibility = json_decode((string) file_get_contents($taskVisibilityPath), true);
+        $taskVisibility = is_array($decodedTaskVisibility) ? $decodedTaskVisibility : [];
+    }
+    $taskCheckedAt = strtotime((string) ($taskVisibility['checked_at'] ?? '')) ?: 0;
+    $taskAge = $taskCheckedAt > 0 ? time() - $taskCheckedAt : PHP_INT_MAX;
+    $taskVisibilityReady = !empty($taskVisibility['ok'])
+        && ($taskVisibility['context'] ?? '') === 'scheduled-task'
+        && ($taskVisibility['sapi'] ?? '') === 'cli'
+        && (int) ($taskVisibility['required_count'] ?? 0) > 0
+        && (array) ($taskVisibility['missing_keys'] ?? []) === []
+        && empty($taskVisibility['secrets_exposed'])
+        && $taskAge >= -60
+        && $taskAge <= 900;
+}
+readiness_add(
+    $checks,
+    'service_environment_visibility',
+    'critical',
+    !$productionMode || ($serviceVisibilityReady && $taskVisibilityReady),
+    $productionMode
+        ? (($serviceVisibilityReady && $taskVisibilityReady)
+            ? 'Fresh Apache and scheduled-task environment-visibility evidence is present.'
+            : 'Restart services and run the service-environment probe; Apache/task evidence must be newer than 15 minutes.')
+        : 'Local mode does not require fresh Apache environment evidence.'
 );
 
 $criticalFailed = array_values(array_filter($checks, static fn (array $check): bool => !$check['ok'] && $check['level'] === 'critical'));

@@ -53,27 +53,35 @@ function billing_maintenance_fetch_notice_accounts(PDO $db, string $kind, int $l
 {
     $limit = max(1, min(5000, $limit));
     if ($kind === 'expiring_1d') {
-        $sql = "SELECT DISTINCT a.*
-                FROM billing_radius_services s
-                INNER JOIN portal_accounts a ON a.id = s.account_id
+        $sql = "SELECT a.*
+                FROM portal_accounts a
+                INNER JOIN (
+                    SELECT account_id, MIN(expires_at) AS next_expires_at
+                    FROM billing_radius_services
+                    WHERE status = 'active'
+                      AND expires_at IS NOT NULL
+                      AND expires_at >= NOW()
+                      AND expires_at <= DATE_ADD(NOW(), INTERVAL 1 DAY)
+                    GROUP BY account_id
+                ) s ON s.account_id = a.id
                 WHERE a.role = 'customer'
                   AND a.is_active = 1
-                  AND s.status = 'active'
-                  AND s.expires_at IS NOT NULL
-                  AND s.expires_at >= NOW()
-                  AND s.expires_at <= DATE_ADD(NOW(), INTERVAL 1 DAY)
-                ORDER BY s.expires_at ASC
+                ORDER BY s.next_expires_at ASC
                 LIMIT :limit";
     } elseif ($kind === 'expired') {
-        $sql = "SELECT DISTINCT a.*
-                FROM billing_radius_services s
-                INNER JOIN portal_accounts a ON a.id = s.account_id
+        $sql = "SELECT a.*
+                FROM portal_accounts a
+                INNER JOIN (
+                    SELECT account_id, MIN(expires_at) AS next_expires_at
+                    FROM billing_radius_services
+                    WHERE auto_suspend = 1
+                      AND status = 'active'
+                      AND expires_at IS NOT NULL
+                      AND expires_at < NOW()
+                    GROUP BY account_id
+                ) s ON s.account_id = a.id
                 WHERE a.role = 'customer'
-                  AND s.auto_suspend = 1
-                  AND s.status = 'active'
-                  AND s.expires_at IS NOT NULL
-                  AND s.expires_at < NOW()
-                ORDER BY s.expires_at ASC
+                ORDER BY s.next_expires_at ASC
                 LIMIT :limit";
     } else {
         return [];

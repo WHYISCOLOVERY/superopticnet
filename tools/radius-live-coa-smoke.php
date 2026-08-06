@@ -30,13 +30,35 @@ if (!$db instanceof PDO) {
 }
 
 $settings = app_radius_settings();
-$readiness = app_radius_disconnect_worker_readiness($settings);
+$apply = radius_live_coa_option('apply', $argv);
+$autoApprove = radius_live_coa_option('auto-approve', $argv);
+$targetNasIp = trim((string) ($settings['core_nas_ip'] ?? ''));
+$targetNasName = '';
+try {
+    $nasStatement = $db->query(
+        'SELECT n.nasname, n.shortname, MAX(r.acctstarttime) AS last_seen
+         FROM nas n
+         LEFT JOIN radacct r ON r.nasipaddress = n.nasname
+         WHERE n.nasname <> ""
+         GROUP BY n.id, n.nasname, n.shortname
+         ORDER BY last_seen DESC, n.id ASC
+         LIMIT 1'
+    );
+    $nasRow = $nasStatement !== false ? ($nasStatement->fetch(PDO::FETCH_ASSOC) ?: []) : [];
+    if (filter_var((string) ($nasRow['nasname'] ?? ''), FILTER_VALIDATE_IP) !== false) {
+        $targetNasIp = (string) $nasRow['nasname'];
+        $targetNasName = (string) ($nasRow['shortname'] ?? '');
+    }
+} catch (Throwable) {
+    // The explicit configured NAS remains the fallback for older schemas.
+}
+if (filter_var($targetNasIp, FILTER_VALIDATE_IP) === false) {
+    radius_live_coa_fail('live_nas_target_unavailable', [], 3);
+}
+$readiness = app_radius_disconnect_worker_readiness($settings, $db, $targetNasIp);
 if (empty($readiness['ok'])) {
     radius_live_coa_fail('radius_worker_not_ready', ['reason' => $readiness['reason'] ?? 'unknown'], 3);
 }
-
-$apply = radius_live_coa_option('apply', $argv);
-$autoApprove = radius_live_coa_option('auto-approve', $argv);
 $username = 'SMOKE-LIVE-COA-' . date('YmdHis');
 $insert = $db->prepare(
     'INSERT INTO radius_session_actions (
@@ -50,7 +72,7 @@ $insert = $db->prepare(
 $insert->execute([
     'username' => $username,
     'framed_ip' => '10.255.255.250',
-    'nas_ip' => (string) ($settings['core_nas_ip'] ?? '172.16.5.5'),
+    'nas_ip' => $targetNasIp,
     'nas_port_id' => 'smoke-live-coa',
     'calling_station_id' => '00-00-5E-00-53-FA',
     'reason' => 'live fake CoA transport smoke',
@@ -60,7 +82,7 @@ $insert->execute([
         'session' => [
             'username' => $username,
             'framed_ip' => '10.255.255.250',
-            'nas_ip' => (string) ($settings['core_nas_ip'] ?? '172.16.5.5'),
+            'nas_ip' => $targetNasIp,
             'nas_port_id' => 'smoke-live-coa',
             'calling_station_id' => '00-00-5E-00-53-FA',
             'acct_session_id' => 'smoke-live-coa-session',
@@ -95,22 +117,33 @@ try {
     $previewOk = !$apply && $exitCode === 0 && $dbStatus === 'pending' && $workerActions !== [];
     $needsApproval = $apply && !$autoApprove && $exitCode === 0 && $dbStatus === 'pending' && $workerActions === [];
     $executedOk = $apply && $autoApprove && $exitCode === 0 && $dbStatus === 'executed';
+    $dbResult = app_db_json_decode((string) ($row['result_json'] ?? ''), []);
+    $transportNakOk = $apply
+        && $autoApprove
+        && $exitCode === 0
+        && $dbStatus === 'rejected'
+        && !empty($dbResult['response_verified'])
+        && (string) ($dbResult['radius_response'] ?? '') === 'Disconnect-NAK';
     $result = [
-        'status' => $executedOk ? 'ok' : ($previewOk ? 'ok' : ($needsApproval ? 'skipped' : 'failed')),
+        'status' => ($executedOk || $transportNakOk) ? 'ok' : ($previewOk ? 'ok' : ($needsApproval ? 'skipped' : 'failed')),
         'mode' => $apply ? 'apply' : 'dry-run',
         'auto_approve' => $autoApprove,
-        'reason' => $needsApproval ? 'live_coa_requires_auto_approve_flag' : '',
+        'reason' => $needsApproval
+            ? 'live_coa_requires_auto_approve_flag'
+            : ($transportNakOk ? 'fake_session_rejected_by_reachable_nas' : ''),
+        'transport_only' => $transportNakOk,
         'action_id' => $actionId,
         'username' => $username,
         'worker_exit_code' => $exitCode,
         'worker_output' => is_array($decoded) ? $decoded : $raw,
         'db_status' => $dbStatus,
-        'db_result' => app_db_json_decode((string) ($row['result_json'] ?? ''), []),
-        'router_target' => (string) ($settings['router_ip'] ?? '') . ':' . (string) ($settings['coa_port'] ?? ''),
+        'db_result' => $dbResult,
+        'router_target' => $targetNasIp . ':' . (string) ($settings['coa_port'] ?? ''),
+        'router_name' => $targetNasName,
     ];
 
     echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-    exit(($executedOk || $previewOk || $needsApproval) ? 0 : 4);
+    exit(($executedOk || $transportNakOk || $previewOk || $needsApproval) ? 0 : 4);
 } finally {
     $delete = $db->prepare('DELETE FROM radius_session_actions WHERE id = :id');
     $delete->execute(['id' => $actionId]);

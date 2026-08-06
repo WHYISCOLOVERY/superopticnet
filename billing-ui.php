@@ -507,6 +507,7 @@ function billing_render_header(string $title, string $active, string $lang): voi
             nav.style.setProperty('--billing-nav-popover-left', `${left}px`);
             nav.style.setProperty('--billing-nav-popover-width', `${width}px`);
         };
+        const canHover = window.matchMedia && window.matchMedia('(hover: hover)').matches;
         groups.forEach((group) => {
             group.addEventListener('toggle', () => {
                 if (group.open) {
@@ -514,7 +515,18 @@ function billing_render_header(string $title, string $active, string $lang): voi
                 }
                 requestAnimationFrame(syncPopover);
             });
+            if (canHover) {
+                // Desktop: mouse üstünə gələndə aç (ox-klikə ehtiyac yoxdur).
+                group.addEventListener('mouseenter', () => { closeAll(group); group.open = true; });
+                const summary = group.querySelector('.billing-nav-title');
+                if (summary) { summary.addEventListener('click', (event) => event.preventDefault()); }
+            }
         });
+        if (canHover) {
+            let leaveTimer = null;
+            nav.addEventListener('mouseleave', () => { leaveTimer = setTimeout(() => { closeAll(); syncPopover(); }, 150); });
+            nav.addEventListener('mouseenter', () => { if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; } });
+        }
         document.addEventListener('click', (event) => {
             if (!nav.contains(event.target)) {
                 closeAll();
@@ -822,6 +834,10 @@ function billing_mock_date_to_sql(mixed $value, string $fallback = ''): string
 
 function billing_mock_customer_rows(): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $data = app_mock_portal_data();
     $rows = [];
     $index = 0;
@@ -879,6 +895,10 @@ function billing_mock_customer_rows(): array
 
 function billing_mock_payment_rows(): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $rows = [];
     $index = 0;
 
@@ -910,6 +930,10 @@ function billing_mock_payment_rows(): array
 
 function billing_mock_radius_rows(): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $rows = [];
     $index = 0;
 

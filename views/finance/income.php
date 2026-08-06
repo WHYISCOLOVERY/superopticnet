@@ -42,6 +42,9 @@ $canWrite = !empty($financeContext['data']['can_write']);
         <div class="portal-form-row portal-grid-slim"><input type="number" min="0.01" step="0.01" name="amount" placeholder="Mebleg" required><select name="currency" required><option value="AZN">AZN</option><option value="USD">USD</option><option value="EUR">EUR</option></select></div>
         <div class="portal-form-row portal-grid-slim"><input type="date" name="transaction_date" value="<?= e(date('Y-m-d')); ?>" required><select name="branch_id"><option value="">Filial</option><?php foreach ($branches as $branch): ?><option value="<?= e((string) $branch['id']); ?>"><?= e((string) ($branch['name'] ?? '-')); ?></option><?php endforeach; ?></select></div>
         <div class="portal-form-row portal-grid-slim"><select name="counterparty_id"><option value="">Qarsi teref</option><?php foreach ($counterparties as $counterparty): ?><option value="<?= e((string) $counterparty['id']); ?>"><?= e((string) $counterparty['display_name']); ?></option><?php endforeach; ?></select><input name="payment_source" placeholder="Kassa/bank/terminal"></div>
-        <input name="reference_no" placeholder="Istinad nomresi"><textarea name="note" placeholder="Qeyd"></textarea><textarea name="reason" placeholder="Duzelis sebebi (movcud qeyd deyisirse mutleqdir)"></textarea><button class="portal-primary-btn">Geliri saxla</button>
+        <div class="portal-form-row"><input name="reference_no" placeholder="Istinad nomresi"></div>
+        <div class="portal-form-row"><textarea name="note" placeholder="Qeyd"></textarea></div>
+        <div class="portal-form-row"><textarea name="reason" placeholder="Duzelis sebebi (movcud qeyd deyisirse mutleqdir)"></textarea></div>
+        <button class="portal-primary-btn">Geliri saxla</button>
     </form></section></div><?php endif; ?>
 </div>

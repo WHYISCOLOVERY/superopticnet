@@ -47,7 +47,7 @@ if ($message === '') {
     $message = 'Yeni qoşulma və ya xidmət sorğusu';
 }
 
-$recaptchaSecret = app_config('recaptcha_secret');
+$recaptchaSecret = app_environment_secret('RECAPTCHA_SECRET');
 if ($recaptchaSecret !== '') {
     $recaptchaVerified = verify_recaptcha($recaptchaSecret, $recaptchaResponse);
     if (!$recaptchaVerified) {

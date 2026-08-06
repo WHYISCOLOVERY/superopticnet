@@ -15,13 +15,14 @@ if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
     exit(2);
 }
 
-$device = app_mgs_device_learning_profile_by_key('olt-hsgq-kurdexani-20', $db);
+$nocActor = ['role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'is_active' => 1, 'name' => 'HSGQ CLI smoke'];
+$device = app_mgs_device_learning_profile_by_key('olt-hsgq-kurdexani-20', $db, $nocActor);
 if (!is_array($device)) {
     fwrite(STDERR, "device_not_found\n");
     exit(3);
 }
 
-$payload = app_mgs_backup_payload_for_device($device, 'cli_discovery_snapshot');
+$payload = app_mgs_backup_payload_for_device($device, 'cli_discovery_snapshot', $nocActor, $db);
 if (empty($payload['ok'])) {
     $reason = (string) ($payload['reason'] ?? 'unknown');
     $liveRequired = in_array(strtolower((string) getenv('REQUIRE_HSGQ_LIVE')), ['1', 'true', 'yes', 'on'], true);

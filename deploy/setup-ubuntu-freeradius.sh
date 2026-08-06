@@ -5,18 +5,19 @@ set -Eeuo pipefail
 # Default mode installs local MySQL on the Ubuntu VM and creates two test users.
 # For portal DB mode, pass DB_HOST/DB_PASS and set INSTALL_MYSQL_SERVER=0.
 
-RADIUS_SECRET="${RADIUS_SECRET:-menim_gizli_acarim123}"
+RADIUS_SECRET="${RADIUS_SECRET:-}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
 DB_NAME="${DB_NAME:-superoptic_portal}"
 DB_USER="${DB_USER:-radius}"
-DB_PASS="${DB_PASS:-radius_lab_ChangeMe_123}"
+DB_PASS="${DB_PASS:-}"
 DB_ADMIN_USER="${DB_ADMIN_USER:-root}"
 DB_ADMIN_PASS="${DB_ADMIN_PASS:-}"
 INSTALL_MYSQL_SERVER="${INSTALL_MYSQL_SERVER:-1}"
 CORE_NAS_IP="${CORE_NAS_IP:-}"
 LAB_CLIENT_CIDR="${LAB_CLIENT_CIDR:-192.168.80.0/24}"
 CREATE_TEST_USERS="${CREATE_TEST_USERS:-1}"
+RADIUS_TEST_PASSWORD="${RADIUS_TEST_PASSWORD:-}"
 
 log() {
     printf '\n[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -197,7 +198,7 @@ CREATE TABLE IF NOT EXISTS nas (
     shortname VARCHAR(32) DEFAULT NULL,
     type VARCHAR(30) DEFAULT 'other',
     ports INT DEFAULT NULL,
-    secret VARCHAR(60) NOT NULL DEFAULT 'secret',
+    secret VARCHAR(60) NOT NULL DEFAULT '',
     server VARCHAR(64) DEFAULT NULL,
     community VARCHAR(50) DEFAULT NULL,
     description VARCHAR(200) DEFAULT NULL,
@@ -206,14 +207,16 @@ CREATE TABLE IF NOT EXISTS nas (
 SQL
 
     if [[ "${CREATE_TEST_USERS}" == "1" ]]; then
+        local test_password_escaped
+        test_password_escaped="$(sql_escape "${RADIUS_TEST_PASSWORD}")"
         # shellcheck disable=SC2086
-        mysql $(mysql_radius_args) <<'SQL'
+        mysql $(mysql_radius_args) <<SQL
 DELETE FROM radcheck WHERE username IN ('1100000', '1200000');
 DELETE FROM radreply WHERE username IN ('1100000', '1200000');
 DELETE FROM radusergroup WHERE username IN ('1100000', '1200000');
 
 INSERT INTO radcheck (username, attribute, op, value)
-VALUES ('1100000', 'Cleartext-Password', ':=', 'UCuvsbLA2b');
+VALUES ('1100000', 'Cleartext-Password', ':=', '${test_password_escaped}');
 INSERT INTO radreply (username, attribute, op, value)
 VALUES
 ('1100000', 'Service-Type', '=', 'Framed-User'),
@@ -346,13 +349,18 @@ restart_and_test_radius() {
     ss -lunp | grep -E '1812|1813' || true
 
     log "Testing radtest PPPoE user 1100000"
-    if ! radtest 1100000 UCuvsbLA2b 127.0.0.1 0 "${RADIUS_SECRET}" | tee /tmp/superoptic-radtest-1100000.log | grep -q "Access-Accept"; then
+    if [[ "${CREATE_TEST_USERS}" != "1" ]]; then
+        log "Test users skipped; service and listeners were validated."
+        return
+    fi
+
+    if ! radtest 1100000 "${RADIUS_TEST_PASSWORD}" 127.0.0.1 0 "${RADIUS_SECRET}" | tee /tmp/superoptic-radtest-1100000.log | grep -q "Access-Accept"; then
         journalctl -u freeradius --no-pager -n 80 || true
         fail "PPPoE radtest did not return Access-Accept. Run: sudo systemctl stop freeradius && sudo freeradius -X"
     fi
 
     log "Testing radtest IPoE user 1200000"
-    if ! radtest 1200000 any-test-password 127.0.0.1 0 "${RADIUS_SECRET}" | tee /tmp/superoptic-radtest-1200000.log | grep -q "Access-Accept"; then
+    if ! radtest 1200000 "${RADIUS_TEST_PASSWORD}" 127.0.0.1 0 "${RADIUS_SECRET}" | tee /tmp/superoptic-radtest-1200000.log | grep -q "Access-Accept"; then
         journalctl -u freeradius --no-pager -n 80 || true
         fail "IPoE radtest did not return Access-Accept. Run: sudo systemctl stop freeradius && sudo freeradius -X"
     fi
@@ -362,6 +370,11 @@ main() {
     require_root
     validate_name "${DB_NAME}" "DB_NAME"
     validate_name "${DB_USER}" "DB_USER"
+    [[ -n "${DB_PASS}" ]] || fail "DB_PASS environment variable is required"
+    [[ -n "${RADIUS_SECRET}" ]] || fail "RADIUS_SECRET environment variable is required"
+    if [[ "${CREATE_TEST_USERS}" == "1" ]]; then
+        [[ -n "${RADIUS_TEST_PASSWORD}" ]] || fail "RADIUS_TEST_PASSWORD is required when CREATE_TEST_USERS=1"
+    fi
 
     log "SuperOptic FreeRADIUS setup started"
     log "DB_HOST=${DB_HOST} DB_NAME=${DB_NAME} DB_USER=${DB_USER} INSTALL_MYSQL_SERVER=${INSTALL_MYSQL_SERVER}"
@@ -377,12 +390,8 @@ main() {
     log "Setup completed successfully"
     cat <<TEXT
 
-Ready tests:
-  radtest 1100000 UCuvsbLA2b 127.0.0.1 0 ${RADIUS_SECRET}
-  radtest 1200000 any-test-password 127.0.0.1 0 ${RADIUS_SECRET}
-
-Router NAS secret:
-  ${RADIUS_SECRET}
+Ready test command (values remain in environment variables):
+  radtest 1100000 "\$RADIUS_TEST_PASSWORD" 127.0.0.1 0 "\$RADIUS_SECRET"
 
 If you use the production portal DB later:
   sudo INSTALL_MYSQL_SERVER=0 DB_HOST=192.168.80.1 DB_PASS='REAL_RADIUS_DB_PASS' bash setup-ubuntu-freeradius.sh

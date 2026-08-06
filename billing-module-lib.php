@@ -1,9 +1,13 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/reporting-period-lib.php';
+require_once __DIR__ . '/stage1-feature-lib.php';
+
 require_once __DIR__ . '/billing-customer-identity-lib.php';
 
 require_once __DIR__ . '/billing-ui.php';
+require_once __DIR__ . '/ui-language-lib.php';
 
 function app_billing_sections(): array
 {
@@ -90,6 +94,22 @@ function app_billing_operational_payment_sql(string $alias = 'p'): string
 
 function app_billing_debt_sql(string $alias = 'a'): string
 {
+    // Prefer the indexed generated column (app_db_migrate_billing_debt_column)
+    // when present; fall back to the live JSON expression otherwise. The column
+    // check is memoized so it costs nothing after the first call per request.
+    static $hasColumn = null;
+    if ($hasColumn === null) {
+        try {
+            $db = app_db();
+            $hasColumn = $db instanceof PDO
+                && (bool) $db->query("SHOW COLUMNS FROM portal_accounts LIKE 'billing_debt_amount'")->fetch();
+        } catch (Throwable) {
+            $hasColumn = false;
+        }
+    }
+    if ($hasColumn) {
+        return $alias . '.billing_debt_amount';
+    }
     return 'CAST(REPLACE(REPLACE(REPLACE(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(' . $alias . '.payload_json, "$.billing.debt_raw")), "0"), "AZN", ""), " ", ""), ",", ".") AS DECIMAL(12,2))';
 }
 
@@ -200,33 +220,7 @@ function app_billing_document_page(PDO $db, array $query): array
 
 function app_billing_date_range(array $query): array
 {
-    $range = clean_text((string) ($query['range'] ?? 'month'));
-    $allowed = ['today', 'yesterday', 'week', 'month', 'year', 'custom'];
-    $range = in_array($range, $allowed, true) ? $range : 'month';
-    $today = new DateTimeImmutable('today');
-    if ($range === 'today') {
-        $start = $end = $today;
-    } elseif ($range === 'yesterday') {
-        $start = $end = $today->modify('-1 day');
-    } elseif ($range === 'week') {
-        $start = $today->modify('-6 days');
-        $end = $today;
-    } elseif ($range === 'year') {
-        $start = $today->modify('-11 months')->modify('first day of this month');
-        $end = $today;
-    } elseif ($range === 'custom') {
-        $startText = clean_text((string) ($query['start_date'] ?? ''));
-        $endText = clean_text((string) ($query['end_date'] ?? ''));
-        $start = DateTimeImmutable::createFromFormat('Y-m-d', $startText) ?: $today->modify('-29 days');
-        $end = DateTimeImmutable::createFromFormat('Y-m-d', $endText) ?: $today;
-        if ($start > $end) {
-            [$start, $end] = [$end, $start];
-        }
-    } else {
-        $start = $today->modify('-29 days');
-        $end = $today;
-    }
-    return ['range' => $range, 'start_date' => $start->format('Y-m-d'), 'end_date' => $end->format('Y-m-d')];
+    return app_reporting_period($query);
 }
 
 function app_billing_dataset(PDO $db, string $sql, array $params = []): array
@@ -247,30 +241,69 @@ function app_billing_dataset(PDO $db, string $sql, array $params = []): array
 
 function app_billing_scalar(PDO $db, string $sql, array $params = []): float
 {
+    // Request-level memoization: dashboards compute the same aggregate (e.g.
+    // "Aktiv xidmet") from more than one context in a single render. Caching by
+    // SQL+params removes the duplicate scans without changing any value.
+    static $memo = [];
+    $key = $sql . '|' . serialize($params);
+    if (array_key_exists($key, $memo)) {
+        return $memo[$key];
+    }
     try {
         $statement = $db->prepare($sql);
         $statement->execute($params);
-        return (float) $statement->fetchColumn();
+        return $memo[$key] = (float) $statement->fetchColumn();
     } catch (Throwable) {
-        return 0.0;
+        return $memo[$key] = 0.0;
     }
+}
+
+/**
+ * Tiny fail-safe file cache for expensive, non-critical aggregates (dashboard
+ * KPIs). On any error it falls through to a live computation. TTL in seconds.
+ */
+function app_billing_cache_remember(string $key, int $ttlSeconds, callable $producer)
+{
+    $dir = __DIR__ . '/data/cache';
+    $file = $dir . '/billing_' . preg_replace('/[^a-z0-9_.-]/i', '_', $key) . '.json';
+    if (is_file($file) && (time() - (int) filemtime($file)) < $ttlSeconds) {
+        $cached = json_decode((string) @file_get_contents($file), true);
+        if (is_array($cached) && array_key_exists('v', $cached)) {
+            return $cached['v'];
+        }
+    }
+    $value = $producer();
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+    @file_put_contents($file, json_encode(['v' => $value], JSON_UNESCAPED_UNICODE), LOCK_EX);
+    return $value;
 }
 
 function app_billing_statistics_context(PDO $db, array $query): array
 {
     $dates = app_billing_date_range($query);
+    if (empty($dates['valid'])) {
+        return $dates + ['kpis' => [], 'datasets' => [], 'data_quality' => []];
+    }
+    $dateContractEnabled = app_stage1_feature_enabled($db, 'stage1_statistics_date_contract');
     $params = [
-        'start_at' => $dates['start_date'] . ' 00:00:00',
-        'end_at' => date('Y-m-d 00:00:00', strtotime($dates['end_date'] . ' +1 day')),
+        'start_at' => $dates['start_at'],
+        'end_at' => $dateContractEnabled ? $dates['operational_end_at_exclusive'] : $dates['end_at_exclusive'],
     ];
     $paymentGuard = app_billing_operational_payment_sql('p');
     $customerGuard = app_billing_operational_customer_sql('a');
     $bucket = $dates['range'] === 'year' ? 'DATE_FORMAT(p.created_at, "%Y-%m")' : 'DATE(p.created_at)';
-    $payments = app_billing_dataset($db, 'SELECT ' . $bucket . ' AS label, COALESCE(SUM(p.amount),0) AS value_total, COUNT(*) AS row_count FROM billing_payments p WHERE ' . $paymentGuard . ' AND p.created_at >= :start_at AND p.created_at < :end_at GROUP BY ' . $bucket . ' ORDER BY label LIMIT 12', $params);
+    $payments = app_billing_dataset($db, 'SELECT ' . $bucket . ' AS label, COALESCE(SUM(p.amount),0) AS value_total, COUNT(*) AS row_count FROM billing_payments p WHERE ' . $paymentGuard . ' AND p.created_at >= :start_at AND p.created_at < :end_at GROUP BY ' . $bucket . ' ORDER BY label', $params);
     $customers = app_billing_dataset($db, 'SELECT CASE WHEN a.is_active = 1 THEN "active" ELSE "inactive" END AS label, COUNT(*) AS value_total, COUNT(*) AS row_count FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard . ' GROUP BY a.is_active ORDER BY value_total DESC LIMIT 12');
     $services = app_billing_dataset($db, 'SELECT s.status AS label, COUNT(*) AS value_total, COUNT(*) AS row_count FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE ' . $customerGuard . ' GROUP BY s.status ORDER BY value_total DESC LIMIT 12');
     $packages = app_billing_dataset($db, 'SELECT COALESCE(t.name,"Paketsiz") AS label, COUNT(*) AS value_total, COUNT(*) AS row_count FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id LEFT JOIN billing_tariffs t ON t.id = s.tariff_id WHERE ' . $customerGuard . ' GROUP BY t.id, t.name ORDER BY value_total DESC LIMIT 12');
     $providers = app_billing_dataset($db, 'SELECT p.payment_method AS label, COALESCE(SUM(p.amount),0) AS value_total, COUNT(*) AS row_count FROM billing_payments p WHERE ' . $paymentGuard . ' AND p.created_at >= :start_at AND p.created_at < :end_at GROUP BY p.payment_method ORDER BY value_total DESC LIMIT 12', $params);
+    $futurePayments = app_billing_scalar(
+        $db,
+        'SELECT COUNT(*) FROM billing_payments p WHERE ' . $paymentGuard . ' AND p.created_at >= :future_cutoff_at',
+        ['future_cutoff_at' => $dates['future_cutoff_at']]
+    );
     return $dates + [
         'kpis' => [
             ['label' => 'Dovr odenisi', 'value' => array_sum(array_column($payments, 'value')), 'kind' => 'money'],
@@ -284,6 +317,10 @@ function app_billing_statistics_context(PDO $db, array $query): array
             'services' => ['title' => 'Xidmet statusu', 'kind' => 'count', 'rows' => $services],
             'packages' => ['title' => 'Paket paylanmasi', 'kind' => 'count', 'rows' => $packages],
             'providers' => ['title' => 'Provider odenisleri', 'kind' => 'money', 'rows' => $providers],
+        ],
+        'data_quality' => [
+            'future_billing_payment_rows' => (int) $futurePayments,
+            'future_rows_excluded' => $dateContractEnabled,
         ],
     ];
 }
@@ -301,29 +338,80 @@ function app_billing_overview_context(PDO $db, array $query): array
     $customerGuard = app_billing_operational_customer_sql('a');
     $paymentGuard = app_billing_operational_payment_sql('p');
     $debt = app_billing_debt_sql('a');
-    $recent = [];
-    $alerts = [];
-    try {
-        $recentStatement = $db->query('SELECT STRAIGHT_JOIN p.id, p.subscriber_code, p.amount, p.payment_method, p.transaction_id, p.created_at, a.full_name FROM billing_payments p INNER JOIN portal_accounts a ON a.id = p.account_id WHERE ' . $paymentGuard . ' AND ' . $customerGuard . ' ORDER BY p.created_at DESC, p.id DESC LIMIT 5');
-        $recent = $recentStatement !== false ? ($recentStatement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-        $alertStatement = $db->query('SELECT a.id, a.subscriber_code, a.full_name, ' . $debt . ' AS debt_amount, MAX(s.expires_at) AS expires_at, MAX(s.status) AS service_status FROM portal_accounts a LEFT JOIN billing_radius_services s ON s.account_id = a.id WHERE a.role = "customer" AND ' . $customerGuard . ' GROUP BY a.id HAVING debt_amount > 0 OR expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY) ORDER BY debt_amount DESC, expires_at LIMIT 5');
-        $alerts = $alertStatement !== false ? ($alertStatement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-    } catch (Throwable) {
+
+    // The overview KPIs (total debt from JSON, service counts, today's payments)
+    // and the alert/recent lists are expensive aggregates over 130k+ payments and
+    // 5k+ services. They do not need millisecond freshness on an admin dashboard,
+    // so cache the whole block per operational scope for a short TTL. This is the
+    // single biggest saving on the dashboard render.
+    $cacheKey = 'overview_' . md5($customerGuard . '|' . $paymentGuard . '|' . $debt);
+    return app_billing_cache_remember($cacheKey, 45, static function () use ($db, $customerGuard, $paymentGuard, $debt): array {
         $recent = [];
         $alerts = [];
-    }
-    return [
-        'kpis' => [
-            ['label' => 'Cemi musteri', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard), 'kind' => 'count'],
-            ['label' => 'Aktiv musteri', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND a.is_active = 1 AND ' . $customerGuard), 'kind' => 'count'],
-            ['label' => 'Aktiv xidmet', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE s.status = "active" AND ' . $customerGuard), 'kind' => 'count'],
-            ['label' => 'Riskli xidmet', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE (s.status IN ("expired","suspended","disabled") OR s.expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)) AND ' . $customerGuard), 'kind' => 'count'],
-            ['label' => 'Bugun odenis', 'value' => app_billing_scalar($db, 'SELECT COALESCE(SUM(p.amount),0) FROM billing_payments p WHERE DATE(p.created_at) = CURDATE() AND ' . $paymentGuard), 'kind' => 'money'],
-            ['label' => 'Musteri borcu', 'value' => app_billing_scalar($db, 'SELECT COALESCE(SUM(' . $debt . '),0) FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard), 'kind' => 'money'],
-        ],
-        'alerts' => $alerts,
-        'recent' => $recent,
-    ];
+        try {
+            $recentStatement = $db->query('SELECT STRAIGHT_JOIN p.id, p.subscriber_code, p.amount, p.payment_method, p.transaction_id, p.created_at, a.full_name FROM billing_payments p INNER JOIN portal_accounts a ON a.id = p.account_id WHERE ' . $paymentGuard . ' AND ' . $customerGuard . ' ORDER BY p.created_at DESC, p.id DESC LIMIT 5');
+            $recent = $recentStatement !== false ? ($recentStatement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+            $alertStatement = $db->query('SELECT a.id, a.subscriber_code, a.full_name, ' . $debt . ' AS debt_amount, MAX(s.expires_at) AS expires_at, MAX(s.status) AS service_status FROM portal_accounts a LEFT JOIN billing_radius_services s ON s.account_id = a.id WHERE a.role = "customer" AND ' . $customerGuard . ' GROUP BY a.id HAVING debt_amount > 0 OR expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY) ORDER BY debt_amount DESC, expires_at LIMIT 5');
+            $alerts = $alertStatement !== false ? ($alertStatement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        } catch (Throwable) {
+            $recent = [];
+            $alerts = [];
+        }
+        $totalCustomers = app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard);
+        $activeCustomers = app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND a.is_active = 1 AND ' . $customerGuard);
+        $activeServices = app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE s.status = "active" AND ' . $customerGuard);
+        $riskyServices = app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE (s.status IN ("expired","suspended","disabled") OR s.expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)) AND ' . $customerGuard);
+        $todayPayment = app_billing_scalar($db, 'SELECT COALESCE(SUM(p.amount),0) FROM billing_payments p WHERE p.created_at >= CURDATE() AND p.created_at < CURDATE() + INTERVAL 1 DAY AND ' . $paymentGuard);
+        $customerDebt = app_billing_scalar($db, 'SELECT COALESCE(SUM(' . $debt . '),0) FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard);
+
+        // 14-day daily payment trend (index-friendly range), zero-filled.
+        $trend = [];
+        for ($d = 13; $d >= 0; $d--) {
+            $trend[date('Y-m-d', strtotime('-' . $d . ' day'))] = 0.0;
+        }
+        try {
+            $trendStmt = $db->query('SELECT DATE(p.created_at) AS d, COALESCE(SUM(p.amount),0) AS total
+                FROM billing_payments p
+                WHERE p.created_at >= CURDATE() - INTERVAL 13 DAY AND p.created_at < CURDATE() + INTERVAL 1 DAY AND ' . $paymentGuard . '
+                GROUP BY DATE(p.created_at)');
+            foreach (($trendStmt !== false ? $trendStmt->fetchAll(PDO::FETCH_ASSOC) : []) as $trendRow) {
+                $key = (string) ($trendRow['d'] ?? '');
+                if (array_key_exists($key, $trend)) {
+                    $trend[$key] = (float) ($trendRow['total'] ?? 0);
+                }
+            }
+        } catch (Throwable) {
+            // Trend is decorative; leave zero-filled on failure.
+        }
+        $trendSeries = [];
+        foreach ($trend as $day => $total) {
+            $trendSeries[] = ['label' => date('d.m', strtotime($day)), 'value' => $total];
+        }
+
+        return [
+            'kpis' => [
+                ['label' => 'Cemi musteri', 'value' => $totalCustomers, 'kind' => 'count', 'icon' => 'fa-users', 'tone' => 'info'],
+                ['label' => 'Aktiv musteri', 'value' => $activeCustomers, 'kind' => 'count', 'icon' => 'fa-user-check', 'tone' => 'success'],
+                ['label' => 'Aktiv xidmet', 'value' => $activeServices, 'kind' => 'count', 'icon' => 'fa-signal', 'tone' => 'primary'],
+                ['label' => 'Riskli xidmet', 'value' => $riskyServices, 'kind' => 'count', 'icon' => 'fa-circle-exclamation', 'tone' => 'warning'],
+                ['label' => 'Bugun odenis', 'value' => $todayPayment, 'kind' => 'money', 'icon' => 'fa-wallet', 'tone' => 'success'],
+                ['label' => 'Musteri borcu', 'value' => $customerDebt, 'kind' => 'money', 'icon' => 'fa-receipt', 'tone' => 'danger'],
+            ],
+            'charts' => [
+                'trend' => $trendSeries,
+                'services' => [
+                    ['label' => 'Aktiv', 'value' => $activeServices, 'color' => 'var(--ui-color-success, #16754a)'],
+                    ['label' => 'Riskli', 'value' => $riskyServices, 'color' => 'var(--ui-color-warning, #9a5a0a)'],
+                ],
+                'customers' => [
+                    ['label' => 'Aktiv', 'value' => $activeCustomers, 'color' => 'var(--ui-color-primary, #087783)'],
+                    ['label' => 'Passiv', 'value' => max(0.0, $totalCustomers - $activeCustomers), 'color' => 'var(--ui-color-neutral, #64748b)'],
+                ],
+            ],
+            'alerts' => $alerts,
+            'recent' => $recent,
+        ];
+    });
 }
 
 function app_billing_url(string $section, array $params = [], string $lang = 'az'): string

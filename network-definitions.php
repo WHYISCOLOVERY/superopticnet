@@ -875,7 +875,7 @@ if ($db instanceof PDO) {
                                     <button class="portal-primary-btn" type="submit">Dry-run diff yarat</button>
                                 </form>
                                 <?php if (app_portal_is_admin($user)): ?>
-                                    <form method="post" class="portal-inline-form" onsubmit="return confirm('Real cihazlara VLAN/MPLS command yazilsin? VLAN 550 yoxdursa internal cihazlar failure qaytaracaq.');">
+                                    <form method="post" class="portal-inline-form" data-ui-confirm="Real cihazlara VLAN/MPLS command yazilsin? VLAN 550 yoxdursa internal cihazlar failure qaytaracaq." data-ui-confirm-title="Real cihaza apply">
                                         <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                         <input type="hidden" name="action" value="apply_definition">
                                         <input type="hidden" name="definition_id" value="<?= e((string) $definition['id']); ?>">
@@ -899,5 +899,6 @@ if ($db instanceof PDO) {
         </section>
     </main>
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
 </body>
 </html>

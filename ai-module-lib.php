@@ -5,6 +5,8 @@ require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/copilot-engine.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/ai-provider-lib.php';
+require_once __DIR__ . '/agent-ops-queue-lib.php';
 
 function app_ai_sections(): array
 {
@@ -16,6 +18,7 @@ function app_ai_sections(): array
         'finance-analytics' => 'Maliyye analitikasi',
         'risks' => 'Riskler',
         'recommendations' => 'Tovsiyeler',
+        'work-queue' => 'Təsdiq Mərkəzi',
         'automations' => 'Avtomatlasdirmalar',
         'audit' => 'AI audit',
         'model-status' => 'Model veziyyeti',
@@ -32,6 +35,7 @@ function app_ai_routes(): array
         'finance-analytics' => 'ai-finance-analytics.php',
         'risks' => 'ai-risks.php',
         'recommendations' => 'ai-recommendations.php',
+        'work-queue' => 'ai-work-queue.php',
         'automations' => 'ai-automations.php',
         'audit' => 'ai-audit.php',
         'model-status' => 'ai-model-status.php',
@@ -46,14 +50,19 @@ function app_ai_user_is_admin(array $user): bool
         || ($role === '' && $accountType === 'admin');
 }
 
-function app_ai_visible_sections(array $user): array
+function app_ai_visible_sections(array $user, ?PDO $db = null): array
 {
     $sections = app_ai_sections();
+    $db = $db ?? (function_exists('app_db') ? app_db() : null);
+    if (!app_agent_ops_queue_enabled($db, $user)) {
+        unset($sections['work-queue']);
+    }
+
     if (app_ai_user_is_admin($user)) {
         return $sections;
     }
 
-    $allowed = ['overview', 'copilot', 'customer-analytics', 'network-analytics', 'risks', 'recommendations'];
+    $allowed = ['overview', 'copilot', 'customer-analytics', 'network-analytics', 'risks', 'recommendations', 'work-queue'];
     if (app_portal_can_access_module($user, 'finance')) {
         $allowed[] = 'finance-analytics';
     }
@@ -228,7 +237,7 @@ function app_ai_recommendations(PDO $db): array
 function app_ai_build_context(PDO $db, array $user, string $section, array $query): array
 {
     $section = app_ai_section(['ai_section' => $section]);
-    $visibleSections = app_ai_visible_sections($user);
+    $visibleSections = app_ai_visible_sections($user, $db);
     if (!isset($visibleSections[$section])) {
         $section = 'overview';
     }
@@ -268,6 +277,22 @@ function app_ai_build_context(PDO $db, array $user, string $section, array $quer
         ];
     } elseif ($section === 'recommendations') {
         $data = ['recommendations' => app_ai_recommendations($db)];
+    } elseif ($section === 'work-queue') {
+        // Routed through app_agent_ops_queue_access() (audits the access,
+        // fail-closed if the audit write itself fails) and
+        // app_agent_ops_queue_public_page() (strips server-side-only fields,
+        // e.g. the signed advisor proposal envelope) - never call
+        // app_agent_ops_queue_page() directly from a rendering path.
+        $access = app_agent_ops_queue_access($db, $user, $query);
+        $data = [
+            'queue' => $access['ok']
+                ? app_agent_ops_queue_public_page($access['page'])
+                : [
+                    'items' => [], 'sources' => [], 'total' => 0, 'page' => 1, 'pages' => 1,
+                    'limit' => 50, 'start' => 0, 'end' => 0,
+                    'error' => (string) ($access['reason'] ?? 'queue_unavailable'),
+                ],
+        ];
     } elseif ($section === 'automations') {
         $data = ['page' => app_ai_action_page($db, $query, ['planned', 'dry_run', 'pending'])];
     } elseif ($section === 'audit') {
@@ -276,13 +301,15 @@ function app_ai_build_context(PDO $db, array $user, string $section, array $quer
         $data = ['page' => app_ai_action_page($db, $query, in_array($statuses, $allowed, true) ? [$statuses] : $allowed)];
     } elseif ($section === 'model-status') {
         $bridge = app_mgs_bridge_status();
+        $externalModel = app_ai_deepseek_public_status();
         $data = [
             'engine' => 'Superpilot evidence and rule engine',
             'customer_analyzer' => function_exists('app_copilot_customer_analysis'),
             'action_agent' => is_file(__DIR__ . '/copilot-agent.php'),
-            'api_token_configured' => trim(app_config('copilot_api_token')) !== '',
+            'api_token_configured' => app_environment_secret('COPILOT_API_TOKEN') !== '',
             'bridge' => $bridge,
-            'external_model_configured' => trim(app_config('ai_model_provider')) !== '',
+            'external_model_configured' => !empty($externalModel['configured']),
+            'external_model' => $externalModel,
         ];
     }
 

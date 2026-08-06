@@ -14,10 +14,10 @@ if (!$db instanceof PDO) {
 whatsapp_monitor_ensure_schema($db);
 
 $flash = null;
-$allowedViews = array_keys(whatsapp_monitor_tabs());
-$view = in_array((string) ($_GET['view'] ?? 'overview'), $allowedViews, true)
-    ? (string) ($_GET['view'] ?? 'overview')
-    : 'overview';
+$defaultView = whatsapp_monitor_default_view($db, $user);
+$allowedViews = whatsapp_monitor_all_view_keys();
+$requestedView = (string) ($_GET['view'] ?? $defaultView);
+$view = in_array($requestedView, $allowedViews, true) ? $requestedView : $defaultView;
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $csrfToken = $_POST['csrf_token'] ?? '';

@@ -1,0 +1,37 @@
+{
+  "exported_at": "2026-07-29T12:08:05.117Z",
+  "count": 1,
+  "source": "https://billing.superoptic.net/backend/table/ppp_user.php",
+  "customers": [
+    {
+      "subscriber_code": "2320025",
+      "profile_href": "ppp_user_profile.php?id=2320025",
+      "full_name": "SƏRDAR ABDULLAYEV RÜSTƏM",
+      "fin_serial": "",
+      "address": "Kürdəxanı",
+      "phone": "703931177",
+      "balance_text": "5.8 ₼",
+      "balance_amount": 5.8,
+      "tariff": "ev 100 mbts dek",
+      "days_text": "Koperativ",
+      "debt_text": "0 gün 0 azn",
+      "status_text": "Aktiv |",
+      "raw": {
+        "id": "2320025",
+        "id_m": "*BB6",
+        "ad": "<a href='ppp_user_profile.php?id=2320025'><b>SƏRDAR ABDULLAYEV RÜSTƏM</b></a>",
+        "unvan": "<small>Kürdəxanı</small>",
+        "telefon": "703931177",
+        "fin": "<br>",
+        "xidmet": "pppoe",
+        "paket": "ev 100 mbts dek",
+        "balans": "5.8 ₼",
+        "day": "<span style='color:red'>Koperativ</span>",
+        "borc": "0 gün<br>0 azn",
+        "qeyd": "526 31 74          afvbavsdbvkavzsdckug54",
+        "status": "<a class=\"user_deaktiv\" id=\"5329\"> <span class=\" square-8 bg-success mg-r-5 rounded-circle\"></span> <font style=\"font-size:12px;margin-right:13px;color:black; cursor: pointer;\">Aktiv</font></a>&nbsp;&nbsp;| <a data-toggle=\"modal\" data-target=\"#ppp_edit_modal\" class=\"ppp_user_edit\" id=\"5329\"><span class=\"badge badge_table badge_table_blue\"><i class=\"fad fa-pencil-alt\"></i></span></a> <a class=\"user_delete\" id=\"2320025\"> <span class=\"badge badge_table badge_table_red\"><i class=\"fad fa-trash-alt\"></i></span></a> <a class=\"user_refresh\" id=\"5329\"> <span class=\"badge badge_table badge_table_pruple\"><i class=\"fad fa-sync-alt\"></i></span></a>",
+        "online": "1"
+      }
+    }
+  ]
+}

@@ -1,10 +1,12 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/config.php';
+require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/copilot-widget.php';
 require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/design-system-lib.php';
+require_once __DIR__ . '/hr-position-service.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -26,6 +28,10 @@ $statusMap = [
     'account_forbidden' => ['type' => 'error', 'message' => 'Bu rol deyisikliyine icazeniz yoxdur.'],
     'protected_account' => ['type' => 'error', 'message' => 'Qorunan super admin hesabi adi admin terefinden deyisdirile bilmez.'],
     'account_reason_required' => ['type' => 'error', 'message' => 'Rol, status ve ya silme emeliyyati ucun sebeb mutleq yazilmalidir.'],
+    'staff_password_reset' => ['type' => 'success', 'message' => 'Emekdas ucun muveqqeti sifre yaradildi. Sifre asagida yalniz bir defe gosterilir.'],
+    'staff_password_reset_failed' => ['type' => 'error', 'message' => 'Emekdas sifresi reset edilmedi. Icazeni ve hesabi yoxlayin.'],
+    'staff_password_reason_required' => ['type' => 'error', 'message' => 'Emekdas sifresini reset etmek ucun sebeb mutleq yazilmalidir.'],
+    'staff_password_policy_failed' => ['type' => 'error', 'message' => 'Ilkin sifre en az 14 simvol, boyuk ve kicik herf, reqem ve xususi isare saxlamalidir.'],
     'import_done' => ['type' => 'success', 'message' => 'Import tamamlandi.'],
     'import_failed' => ['type' => 'error', 'message' => 'Import ugursuz oldu.'],
 ];
@@ -45,6 +51,10 @@ if ($status === 'import_done' || $status === 'import_failed') {
         ),
     ];
 }
+$temporaryStaffPassword = is_array($_SESSION['admin_staff_temporary_password'] ?? null)
+    ? $_SESSION['admin_staff_temporary_password']
+    : null;
+unset($_SESSION['admin_staff_temporary_password']);
 
 $accounts = app_db_accounts([
     'q' => $_GET['q'] ?? '',
@@ -134,6 +144,19 @@ if ($editing !== null && (string) ($editing['role'] ?? '') !== 'employee') {
 $editingAreas = $editing !== null ? app_db_account_areas((int) $editing['id']) : [];
 $editingPayload = $editing !== null ? app_db_account_payload($editing) : [];
 $editingEmployeeMeta = is_array($editingPayload['employee'] ?? null) ? $editingPayload['employee'] : [];
+$editingAccess = is_array($editingPayload['access'] ?? null) ? $editingPayload['access'] : [];
+$positionCatalog = ($db = app_db()) instanceof PDO ? app_hr_positions($db, true) : [];
+$editingPosition = ($db instanceof PDO && $editing !== null) ? app_hr_position_for_account($db, $editing) : null;
+$moduleCatalog = app_portal_module_catalog($lang);
+if (array_key_exists('module_keys', $editingAccess) && is_array($editingAccess['module_keys'])) {
+    $editingModuleKeys = array_values($editingAccess['module_keys']);
+} elseif ($editing !== null && trim((string) ($editing['employee_role'] ?? '')) === '' && is_array($editingPosition)) {
+    $editingModuleKeys = app_hr_position_module_keys($editingPosition);
+} elseif ($editing !== null) {
+    $editingModuleKeys = app_portal_employee_module_keys($editing);
+} else {
+    $editingModuleKeys = [];
+}
 $editingCompensation = $editing !== null ? app_mgs_hr_employee_compensation((int) $editing['id']) : [];
 $editingEmployeeSalary = is_array($editingEmployeeMeta['compensation'] ?? null) ? $editingEmployeeMeta['compensation'] : [];
 $currentEmployeeSalaryMode = (string) ($editingCompensation['salary_mode'] ?? $editingEmployeeSalary['salary_mode'] ?? 'gross');
@@ -175,6 +198,7 @@ unset($queryBase['page']);
     <title>Istifadeci idareetmesi</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/design-system.css')); ?>">
     <style>
         .admin-users-tools{display:flex;flex-direction:column;gap:16px}
         .admin-users-tools.portal-reveal,
@@ -309,7 +333,7 @@ unset($queryBase['page']);
         @media (max-width: 720px){.admin-users-form .portal-grid-slim{grid-template-columns:1fr}}
     </style>
 </head>
-<body class="portal-body<?= ($openEmployeeModal || $openImportModal) ? ' admin-modal-open' : ''; ?>">
+<body class="portal-body<?= ($openEmployeeModal || $openImportModal) ? ' admin-modal-open' : ''; ?>"<?= app_design_system_body_attribute(); ?>>
     <header class="portal-topbar">
         <div class="portal-topbar-inner">
             <a href="portal.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="portal-brand">
@@ -327,6 +351,15 @@ unset($queryBase['page']);
             <div class="portal-alert portal-alert-<?= e($flash['type']); ?>" data-autohide-alert>
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
                 <span><?= e($flash['message']); ?></span>
+            </div>
+        <?php endif; ?>
+        <?php if (is_array($temporaryStaffPassword)): ?>
+            <div class="portal-alert portal-alert-success">
+                <span>
+                    Emekdas login: <strong><?= e((string) ($temporaryStaffPassword['login'] ?? '')); ?></strong><br>
+                    Muveqqeti sifre: <strong><?= e((string) ($temporaryStaffPassword['password'] ?? '')); ?></strong><br>
+                    Bu sifre sehifeden cixdiqdan sonra yeniden gosterilmeyecek ve emekdas ilk girisde onu deyismelidir.
+                </span>
             </div>
         <?php endif; ?>
 
@@ -367,6 +400,9 @@ unset($queryBase['page']);
             <a class="portal-ghost-btn portal-inline-link" href="operation-logs.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
                 <i class="fa-solid fa-clipboard-list"></i> Emeliyyat jurnali
             </a>
+            <a class="portal-ghost-btn portal-inline-link" href="admin-positions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                <i class="fa-solid fa-user-shield"></i> Vezifeler ve icazeler
+            </a>
         </section>
 
         <section class="admin-users-tools portal-reveal">
@@ -394,8 +430,13 @@ unset($queryBase['page']);
                             <input id="accountLogin" type="text" name="login" value="<?= e((string) ($editing['login'] ?? '')); ?>" required>
                         </div>
                         <div>
-                            <label for="accountPassword">Sifre <?= $editing !== null ? '(bos saxla = deyisme)' : ''; ?></label>
-                            <input id="accountPassword" type="text" name="password" value="">
+                            <?php if ($editing === null): ?>
+                                <label for="accountPassword">Ilkin sifre</label>
+                                <input id="accountPassword" type="password" name="password" minlength="14" autocomplete="new-password" required>
+                            <?php else: ?>
+                                <label>Sifre idareetmesi</label>
+                                <input type="text" value="Yalniz ayrica admin reseti ile deyisdirilir" disabled>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -408,7 +449,12 @@ unset($queryBase['page']);
                         <div class="portal-form-row">
                             <label for="accountJobTitle">HR vezifesi</label>
                             <input id="accountJobTitle" type="text" value="<?= e((string) ($editing['job_title'] ?? '')); ?>" readonly>
-                            <small>Vezife HR melumatidir; bu sehifede yalniz portal rolu ve icaze verilir.</small>
+                            <small>
+                                Vezife HR melumatidir; bu sehifede yalniz portal rolu ve icaze verilir.
+                                <?php if (is_array($editingPosition) && (string) ($editingPosition['recommended_employee_role'] ?? '') !== ''): ?>
+                                    Meslehet gorulen rol: <strong><?= e(app_ui_label((string) $editingPosition['recommended_employee_role'])); ?></strong>.
+                                <?php endif; ?>
+                            </small>
                         </div>
                     <?php endif; ?>
 
@@ -445,6 +491,19 @@ unset($queryBase['page']);
                                 <option value="sales" <?= $currentEmployeeRole === 'sales' ? 'selected' : ''; ?>><?= e(app_ui_label('sales')); ?></option>
                             </select>
                         </div>
+                    </div>
+
+                    <div class="portal-form-row">
+                        <label>Portal modul icazeleri</label>
+                        <div class="admin-area-check-grid" data-admin-module-permission-grid>
+                            <?php foreach ($moduleCatalog as $moduleKey => $module): ?>
+                                <label class="admin-area-check">
+                                    <input type="checkbox" name="module_keys[]" value="<?= e((string) $moduleKey); ?>" <?= in_array((string) $moduleKey, $editingModuleKeys, true) ? 'checked' : ''; ?>>
+                                    <span><?= e((string) ($module['label'] ?? $moduleKey)); ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <small>Vezife sehifesinde saxlanilan sablon burada gosterilir. Bu icazeler yalniz admin formu saxladiginda hesaba tetbiq olunur.</small>
                     </div>
 
                     <div class="portal-form-row portal-grid-slim">
@@ -548,6 +607,19 @@ unset($queryBase['page']);
                         <?php endif; ?>
                     </div>
                 </form>
+                <?php if ($editing !== null): ?>
+                    <form class="admin-users-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" autocomplete="off">
+                        <input type="hidden" name="action" value="reset_staff_password">
+                        <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                        <input type="hidden" name="account_id" value="<?= e((string) ($editing['id'] ?? 0)); ?>">
+                        <div class="portal-form-row">
+                            <label for="staffPasswordResetReason">Sifre reseti sebebi</label>
+                            <textarea id="staffPasswordResetReason" name="reset_reason" rows="2" required placeholder="Meselen: Emekdas sifresini unudub ve sexsiyyeti daxili qaydada tesdiqlenib"></textarea>
+                            <small>Muveqqeti sifre yalniz bir defe gosterilir. Emekdas ilk girisde yeni sifre secmelidir.</small>
+                        </div>
+                        <button type="submit" class="portal-ghost-btn">Emekdas sifresini reset et</button>
+                    </form>
+                <?php endif; ?>
                 </div>
             </div>
 
@@ -667,7 +739,7 @@ unset($queryBase['page']);
                                 <?php if ($canDeleteAccounts && (string) ($account['login'] ?? '') !== 's.abdullayev@superoptic.net'): ?>
                                     <details class="admin-users-danger-menu">
                                         <summary>Sil</summary>
-                                        <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" onsubmit="return confirm('Silinsin?');">
+                                        <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" data-ui-confirm="Bu istifadeci hesabi silinecek ve emeliyyat jurnala yazilacaq. Davam edilsin?" data-ui-confirm-title="Hesabi sil">
                                             <input type="hidden" name="action" value="delete_account">
                                             <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                             <input type="hidden" name="account_id" value="<?= e((string) ($account['id'] ?? '')); ?>">
@@ -732,7 +804,7 @@ unset($queryBase['page']);
                                         <?php if ($canDeleteAccounts && (string) ($account['login'] ?? '') !== 's.abdullayev@superoptic.net'): ?>
                                             <details class="admin-users-danger-menu">
                                                 <summary>Sil</summary>
-                                                <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" onsubmit="return confirm('Silinsin?');">
+                                                <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" data-ui-confirm="Bu istifadeci hesabi silinecek ve emeliyyat jurnala yazilacaq. Davam edilsin?" data-ui-confirm-title="Hesabi sil">
                                                     <input type="hidden" name="action" value="delete_account">
                                                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                                     <input type="hidden" name="account_id" value="<?= e((string) ($account['id'] ?? '')); ?>">
@@ -821,5 +893,6 @@ unset($queryBase['page']);
     })();
     </script>
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
 </body>
 </html>

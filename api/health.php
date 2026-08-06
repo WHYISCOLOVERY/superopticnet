@@ -48,7 +48,7 @@ $detailAllowed = in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
 $payload = [
     'success' => $databaseOk,
     'status' => $status,
-    'service' => 'superoptic-mgs',
+    'service' => 'superoptic-portal',
     'time' => date(DATE_ATOM),
 ];
 

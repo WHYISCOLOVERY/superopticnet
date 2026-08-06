@@ -1,6 +1,64 @@
 <?php
 declare(strict_types=1);
 
+function app_load_environment_file(): void
+{
+    static $loaded = false;
+    if ($loaded) {
+        return;
+    }
+    $loaded = true;
+
+    $candidates = [];
+    $override = getenv('SUPEROPTIC_SECRET_ENV_FILE');
+    if (is_string($override) && trim($override) !== '') {
+        $candidates[] = trim($override);
+    }
+    $candidates[] = __DIR__ . '/.env';
+
+    foreach ($candidates as $file) {
+        if (!is_file($file) || !is_readable($file)) {
+            continue;
+        }
+        $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines)) {
+            continue;
+        }
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') {
+                continue;
+            }
+            if (str_starts_with($line, 'export ')) {
+                $line = trim(substr($line, 7));
+            }
+            $separator = strpos($line, '=');
+            if ($separator === false) {
+                continue;
+            }
+            $key = strtoupper(trim(substr($line, 0, $separator)));
+            if (preg_match('/^[A-Z][A-Z0-9_]{1,127}$/', $key) !== 1) {
+                continue;
+            }
+            if (getenv($key) !== false) {
+                continue;
+            }
+            $value = trim(substr($line, $separator + 1));
+            $length = strlen($value);
+            if ($length >= 2
+                && (($value[0] === '"' && $value[$length - 1] === '"')
+                    || ($value[0] === "'" && $value[$length - 1] === "'"))) {
+                $value = substr($value, 1, -1);
+            }
+            putenv($key . '=' . $value);
+            $_ENV[$key] = $value;
+        }
+        break;
+    }
+}
+
+app_load_environment_file();
+
 function app_local_config(): array
 {
     static $config;
@@ -15,12 +73,76 @@ function app_local_config(): array
     return $config;
 }
 
+function app_public_runtime_settings_path(): string
+{
+    return __DIR__ . '/data/system-settings.json';
+}
+
+function app_public_runtime_settings(?string $path = null): array
+{
+    static $cache = [];
+    $path = $path ?? app_public_runtime_settings_path();
+    if (array_key_exists($path, $cache)) {
+        return $cache[$path];
+    }
+    if (!is_file($path)) {
+        return $cache[$path] = [];
+    }
+    $decoded = json_decode((string) file_get_contents($path), true);
+    if (!is_array($decoded)) {
+        return $cache[$path] = [];
+    }
+    $allowed = [];
+    if (isset($decoded['app_country_code']) && preg_match('/^[A-Z]{2}$/', (string) $decoded['app_country_code']) === 1) {
+        $allowed['app_country_code'] = (string) $decoded['app_country_code'];
+    }
+    if (isset($decoded['app_timezone'])) {
+        try {
+            new DateTimeZone((string) $decoded['app_timezone']);
+            $allowed['app_timezone'] = (string) $decoded['app_timezone'];
+        } catch (Throwable) {
+        }
+    }
+    return $cache[$path] = $allowed;
+}
+
+function app_write_public_runtime_settings(array $settings, ?string $path = null): bool
+{
+    $path = $path ?? app_public_runtime_settings_path();
+    $country = strtoupper(trim((string) ($settings['app_country_code'] ?? '')));
+    $timezone = trim((string) ($settings['app_timezone'] ?? ''));
+    if (preg_match('/^[A-Z]{2}$/', $country) !== 1) {
+        return false;
+    }
+    try {
+        new DateTimeZone($timezone);
+    } catch (Throwable) {
+        return false;
+    }
+
+    $directory = dirname($path);
+    if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+        return false;
+    }
+    $payload = json_encode([
+        'app_country_code' => $country,
+        'app_timezone' => $timezone,
+        'updated_at' => gmdate(DATE_ATOM),
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    return is_string($payload) && file_put_contents($path, $payload . PHP_EOL, LOCK_EX) !== false;
+}
+
 function app_setting(string $key, mixed $default = null): mixed
 {
     $envKey = strtoupper($key);
     $envValue = getenv($envKey);
     if ($envValue !== false && $envValue !== '') {
         return $envValue;
+    }
+
+    $runtime = app_public_runtime_settings();
+    if (array_key_exists($key, $runtime)) {
+        return $runtime[$key];
     }
 
     $local = app_local_config();
@@ -35,6 +157,74 @@ function app_config(string $key, string $default = ''): string
 {
     $value = app_setting($key, $default);
     return is_string($value) ? $value : $default;
+}
+
+function app_environment_name(): string
+{
+    return strtolower(trim(app_config('app_environment', 'production')));
+}
+
+function app_demo_fixtures_enabled(): bool
+{
+    if (!in_array(app_environment_name(), ['development', 'dev', 'local', 'test'], true)) {
+        return false;
+    }
+
+    $value = strtolower(trim((string) app_setting('app_demo_fixtures_enabled', '0')));
+    return in_array($value, ['1', 'true', 'yes', 'on'], true);
+}
+
+function app_request_correlation_id(): string
+{
+    static $correlationId = null;
+    if (is_string($correlationId)) {
+        return $correlationId;
+    }
+
+    $candidate = trim((string) ($_SERVER['HTTP_X_CORRELATION_ID'] ?? $_SERVER['HTTP_X_REQUEST_ID'] ?? ''));
+    $candidate = (string) preg_replace('/[^A-Za-z0-9._:-]+/', '', $candidate);
+    if ($candidate === '') {
+        $candidate = 'req-' . date('YmdHis') . '-' . bin2hex(random_bytes(6));
+    }
+
+    return $correlationId = substr($candidate, 0, 96);
+}
+
+function app_runtime_error_reference(string $scope, ?Throwable $exception = null, array $context = []): string
+{
+    $reference = app_request_correlation_id();
+    $safeContext = [];
+    foreach ($context as $key => $value) {
+        if (!is_scalar($value) && $value !== null) {
+            continue;
+        }
+        $safeKey = (string) preg_replace('/[^a-z0-9_.-]+/i', '_', (string) $key);
+        $safeContext[$safeKey] = is_string($value) ? mb_substr($value, 0, 191) : $value;
+    }
+
+    error_log((string) json_encode([
+        'event' => 'runtime_error',
+        'scope' => mb_substr($scope, 0, 128),
+        'correlation_id' => $reference,
+        'exception' => $exception !== null ? get_class($exception) : null,
+        'exception_code' => $exception !== null ? (string) $exception->getCode() : null,
+        'context' => $safeContext,
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+    return $reference;
+}
+
+function app_environment_secret(string $envKey): string
+{
+    $envKey = strtoupper(trim($envKey));
+    if (preg_match('/^[A-Z][A-Z0-9_]{2,127}$/', $envKey) !== 1) {
+        return '';
+    }
+    $value = getenv($envKey, true);
+    if ($value === false) {
+        $value = getenv($envKey);
+    }
+    return is_string($value) ? trim($value) : '';
 }
 
 function app_timezone(): string
@@ -987,7 +1177,12 @@ function app_tariffs(): array
 
 function app_portal_mode(): string
 {
-    return (string) app_setting('billing_mode', 'mock');
+    return (string) app_setting('billing_mode', 'mysql');
+}
+
+function app_portal_mock_mode_enabled(): bool
+{
+    return app_portal_mode() === 'mock' && app_demo_fixtures_enabled();
 }
 
 function app_portal_uses_local_db(): bool
@@ -1007,11 +1202,32 @@ function app_portal_current_user(): ?array
         $migrated = app_db_session_user_from_legacy($user);
         if (is_array($migrated)) {
             $_SESSION['portal_user'] = $migrated;
-            return $migrated;
+            $user = $migrated;
         }
     }
 
+    app_portal_enforce_password_change($user);
     return $user;
+}
+
+function app_portal_enforce_password_change(array $user): void
+{
+    if (PHP_SAPI === 'cli' || empty($user['must_change_password'])) {
+        return;
+    }
+    $scriptPath = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+    $script = basename($scriptPath);
+    if (in_array($script, ['change-password.php', 'portal-actions.php', 'portal-login.php'], true)) {
+        return;
+    }
+    if (str_contains($scriptPath, '/api/')) {
+        http_response_code(428);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['success' => false, 'error' => 'password_change_required']);
+        exit;
+    }
+    header('Location: change-password.php?status=password_change_required');
+    exit;
 }
 
 function app_portal_sign_in(array $user): void
@@ -1097,6 +1313,12 @@ function app_portal_module_catalog(string $lang = 'az'): array
             'href' => $appendLang('billing-dashboard.php'),
             'icon' => 'fa-receipt',
         ],
+        'crm' => [
+            'label' => 'CRM ve destek',
+            'description' => 'Yeni ve kohne muracietler, ticket novbesi, texnik teyinat ve problem analitikasi',
+            'href' => $appendLang('crm.php'),
+            'icon' => 'fa-ticket',
+        ],
         'ai' => [
             'label' => 'AI',
             'description' => 'Superpilot analizi, kontekst ve emeliyyat komekcisi',
@@ -1104,8 +1326,8 @@ function app_portal_module_catalog(string $lang = 'az'): array
             'icon' => 'fa-brain',
         ],
         'messaging' => [
-            'label' => 'Mesaj merkezi',
-            'description' => 'WhatsApp, Telegram, SMS ve app mesajlari',
+            'label' => 'Gonderisler',
+            'description' => 'SMS, Telegram, portal bildirisleri ve tesdiqli kampaniyalar',
             'href' => $appendLang('message-center.php'),
             'icon' => 'fa-message',
         ],
@@ -1116,8 +1338,8 @@ function app_portal_module_catalog(string $lang = 'az'): array
             'icon' => 'fa-brands fa-whatsapp',
         ],
         'statistics' => [
-            'label' => 'Statistika',
-            'description' => 'Gelir, xerc, borc, musteri, terminal ve sebeke chartlari',
+            'label' => 'Sirket statistikasi',
+            'description' => 'Maliyye, musteri, mesaj, HR ve sebeke gostericilerinin umumi analitikasi',
             'href' => $appendLang('statistics-center.php'),
             'icon' => 'fa-chart-line',
         ],
@@ -1139,18 +1361,33 @@ function app_portal_employee_module_keys(array $user): array
         return array_keys(app_portal_module_catalog());
     }
 
+    if (array_key_exists('module_keys', $user) && is_array($user['module_keys'])) {
+        $requestedModules = array_values(array_unique(array_map(
+            static fn (mixed $key): string => strtolower(trim((string) $key)),
+            $user['module_keys']
+        )));
+        if (in_array('messaging', $requestedModules, true) && !in_array('crm', $requestedModules, true)) {
+            $requestedModules[] = 'crm';
+        }
+
+        return array_values(array_intersect(
+            array_keys(app_portal_module_catalog()),
+            $requestedModules
+        ));
+    }
+
     $roleModules = [
         'finance' => ['finance', 'billing', 'statistics'],
         'warehouse' => ['inventory'],
         'warehouse_manager' => ['inventory'],
         'hr' => ['hr', 'statistics'],
-        'operator' => ['billing', 'messaging', 'whatsapp_monitor', 'statistics'],
-        'night_operator' => ['billing', 'messaging', 'whatsapp_monitor', 'statistics'],
-        'support' => ['billing', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
+        'operator' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
+        'night_operator' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
+        'support' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
         'technician' => ['inventory', 'network', 'whatsapp_monitor'],
         'engineer' => ['inventory', 'network', 'whatsapp_monitor'],
-        'noc' => ['messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
-        'sales' => ['finance', 'billing', 'messaging', 'whatsapp_monitor', 'statistics'],
+        'noc' => ['crm', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
+        'sales' => ['finance', 'billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
     ];
 
     return $roleModules[$employeeRole] ?? [];
@@ -1170,6 +1407,10 @@ function app_portal_request_module(string $scriptName, array $query = []): ?stri
             'hr' => 'hr',
             'inventory' => 'inventory',
             'technical' => 'network',
+            'noc' => 'network',
+            'olt' => 'network',
+            'network' => 'network',
+            'bots' => 'ai',
             'reports' => 'statistics',
             default => null,
         };
@@ -1191,13 +1432,15 @@ function app_portal_request_module(string $scriptName, array $query = []): ?stri
         'billing-reports.php' => 'billing',
         'billing-statistics.php' => 'billing',
         'billing-cash-payment.php' => 'billing',
-        'billing-requests.php' => 'messaging',
+        'billing-requests.php' => 'crm',
         'billing-operations-check.php' => 'billing',
         'radius-billing.php' => 'billing',
-        'crm.php' => 'messaging',
+        'crm.php' => 'crm',
+        'problem-statistics.php' => 'crm',
         'message-center.php' => 'messaging',
         'whatsapp-monitor.php' => 'whatsapp_monitor',
         'campaigns.php' => 'messaging',
+        'admin-positions.php' => 'hr',
         'noc-devices.php' => 'network',
         'noc-security.php' => 'network',
         'network-definitions.php' => 'network',
@@ -1216,6 +1459,7 @@ function app_portal_request_module(string $scriptName, array $query = []): ?stri
         'ai-finance-analytics.php' => 'ai',
         'ai-risks.php' => 'ai',
         'ai-recommendations.php' => 'ai',
+        'ai-work-queue.php' => 'ai',
         'ai-automations.php' => 'ai',
         'ai-audit.php' => 'ai',
         'ai-model-status.php' => 'ai',
@@ -1417,7 +1661,7 @@ function app_portal_login(string $role, string $login, string $password): ?array
             }
         }
 
-        return app_portal_mode() === 'mock' ? app_mock_portal_login($role, $login, $password) : null;
+        return app_portal_mock_mode_enabled() ? app_mock_portal_login($role, $login, $password) : null;
     }
 
     return app_api_portal_login($role, $login, $password);
@@ -1430,7 +1674,7 @@ function app_portal_customer_snapshot(array $user): array
             return app_db_customer_snapshot($user);
         }
 
-        return app_portal_mode() === 'mock' ? app_mock_customer_snapshot($user) : [];
+        return app_portal_mock_mode_enabled() ? app_mock_customer_snapshot($user) : [];
     }
 
     return app_api_customer_snapshot($user);
@@ -1443,7 +1687,7 @@ function app_portal_employee_snapshot(array $user): array
             return app_db_employee_snapshot($user);
         }
 
-        return app_portal_mode() === 'mock' ? app_mock_employee_snapshot($user) : [];
+        return app_portal_mock_mode_enabled() ? app_mock_employee_snapshot($user) : [];
     }
 
     return app_api_employee_snapshot($user);
@@ -1461,7 +1705,7 @@ function app_portal_update_customer_phone(array $user, string $phone): bool
             return app_db_update_customer_phone($user, $normalizedPhone);
         }
 
-        if (app_portal_mode() !== 'mock') {
+        if (!app_portal_mock_mode_enabled()) {
             return false;
         }
 
@@ -1495,7 +1739,16 @@ function app_portal_update_customer_password(array $user, string $currentPasswor
         return false;
     }
 
-    if ($newPassword !== $confirmPassword || strlen($newPassword) < 8) {
+    $requiresStrongPassword = !empty($user['must_change_password'])
+        || (string) ($user['role'] ?? 'customer') === 'employee';
+    $validNewPassword = $requiresStrongPassword
+        ? strlen($newPassword) >= 14
+            && preg_match('/[a-z]/', $newPassword) === 1
+            && preg_match('/[A-Z]/', $newPassword) === 1
+            && preg_match('/\d/', $newPassword) === 1
+            && preg_match('/[^A-Za-z0-9]/', $newPassword) === 1
+        : strlen($newPassword) >= 8;
+    if ($newPassword !== $confirmPassword || !$validNewPassword) {
         return false;
     }
 
@@ -1504,7 +1757,7 @@ function app_portal_update_customer_password(array $user, string $currentPasswor
             return app_db_update_password($user, $currentPassword, $newPassword);
         }
 
-        if (app_portal_mode() !== 'mock') {
+        if (!app_portal_mock_mode_enabled()) {
             return false;
         }
 
@@ -1548,6 +1801,10 @@ function app_portal_mock_technicians(): array
 {
     if (app_db_available()) {
         return app_db_technicians();
+    }
+
+    if (!app_demo_fixtures_enabled()) {
+        return [];
     }
 
     $data = app_mock_portal_data();
@@ -1650,6 +1907,10 @@ function app_portal_ticket_records(): array
         return app_db_ticket_records();
     }
 
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $path = app_portal_ticket_store_path();
     if (!file_exists($path)) {
         $seed = app_portal_seed_ticket_records();
@@ -1663,6 +1924,10 @@ function app_portal_ticket_records(): array
 function app_portal_ticket_write_records(array $records): void
 {
     if (app_db_available()) {
+        return;
+    }
+
+    if (!app_demo_fixtures_enabled()) {
         return;
     }
 
@@ -1786,7 +2051,7 @@ function app_portal_customer_core_snapshot(array $user): array
         return app_db_customer_snapshot($user);
     }
 
-    return app_portal_mode() === 'mock' ? app_mock_customer_snapshot($user) : app_api_customer_snapshot($user);
+    return app_portal_mock_mode_enabled() ? app_mock_customer_snapshot($user) : app_api_customer_snapshot($user);
 }
 
 function app_portal_ticket_summary(array $ticket): string
@@ -1809,10 +2074,62 @@ function app_portal_ticket_summary(array $ticket): string
     return $summary;
 }
 
-function app_telegram_send_message(string $text): ?array
+function app_telegram_token_is_valid(string $token): bool
 {
-    $token = app_config('telegram_token');
-    $chatId = app_config('telegram_chat_id');
+    return preg_match('/^[0-9]{6,16}:[A-Za-z0-9_-]{30,80}$/D', trim($token)) === 1;
+}
+
+function app_telegram_runtime_chat_id(string $settingKey, string $fallback = ''): string
+{
+    $fallback = trim($fallback);
+    if ($fallback !== '') {
+        return $fallback;
+    }
+
+    try {
+        $db = app_db();
+        if (!$db instanceof PDO) {
+            return '';
+        }
+        $statement = $db->prepare(
+            'SELECT setting_value FROM mgs_runtime_settings WHERE setting_key = :setting_key LIMIT 1'
+        );
+        $statement->execute(['setting_key' => $settingKey]);
+        return trim((string) ($statement->fetchColumn() ?: ''));
+    } catch (Throwable) {
+        return '';
+    }
+}
+
+function app_telegram_provider_profile(string $profile = 'generic'): array
+{
+    $profile = strtolower(trim($profile));
+    if ($profile === 'customer') {
+        $specificToken = app_environment_secret('TELEGRAM_CUSTOMER_BOT_TOKEN');
+        $genericToken = app_environment_secret('TELEGRAM_TOKEN');
+        return [
+            'token' => app_telegram_token_is_valid($specificToken)
+                ? $specificToken
+                : (app_telegram_token_is_valid($genericToken) ? $genericToken : ''),
+            'chat_id' => app_telegram_runtime_chat_id(
+                'telegram_customer_chat_id',
+                app_config('telegram_customer_chat_id')
+            ),
+        ];
+    }
+
+    $genericToken = app_environment_secret('TELEGRAM_TOKEN');
+    return [
+        'token' => app_telegram_token_is_valid($genericToken) ? $genericToken : '',
+        'chat_id' => app_config('telegram_chat_id'),
+    ];
+}
+
+function app_telegram_send_message(string $text, string $profile = 'generic'): ?array
+{
+    $provider = app_telegram_provider_profile($profile);
+    $token = (string) ($provider['token'] ?? '');
+    $chatId = (string) ($provider['chat_id'] ?? '');
     if ($token === '' || $chatId === '') {
         return null;
     }
@@ -1824,10 +2141,11 @@ function app_telegram_send_message(string $text): ?array
     ]);
 }
 
-function app_telegram_delete_message(int $messageId): void
+function app_telegram_delete_message(int $messageId, string $profile = 'generic'): void
 {
-    $token = app_config('telegram_token');
-    $chatId = app_config('telegram_chat_id');
+    $provider = app_telegram_provider_profile($profile);
+    $token = (string) ($provider['token'] ?? '');
+    $chatId = (string) ($provider['chat_id'] ?? '');
     if ($token === '' || $chatId === '' || $messageId <= 0) {
         return;
     }
@@ -1840,7 +2158,10 @@ function app_telegram_delete_message(int $messageId): void
 
 function app_portal_ticket_close_link(array $ticket): string
 {
-    $secret = app_config('portal_ticket_close_secret', app_config('olt_sso_shared_secret', 'superoptic-ticket-secret'));
+    $secret = app_environment_secret('PORTAL_TICKET_CLOSE_SECRET');
+    if ($secret === '') {
+        return '';
+    }
     $now = time();
     $token = app_portal_sign_token([
         'iss' => app_config('portal_token_issuer', 'portal.superoptic.net'),
@@ -1865,17 +2186,19 @@ function app_portal_ticket_close_link(array $ticket): string
 function app_portal_send_ticket_to_telegram(array $ticket): array
 {
     $messageIds = [];
-    $summaryResponse = app_telegram_send_message(app_portal_ticket_summary($ticket));
+    $summaryResponse = app_telegram_send_message(app_portal_ticket_summary($ticket), 'customer');
     $summaryMessageId = (int) ($summaryResponse['result']['message_id'] ?? 0);
     if ($summaryMessageId > 0) {
         $messageIds[] = $summaryMessageId;
     }
 
-    $linkText = 'Bagla: ' . app_portal_ticket_close_link($ticket);
-    $linkResponse = app_telegram_send_message($linkText);
-    $linkMessageId = (int) ($linkResponse['result']['message_id'] ?? 0);
-    if ($linkMessageId > 0) {
-        $messageIds[] = $linkMessageId;
+    $closeLink = app_portal_ticket_close_link($ticket);
+    if ($closeLink !== '') {
+        $linkResponse = app_telegram_send_message('Bagla: ' . $closeLink, 'customer');
+        $linkMessageId = (int) ($linkResponse['result']['message_id'] ?? 0);
+        if ($linkMessageId > 0) {
+            $messageIds[] = $linkMessageId;
+        }
     }
 
     return $messageIds;
@@ -1966,7 +2289,7 @@ function app_portal_create_customer_ticket(array $user, string $subject, string 
             return true;
         }
 
-        if (app_portal_mode() !== 'mock') {
+        if (!app_portal_mock_mode_enabled()) {
             return false;
         }
 
@@ -2100,6 +2423,10 @@ function app_portal_create_operator_ticket(array $employee, array $payload): boo
         return true;
     }
 
+    if (!app_demo_fixtures_enabled()) {
+        return false;
+    }
+
     $ticket['telegram_message_ids'] = app_portal_send_ticket_to_telegram($ticket);
     $records = app_portal_ticket_records();
     $records[] = $ticket;
@@ -2145,7 +2472,7 @@ function app_api_customer_snapshot(array $user): array
 {
     $endpoint = app_config('billing_customer_overview_endpoint');
     if ($endpoint === '') {
-        return app_mock_customer_snapshot($user);
+        return app_demo_fixtures_enabled() ? app_mock_customer_snapshot($user) : [];
     }
 
     $response = http_post_json($endpoint, [
@@ -2154,14 +2481,16 @@ function app_api_customer_snapshot(array $user): array
         'token' => $user['token'] ?? '',
     ]);
 
-    return is_array($response['data'] ?? null) ? $response['data'] : app_mock_customer_snapshot($user);
+    return is_array($response['data'] ?? null)
+        ? $response['data']
+        : (app_demo_fixtures_enabled() ? app_mock_customer_snapshot($user) : []);
 }
 
 function app_api_employee_snapshot(array $user): array
 {
     $endpoint = app_config('billing_employee_overview_endpoint');
     if ($endpoint === '') {
-        return app_mock_employee_snapshot($user);
+        return app_demo_fixtures_enabled() ? app_mock_employee_snapshot($user) : [];
     }
 
     $response = http_post_json($endpoint, [
@@ -2170,7 +2499,9 @@ function app_api_employee_snapshot(array $user): array
         'token' => $user['token'] ?? '',
     ]);
 
-    $snapshot = is_array($response['data'] ?? null) ? $response['data'] : app_mock_employee_snapshot($user);
+    $snapshot = is_array($response['data'] ?? null)
+        ? $response['data']
+        : (app_demo_fixtures_enabled() ? app_mock_employee_snapshot($user) : []);
     $snapshot['olt_links'] = app_portal_employee_links($user);
 
     return $snapshot;
@@ -2205,9 +2536,16 @@ function app_mock_portal_login(string $role, string $login, string $password): ?
 
 function app_mock_customer_snapshot_data(array $user): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     app_session_boot();
     $data = app_mock_portal_data();
     $record = $data['customers'][$user['login']] ?? reset($data['customers']);
+    if (!is_array($record)) {
+        return [];
+    }
     $phoneOverride = $_SESSION['mock_customer_phone'][$record['id']] ?? null;
 
     $snapshot = $record['dashboard'];
@@ -2334,13 +2672,20 @@ function app_mock_customer_snapshot(array $user): array
         return app_db_customer_snapshot($user);
     }
 
-    return app_mock_customer_snapshot_data($user);
+    return app_demo_fixtures_enabled() ? app_mock_customer_snapshot_data($user) : [];
 }
 
 function app_mock_employee_snapshot_data(array $user): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $data = app_mock_portal_data();
     $record = $data['employees'][$user['login']] ?? reset($data['employees']);
+    if (!is_array($record)) {
+        return [];
+    }
     $snapshot = $record['dashboard'];
     $stats = app_portal_ticket_stats();
     $assignedTickets = array_filter(
@@ -2362,7 +2707,7 @@ function app_mock_employee_snapshot(array $user): array
         return app_db_employee_snapshot($user);
     }
 
-    return app_mock_employee_snapshot_data($user);
+    return app_demo_fixtures_enabled() ? app_mock_employee_snapshot_data($user) : [];
 }
 
 function app_base64url_encode(string $value): string
@@ -2415,6 +2760,10 @@ function app_portal_consume_token_jti(string $audience, string $jti, int $exp): 
 
 function app_portal_sign_token(array $payload, string $secret): string
 {
+    if ($secret === '') {
+        return '';
+    }
+
     $header = app_base64url_encode(json_encode(['alg' => 'HS256', 'typ' => 'JWT'], JSON_UNESCAPED_UNICODE) ?: '{}');
     $claims = app_base64url_encode(json_encode($payload, JSON_UNESCAPED_UNICODE) ?: '{}');
     $signature = hash_hmac('sha256', $header . '.' . $claims, $secret, true);
@@ -2424,12 +2773,23 @@ function app_portal_sign_token(array $payload, string $secret): string
 
 function app_portal_verify_token(string $token, string $secret, array $requirements = []): ?array
 {
+    if ($secret === '') {
+        return null;
+    }
+
     $parts = explode('.', $token);
     if (count($parts) !== 3) {
         return null;
     }
 
     [$header, $claims, $signature] = $parts;
+    $decodedHeader = json_decode(app_base64url_decode($header), true);
+    if (!is_array($decodedHeader)
+        || (string) ($decodedHeader['alg'] ?? '') !== 'HS256'
+        || (string) ($decodedHeader['typ'] ?? '') !== 'JWT') {
+        return null;
+    }
+
     $expected = app_base64url_encode(hash_hmac('sha256', $header . '.' . $claims, $secret, true));
     if (!hash_equals($expected, $signature)) {
         return null;
@@ -2467,78 +2827,8 @@ function app_portal_verify_token(string $token, string $secret, array $requireme
 
 function app_portal_close_ticket_by_token(string $token, string $reason, string $note): bool
 {
-    $secret = app_config('portal_ticket_close_secret', app_config('olt_sso_shared_secret', 'superoptic-ticket-secret'));
-    $payload = app_portal_verify_token($token, $secret, [
-        'iss' => app_config('portal_token_issuer', 'portal.superoptic.net'),
-        'aud' => app_config('portal_ticket_close_audience', 'portal.ticket.close'),
-        'type' => 'ticket-close',
-    ]);
-    if (!is_array($payload)) {
-        return false;
-    }
-
-    $ticketId = clean_text((string) ($payload['ticket_id'] ?? ''));
-    $reason = clean_text($reason);
-    $note = clean_text($note);
-    if ($ticketId === '' || !in_array($reason, app_portal_ticket_close_reasons(), true) || $note === '') {
-        return false;
-    }
-
-    if (app_db_available()) {
-        if (!app_portal_consume_token_jti(
-            (string) ($payload['aud'] ?? 'portal.ticket.close'),
-            (string) ($payload['jti'] ?? ''),
-            (int) ($payload['exp'] ?? 0)
-        )) {
-            return false;
-        }
-
-        $ticket = app_db_ticket_find($ticketId);
-        if ($ticket === null) {
-            return false;
-        }
-
-        if (!app_db_close_ticket($ticketId, $reason, $note)) {
-            return false;
-        }
-
-        foreach ((array) ($ticket['telegram_message_ids'] ?? []) as $messageId) {
-            app_telegram_delete_message((int) $messageId);
-        }
-
-        return true;
-    }
-
-    $records = app_portal_ticket_records();
-    foreach ($records as &$ticket) {
-        if (!is_array($ticket) || (string) ($ticket['id'] ?? '') !== $ticketId) {
-            continue;
-        }
-
-        if (!app_portal_consume_token_jti(
-            (string) ($payload['aud'] ?? 'portal.ticket.close'),
-            (string) ($payload['jti'] ?? ''),
-            (int) ($payload['exp'] ?? 0)
-        )) {
-            return false;
-        }
-
-        $ticket['status'] = 'Baglandi';
-        $ticket['updated_at'] = date('d.m.Y H:i');
-        $ticket['resolved_at'] = date('d.m.Y H:i');
-        $ticket['resolution_reason'] = $reason;
-        $ticket['resolution_note'] = $note;
-        $ticket['handled_by'] = (string) ($ticket['assigned_technician_name'] ?? '');
-
-        foreach (($ticket['telegram_message_ids'] ?? []) as $messageId) {
-            app_telegram_delete_message((int) $messageId);
-        }
-
-        $ticket['telegram_message_ids'] = [];
-        app_portal_ticket_write_records($records);
-        return true;
-    }
-
+    // Legacy token-only closure is intentionally disabled. Ticket closure must
+    // pass through ticket-resolution-lib.php with an authenticated actor.
     return false;
 }
 
@@ -2621,7 +2911,7 @@ function app_mgs_internal_service_online(?string $baseUrl = null): bool
 
 function app_mgs_service_shared_secret(): string
 {
-    return trim((string) app_config('mgs_service_shared_secret', 'local-service-secret-change-in-production'));
+    return app_environment_secret('MGS_SERVICE_SHARED_SECRET');
 }
 
 function app_mgs_service_headers(string $pathWithQuery, string $method = 'GET', string $body = ''): array
@@ -2696,7 +2986,8 @@ function app_mgs_service_native_fallback(string $path): ?array
 
     $devices = app_mgs_service_native_rows(
         $db,
-        'SELECT device_name AS name, device_type AS type, vendor, mgmt_ip AS ip, status
+        'SELECT device_key, device_name AS name, device_type AS type, vendor, model, ip_address AS ip,
+                management_network AS location, reachability_state, status
          FROM device_learning_profiles
          ORDER BY updated_at DESC, id DESC',
         [],
@@ -2805,7 +3096,7 @@ function app_mgs_service_native_fallback(string $path): ?array
     );
     $bots = app_mgs_service_native_rows(
         $db,
-        'SELECT bot_key, bot_name, status, purpose, destination_chat_id
+        'SELECT bot_key, display_name AS bot_name, status, purpose, destination_masked
          FROM telegram_bot_registry
          ORDER BY bot_key',
         [],
@@ -2902,17 +3193,19 @@ function app_mgs_service_get_json(string $path, array $query = [], int $timeout 
     $pathWithQuery = $cleanPath . $queryString;
     $baseUrl = app_mgs_internal_base_url();
     $url = $baseUrl . $pathWithQuery;
+    $native = app_mgs_service_native_fallback($cleanPath);
 
-    if (!app_mgs_internal_service_online($baseUrl)) {
-        $fallback = app_mgs_service_native_fallback($cleanPath);
-
+    if (is_array($native)) {
         return [
-            'ok' => is_array($fallback),
-            'status' => is_array($fallback) ? 200 : 0,
-            'data' => is_array($fallback) ? $fallback : [],
-            'error' => is_array($fallback) ? 'native_mysql_fallback' : 'mgs_service_unreachable',
+            'ok' => true,
+            'status' => 200,
+            'data' => $native,
+            'error' => '',
             'url' => $url,
         ];
+    }
+    if (!app_mgs_internal_service_online($baseUrl)) {
+        return ['ok' => false, 'status' => 0, 'data' => [], 'error' => 'service_unavailable', 'url' => $url];
     }
 
     $headers = app_mgs_service_headers($pathWithQuery, 'GET', '');
@@ -2927,13 +3220,11 @@ function app_mgs_service_get_json(string $path, array $query = [], int $timeout 
     }
 
     $ok = (bool) ($result['ok'] ?? false);
-    $fallback = !$ok ? app_mgs_service_native_fallback($cleanPath) : null;
-
     return [
-        'ok' => $ok || is_array($fallback),
-        'status' => $ok ? (int) ($result['status'] ?? 0) : (is_array($fallback) ? 200 : (int) ($result['status'] ?? 0)),
-        'data' => is_array($fallback) ? $fallback : $decoded,
-        'error' => $ok ? (string) ($decoded['error'] ?? '') : (is_array($fallback) ? 'native_mysql_fallback' : (string) ($decoded['error'] ?? '')),
+        'ok' => $ok,
+        'status' => (int) ($result['status'] ?? 0),
+        'data' => $decoded,
+        'error' => (string) ($decoded['error'] ?? ''),
         'url' => $url,
     ];
 }
@@ -2948,113 +3239,60 @@ function app_mgs_service_native_request_fallback(string $path, string $method, a
 
     $db = app_db();
     $user = app_portal_current_user();
-    $actorId = is_array($user) ? (int) ($user['id'] ?? 0) : null;
-    $actorName = is_array($user) ? (string) ($user['full_name'] ?? $user['login'] ?? 'system') : 'system';
-    $now = date('Y-m-d H:i:s');
-
-    $recordAction = static function (string $actionType, string $entityType, string $entityId, string $summary, array $extra = []) use ($db, $actorId, $actorName, $payload, $now): int {
-        $statement = $db->prepare(
-            'INSERT INTO mgs_operation_actions (
-                action_type, entity_type, entity_id, status, actor_account_id, actor_name, summary, payload_json, created_at, executed_at
-             ) VALUES (
-                :action_type, :entity_type, :entity_id, "executed", :actor_account_id, :actor_name, :summary, :payload_json, :created_at, :executed_at
-             )'
-        );
-        $statement->execute([
-            'action_type' => $actionType,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'actor_account_id' => $actorId ?: null,
-            'actor_name' => $actorName,
-            'summary' => mb_substr($summary, 0, 255),
-            'payload_json' => json_encode($payload + $extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            'created_at' => $now,
-            'executed_at' => $now,
-        ]);
-
-        return (int) $db->lastInsertId();
-    };
 
     try {
         if ($cleanPath === '/api/service/attendance/profiles') {
-            $userId = (string) ($payload['userId'] ?? '');
-            $actionId = $recordAction(
-                'attendance_profile_save',
-                'employee',
-                $userId,
-                'Attendance profile saved by native MySQL fallback',
-                ['source' => 'native_mysql_fallback']
-            );
-
+            if (!function_exists('app_mgs_save_hr_attendance_profile')) {
+                return null;
+            }
+            $native = app_mgs_save_hr_attendance_profile($payload, is_array($user) ? $user : [], $db);
             return [
-                'ok' => true,
-                'status' => 200,
+                'ok' => !empty($native['ok']),
+                'status' => !empty($native['ok']) ? 200 : 422,
                 'data' => [
-                    'id' => $actionId,
-                    'profile' => $payload,
-                    'source' => 'native_mysql_fallback',
+                    'profile' => is_array($native['profile'] ?? null) ? $native['profile'] : [],
+                    'source' => 'unified_portal',
                 ],
-                'error' => 'native_mysql_fallback',
+                'error' => (string) ($native['error'] ?? ''),
             ];
         }
 
         if ($cleanPath === '/api/service/telegram-bots/test-message') {
+            if (!function_exists('app_mgs_send_telegram_bot_test')) {
+                return null;
+            }
             $scope = clean_text((string) ($payload['scope'] ?? 'general'));
-            $actionId = $recordAction(
-                'telegram_bot_test_message',
-                'telegram_bot',
-                $scope,
-                'Telegram bot test message recorded by native MySQL fallback',
-                ['source' => 'native_mysql_fallback', 'dry_run' => true]
+            $message = clean_text((string) ($payload['text'] ?? ''));
+            $native = app_mgs_send_telegram_bot_test(
+                $scope !== '' ? $scope : 'general',
+                $message !== '' ? $message : 'SuperOptic test mesaji',
+                '',
+                true
             );
-
             return [
-                'ok' => true,
-                'status' => 200,
+                'ok' => !empty($native['ok']),
+                'status' => !empty($native['ok']) ? 200 : 422,
                 'data' => [
-                    'id' => $actionId,
-                    'queued' => true,
-                    'sent' => false,
-                    'source' => 'native_mysql_fallback',
+                    'sent' => !empty($native['sent']),
+                    'source' => 'unified_portal',
                 ],
-                'error' => 'native_mysql_fallback',
+                'error' => (string) ($native['error'] ?? $native['reason'] ?? ''),
             ];
         }
 
-        if (in_array($cleanPath, [
-            '/api/service/stock-movements',
-            '/api/service/inventory/handovers',
-            '/api/service/finance/entries',
-            '/api/service/technical-tasks',
-            '/api/service/network-scan',
-            '/api/service/devices',
-        ], true)) {
-            $entityType = match ($cleanPath) {
-                '/api/service/stock-movements', '/api/service/inventory/handovers' => 'inventory',
-                '/api/service/finance/entries' => 'finance',
-                '/api/service/technical-tasks' => 'technical_task',
-                '/api/service/network-scan', '/api/service/devices' => 'network_device',
-                default => 'operation',
-            };
-            $actionType = str_replace(['/', '-'], ['_', '_'], trim($cleanPath, '/'));
-            $entityId = clean_text((string) ($payload['sku'] ?? $payload['deviceIp'] ?? $payload['customerName'] ?? $payload['title'] ?? 'native'));
-            $actionId = $recordAction(
-                $actionType,
-                $entityType,
-                $entityId,
-                'Operation recorded by native MySQL fallback',
-                ['source' => 'native_mysql_fallback']
-            );
-
+        if ($cleanPath === '/api/service/technical-tasks') {
+            if (!function_exists('app_mgs_create_technical_task')) {
+                return null;
+            }
+            $native = app_mgs_create_technical_task($payload, is_array($user) ? $user : [], $db);
             return [
-                'ok' => true,
-                'status' => 200,
+                'ok' => !empty($native['ok']),
+                'status' => !empty($native['ok']) ? 200 : 422,
                 'data' => [
-                    'id' => $actionId,
-                    'recorded' => true,
-                    'source' => 'native_mysql_fallback',
+                    'ticket_no' => (string) ($native['ticket_no'] ?? ''),
+                    'source' => 'unified_portal',
                 ],
-                'error' => 'native_mysql_fallback',
+                'error' => (string) ($native['error'] ?? ''),
             ];
         }
     } catch (Throwable $exception) {
@@ -3062,7 +3300,7 @@ function app_mgs_service_native_request_fallback(string $path, string $method, a
             'ok' => false,
             'status' => 500,
             'data' => [],
-            'error' => 'native_mysql_fallback_failed: ' . $exception->getMessage(),
+            'error' => 'unified_portal_action_failed: ' . $exception->getMessage(),
         ];
     }
 
@@ -3084,23 +3322,23 @@ function app_mgs_service_request_json(string $path, string $method = 'POST', arr
         $normalizedMethod = 'POST';
     }
 
-    if (!app_mgs_internal_service_online($baseUrl)) {
-        $fallback = app_mgs_service_native_request_fallback($cleanPath, $normalizedMethod, $payload);
-        if (is_array($fallback)) {
-            return [
-                'ok' => (bool) ($fallback['ok'] ?? false),
-                'status' => (int) ($fallback['status'] ?? 0),
-                'data' => is_array($fallback['data'] ?? null) ? $fallback['data'] : [],
-                'error' => (string) ($fallback['error'] ?? 'native_mysql_fallback'),
-                'url' => $url,
-            ];
-        }
+    $native = app_mgs_service_native_request_fallback($cleanPath, $normalizedMethod, $payload);
+    if (is_array($native)) {
+        return [
+            'ok' => (bool) ($native['ok'] ?? false),
+            'status' => (int) ($native['status'] ?? 0),
+            'data' => is_array($native['data'] ?? null) ? $native['data'] : [],
+            'error' => (string) ($native['error'] ?? ''),
+            'url' => $url,
+        ];
+    }
 
+    if (!app_mgs_internal_service_online($baseUrl)) {
         return [
             'ok' => false,
             'status' => 0,
             'data' => [],
-            'error' => 'mgs_service_unreachable',
+            'error' => 'service_unavailable',
             'url' => $url,
         ];
     }
@@ -3120,17 +3358,6 @@ function app_mgs_service_request_json(string $path, string $method = 'POST', arr
     }
 
     $ok = (bool) ($result['ok'] ?? false);
-    $fallback = !$ok ? app_mgs_service_native_request_fallback($cleanPath, $normalizedMethod, $payload) : null;
-    if (is_array($fallback)) {
-        return [
-            'ok' => (bool) ($fallback['ok'] ?? false),
-            'status' => (int) ($fallback['status'] ?? 0),
-            'data' => is_array($fallback['data'] ?? null) ? $fallback['data'] : [],
-            'error' => (string) ($fallback['error'] ?? ''),
-            'url' => $url,
-        ];
-    }
-
     return [
         'ok' => $ok,
         'status' => (int) ($result['status'] ?? 0),
@@ -3309,7 +3536,7 @@ function app_portal_find_employee_link(array $user, string $slug): ?array
 function app_portal_olt_handoff_url(array $user, array $link): ?string
 {
     $entrypoint = app_config('olt_sso_entrypoint');
-    $secret = app_config('olt_sso_shared_secret');
+    $secret = app_environment_secret('OLT_SSO_SHARED_SECRET');
     $fallback = (string) ($link['fallback_url'] ?? '');
     $safeFallback = $fallback !== '' && $fallback !== '#'
         ? $fallback
@@ -3350,7 +3577,7 @@ function app_portal_billing_handoff_url(array $user): ?string
         : app_config('billing_customer_url', app_config('cabinet_url', ''));
 
     $entrypoint = app_config('billing_sso_entrypoint');
-    $secret = app_config('billing_sso_shared_secret');
+    $secret = app_environment_secret('BILLING_SSO_SHARED_SECRET');
     if ($entrypoint === '' || $secret === '') {
         return $fallbackUrl !== '' ? $fallbackUrl : null;
     }
@@ -3379,6 +3606,9 @@ function app_portal_billing_handoff_url(array $user): ?string
 
 function app_portal_login_destination(array $user): string
 {
+    if (!empty($user['must_change_password'])) {
+        return 'change-password.php';
+    }
     $role = (string) ($user['role'] ?? 'customer');
     $setting = $role === 'employee'
         ? app_config('portal_employee_landing', 'portal')
@@ -3393,7 +3623,12 @@ function app_portal_login_destination(array $user): string
 
 function app_mock_portal_data(): array
 {
-    return require __DIR__ . '/data/mock-portal.php';
+    if (!app_demo_fixtures_enabled()) {
+        return ['customers' => [], 'employees' => [], 'technicians' => []];
+    }
+
+    $data = require __DIR__ . '/data/mock-portal.php';
+    return is_array($data) ? $data : ['customers' => [], 'employees' => [], 'technicians' => []];
 }
 
 function app_azerbaijan_districts(): array

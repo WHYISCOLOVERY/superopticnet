@@ -4,6 +4,8 @@ declare(strict_types=1);
 require dirname(__DIR__, 2) . '/copilot-agent.php';
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, max-age=0');
+app_send_security_headers();
 
 app_session_boot();
 $user = app_portal_current_user();
@@ -13,7 +15,21 @@ if ($user === null || (string) ($user['role'] ?? '') !== 'employee') {
     exit;
 }
 
-$payload = json_decode((string) file_get_contents('php://input'), true);
+$contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+if ($contentLength > 8192) {
+    http_response_code(413);
+    echo json_encode(['ok' => false, 'reason' => 'request_too_large', 'text' => 'Sorgu hecmi limiti kecir.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+$rawPayload = (string) file_get_contents('php://input');
+if (strlen($rawPayload) > 8192) {
+    http_response_code(413);
+    echo json_encode(['ok' => false, 'reason' => 'request_too_large', 'text' => 'Sorgu hecmi limiti kecir.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+$payload = json_decode($rawPayload, true);
 if (!is_array($payload)) {
     $payload = $_POST;
 }
@@ -30,6 +46,21 @@ if ($question === '') {
     echo json_encode(['ok' => false, 'reason' => 'question_required', 'text' => 'Sual bosdur.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
+if (mb_strlen($question) > 2000) {
+    http_response_code(422);
+    echo json_encode(['ok' => false, 'reason' => 'question_too_long', 'text' => 'Sual 2000 simvoldan uzun ola bilmez.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+$rateScope = 'copilot:' . (int) ($user['id'] ?? 0) . ':' . app_client_ip();
+if (app_rate_limit_is_blocked($rateScope, 10, 60)) {
+    $retryAfter = app_rate_limit_retry_after($rateScope, 60);
+    header('Retry-After: ' . max(1, $retryAfter));
+    http_response_code(429);
+    echo json_encode(['ok' => false, 'reason' => 'rate_limited', 'text' => 'Cox sayda sorgu gonderildi. Bir qeder sonra yeniden yoxlayin.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+app_rate_limit_hit($rateScope, 60);
 
 $actorPayload = app_db_account_payload($user);
 if ($actorPayload === [] && (int) ($user['id'] ?? 0) > 0) {

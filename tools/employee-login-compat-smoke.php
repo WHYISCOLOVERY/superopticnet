@@ -18,9 +18,19 @@ function employee_login_compat_fail(string $message, int $code = 1): never
     exit($code);
 }
 
-$user = app_portal_login('employee', 'serdar@sp.az', 'serdar@sp.az');
-if (!is_array($user) || (string) ($user['login'] ?? '') !== 'serdar@sp.az') {
-    employee_login_compat_fail('serdar@sp.az employee login failed', 2);
+$login = app_environment_secret('SUPEROPTIC_TEST_LOGIN');
+$password = app_environment_secret('SUPEROPTIC_TEST_PASSWORD');
+if ($login === '' || $password === '') {
+    echo json_encode([
+        'status' => 'skipped',
+        'message' => 'SUPEROPTIC_TEST_LOGIN and SUPEROPTIC_TEST_PASSWORD are required.',
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL;
+    exit(0);
+}
+
+$user = app_portal_login('employee', $login, $password);
+if (!is_array($user) || (string) ($user['login'] ?? '') !== $login) {
+    employee_login_compat_fail('Environment-provided employee login failed', 2);
 }
 
 $session = app_db_user_session_payload($user);

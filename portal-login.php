@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/config.php';
+require_once __DIR__ . '/portal-security-lib.php';
 
 app_enforce_https((bool) app_setting('portal_force_https', true));
 app_session_boot();
@@ -9,7 +10,10 @@ $lang = app_lang();
 $status = $_GET['status'] ?? '';
 
 if (app_portal_current_user() !== null) {
-    header('Location: portal.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''));
+    $returnTo = (string) ($_SESSION['portal_login_return_to'] ?? '');
+    unset($_SESSION['portal_login_return_to']);
+    $returnTo = preg_match('/^technician-close\.php\?token=[A-Za-z0-9._%~-]+$/D', $returnTo) === 1 ? $returnTo : '';
+    header('Location: ' . ($returnTo !== '' ? $returnTo : ('portal.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''))));
     exit;
 }
 
@@ -21,6 +25,7 @@ $requestedRole = ($_POST['portal_role'] ?? $_GET['role'] ?? ($staffLoginEndpoint
 $selectedRole = $staffLoginEndpoint ? 'employee' : (($staffLoginEnabled && $requestedRole === 'employee') ? 'employee' : 'customer');
 $loginPath = $staffLoginEndpoint ? 'staff-login.php' : 'portal-login.php';
 $loginAction = $loginPath . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : '');
+$humanVerificationScope = $staffLoginEndpoint ? 'staff-login' : 'customer-login';
 $publicSiteUrl = app_config('public_site_url', 'index.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -42,6 +47,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ],
         ]);
         header('Location: ' . $loginPath . '?status=csrf_failed&role=' . rawurlencode($selectedRole) . '&lang=' . rawurlencode($lang));
+        exit;
+    }
+
+    $humanRateScope = 'portal-human-verification-ip:' . $clientIp;
+    $humanVerification = app_rate_limit_is_blocked($humanRateScope, 10, 600)
+        ? ['ok' => false, 'mode' => app_portal_human_verification_mode(), 'reason' => 'rate_limited']
+        : app_portal_human_verify($humanVerificationScope, $_POST);
+    if (empty($humanVerification['ok'])) {
+        app_rate_limit_hit($humanRateScope, 600);
+        app_record_security_event([
+            'event' => 'portal_login_human_verification_failed',
+            'status' => 'warning',
+            'role' => $selectedRole,
+            'login' => $login,
+            'meta' => [
+                'ip' => $clientIp,
+                'user_agent' => $userAgent,
+                'verification_mode' => (string) ($humanVerification['mode'] ?? ''),
+                'reason' => (string) ($humanVerification['reason'] ?? ''),
+            ],
+        ]);
+        header('Location: ' . $loginPath . '?status=captcha_failed&role=' . rawurlencode($selectedRole) . '&lang=' . rawurlencode($lang));
         exit;
     }
 
@@ -97,7 +124,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ],
         ]);
         app_portal_sign_in($user);
-        header('Location: ' . app_portal_login_destination($user) . ($lang !== 'az' ? (str_contains(app_portal_login_destination($user), '?') ? '&' : '?') . 'lang=' . rawurlencode($lang) : ''));
+        $returnTo = (string) ($_SESSION['portal_login_return_to'] ?? '');
+        unset($_SESSION['portal_login_return_to']);
+        $returnTo = preg_match('/^technician-close\.php\?token=[A-Za-z0-9._%~-]+$/D', $returnTo) === 1 ? $returnTo : '';
+        $destination = $returnTo !== '' ? $returnTo : app_portal_login_destination($user);
+        header('Location: ' . $destination . ($lang !== 'az' ? (str_contains($destination, '?') ? '&' : '?') . 'lang=' . rawurlencode($lang) : ''));
         exit;
     }
 
@@ -245,6 +276,8 @@ $flashMap['az'] = [
     'portal_login_failed' => ['type' => 'error', 'message' => 'Giris melumatlari tesdiqlenmedi. Zehmet olmasa yeniden yoxlayin.'],
     'portal_rate_limited' => ['type' => 'error', 'message' => 'Cox sayda ugursuz cehd oldu. 5 deqiqe sonra yeniden yoxlayin.'],
     'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu. Sehifeni yenileyib yeniden cehd edin.'],
+    'captcha_failed' => ['type' => 'error', 'message' => 'Men robot deyilem yoxlamasi tamamlanmadi. Yeniden cehd edin.'],
+    'customer_password_reset_success' => ['type' => 'success', 'message' => 'Sifreniz yenilendi. Yeni sifrenizle daxil ola bilersiniz.'],
     'auth_required' => ['type' => 'error', 'message' => 'Davam etmek ucun portala daxil olun.'],
     'logged_out' => ['type' => 'success', 'message' => 'Portal sessiyasi baglandi.'],
     'mygov_not_configured' => ['type' => 'error', 'message' => 'MyGov ID girisi hazirliq rejimindedir. API melumatlari qosulmadan aktiv edilmeyecek.'],
@@ -260,6 +293,7 @@ if (isset($flashMap[$lang][$status])) {
 if ($lang === 'ru' && isset($flashMap['az'][$status])) {
     $flash = $flashMap['az'][$status];
 }
+$humanChallenge = app_portal_human_challenge($humanVerificationScope);
 ?>
 <!DOCTYPE html>
 <html lang="<?= e($lang); ?>">
@@ -336,8 +370,16 @@ if ($lang === 'ru' && isset($flashMap['az'][$status])) {
                     <input id="portalPassword" type="password" name="password" placeholder="<?= e($copy['password_placeholder']); ?>" required>
                 </div>
 
+                <?php app_portal_render_human_challenge($humanChallenge); ?>
+
                 <button type="submit" class="portal-submit-btn"><?= e($copy['submit']); ?></button>
             </form>
+
+            <?php if (!$staffLoginEndpoint): ?>
+                <a class="portal-password-recovery-link" href="customer-password-recovery.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                    Şifrəni unutmusunuz? WhatsApp kodu ilə yeniləyin
+                </a>
+            <?php endif; ?>
 
             <?php if ($mygovReady): ?>
                 <div class="portal-sso-divider"><span>ve ya</span></div>
@@ -362,5 +404,8 @@ if ($lang === 'ru' && isset($flashMap['az'][$status])) {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php if (($humanChallenge['mode'] ?? '') === 'google'): ?>
+        <script src="https://www.google.com/recaptcha/api.js?hl=az" async defer></script>
+    <?php endif; ?>
 </body>
 </html>

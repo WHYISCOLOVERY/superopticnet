@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/billing-ui.php';
+require_once __DIR__ . '/design-system-lib.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -383,11 +384,12 @@ if (isset($flashMap[$lang][$status])) {
     <title>Super Optik Portal</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/design-system.css')); ?>">
 </head>
-<body class="portal-body">
+<body class="portal-body"<?= app_design_system_body_attribute(); ?>>
     <header class="portal-topbar">
         <div class="portal-topbar-inner">
-            <a href="index.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="portal-brand">
+            <a href="<?= e(app_config('public_site_url', 'https://superoptic.net/')); ?>" class="portal-brand">
                 <img src="images/favicon.png" alt="Super Optik Tech">
                 <span>Super Optik Portal</span>
             </a>
@@ -813,10 +815,16 @@ if (isset($flashMap[$lang][$status])) {
                         <small>Provider ayarlari ve emeliyyat jurnali ucun birbasa kecidler.</small>
                     </div>
                     <div class="portal-quick-links portal-grid-4">
-                        <a class="portal-link-card" href="message-center.php?view=overview<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>#sms-provider-settings">
+                        <a class="portal-link-card" href="message-center.php?view=settings<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>#sms-provider-settings">
                             <div>
-                                <strong>SMS provider ayari</strong>
-                                <span>Username ve password deyismek ucun</span>
+                                <strong>Mesaj kanallari</strong>
+                                <span>SMS, WhatsApp ve xarici gonderis hazirligini yoxla</span>
+                            </div>
+                        </a>
+                        <a class="portal-link-card" href="mgs-integration.php?view=bots<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">
+                            <div>
+                                <strong>Telegram botlari ve qruplar</strong>
+                                <span>Bot elave et, yenile, qrup Chat ID-sini ve hazirliq statusunu idare et</span>
                             </div>
                         </a>
                         <a class="portal-link-card" href="operation-logs.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
@@ -831,6 +839,14 @@ if (isset($flashMap[$lang][$status])) {
                                 <span>SMS, WhatsApp, Telegram ve app gonderim cehdleri</span>
                             </div>
                         </a>
+                        <?php if (app_portal_is_super_admin($user)): ?>
+                            <a class="portal-link-card" href="api-integrations.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                                <div>
+                                    <strong>API inteqrasiyalari</strong>
+                                    <span>Emanat, United Payment ve yeni provider acarlarini yarat, rotasiya et ve legv et</span>
+                                </div>
+                            </a>
+                        <?php endif; ?>
                     </div>
                 </section>
             <?php endif; ?>
@@ -998,5 +1014,6 @@ if (isset($flashMap[$lang][$status])) {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
 </body>
 </html>

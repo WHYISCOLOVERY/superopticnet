@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/config.php';
-require dirname(__DIR__) . '/audit-log-lib.php';
+require_once dirname(__DIR__) . '/audit-log-lib.php';
 
 $errors = [];
 $expect = static function (bool $condition, string $message) use (&$errors): void {
@@ -92,7 +92,15 @@ try {
     $expect(str_contains($adminUsersSource, 'operation-logs.php'), 'admin_users_journal_link_missing');
     $expect(str_contains($portalSource, 'operation-logs.php'), 'portal_journal_link_missing');
     $expect(str_contains($portalSource, 'Admin kecidleri'), 'portal_admin_shortcuts_missing');
-    $expect(str_contains($portalSource, 'SMS provider ayari'), 'portal_sms_provider_shortcut_missing');
+    // Label text was renamed to "Mesaj kanallari" when SMS/WhatsApp/external
+    // delivery readiness were consolidated under one shortcut card; check the
+    // stable route+anchor instead of the cosmetic label so relabeling doesn't
+    // keep breaking this contract.
+    $expect(
+        str_contains($portalSource, 'message-center.php?view=settings')
+            && str_contains($portalSource, '#sms-provider-settings'),
+        'portal_sms_provider_shortcut_missing'
+    );
 
     $superAdmin = app_db_account_by_login('s.abdullayev@superoptic.net');
     $expect(is_array($superAdmin), 'designated_super_admin_missing');

@@ -22,6 +22,17 @@ $employee = $db->query(
      ORDER BY FIELD(account_type, 'admin', 'operator', 'technician'), id ASC
      LIMIT 1"
 )?->fetch(PDO::FETCH_ASSOC);
+if (is_array($employee) && !app_portal_can_access_module(app_db_user_session_payload($employee), 'messaging')) {
+    $employee = null;
+    foreach (app_db_accounts(['role' => 'employee']) as $candidate) {
+        if (is_array($candidate)
+            && (int) ($candidate['is_active'] ?? 0) === 1
+            && app_portal_can_access_module(app_db_user_session_payload($candidate), 'messaging')) {
+            $employee = $candidate;
+            break;
+        }
+    }
+}
 if (!is_array($employee)) {
     fwrite(STDERR, "missing_employee_account\n");
     exit(3);
@@ -43,7 +54,7 @@ try {
         'human_problem' => 'Network-only alarm must not appear as a customer message.',
         'recommendation' => 'NOC audit bolmesinde saxla.',
         'telegram_bot_key' => 'network',
-    ], false, true);
+    ], false, true, app_noc_system_actor('olt-rule-worker'), $db);
     if (empty($alarm['ok'])) {
         throw new RuntimeException('alarm_not_recorded');
     }

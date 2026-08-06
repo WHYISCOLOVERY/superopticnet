@@ -3,8 +3,18 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
+require_once __DIR__ . '/finance-schema-lib.php';
+require_once __DIR__ . '/stage1-feature-lib.php';
 
 function app_finance_ensure_operational_schema(PDO $db): void
+{
+    app_finance_require_operational_schema($db);
+}
+
+/**
+ * @deprecated Schema changes belong to versioned CLI migrations.
+ */
+function app_finance_create_operational_schema_legacy(PDO $db): void
 {
     app_mgs_ensure_schema($db);
     app_audit_ensure_schema($db);
@@ -66,6 +76,175 @@ function app_finance_required_reason(mixed $value): string
 function app_finance_actor_can_write(array $actor): bool
 {
     return app_portal_is_admin($actor) || strtolower((string) ($actor['employee_role'] ?? '')) === 'finance';
+}
+
+function app_finance_stage1_schema_ready(PDO $db): bool
+{
+    // Called repeatedly per render; the schema cannot change mid-request, so the
+    // information_schema probe is memoized for the request.
+    static $ready = null;
+    if ($ready !== null) {
+        return $ready;
+    }
+    try {
+        $statement = $db->prepare(
+            'SELECT COUNT(*) FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = "finance_entries"
+                AND COLUMN_NAME IN (
+                    "source_type","source_id","employee_account_id","idempotency_key",
+                    "correlation_id","payload_json","updated_at"
+                )'
+        );
+        $statement->execute();
+        return $ready = ((int) $statement->fetchColumn() === 7);
+    } catch (Throwable) {
+        return $ready = false;
+    }
+}
+
+function app_finance_source_actor_can_write(array $actor, string $sourceType): bool
+{
+    if (app_finance_actor_can_write($actor)) {
+        return true;
+    }
+    return $sourceType === 'hr'
+        && strtolower(trim((string) ($actor['employee_role'] ?? ''))) === 'hr';
+}
+
+function app_finance_post_source_entry(PDO $db, array $input, array $actor): array
+{
+    app_finance_ensure_operational_schema($db);
+    if (!app_stage1_feature_enabled($db, 'stage1_finance_ledger')) {
+        return ['ok' => false, 'error' => 'stage1_finance_ledger_disabled'];
+    }
+    if (!app_finance_stage1_schema_ready($db)) {
+        return ['ok' => false, 'error' => 'stage1_finance_schema_not_migrated'];
+    }
+
+    $sourceType = strtolower(clean_text((string) ($input['source_type'] ?? '')));
+    $sourceId = clean_text((string) ($input['source_id'] ?? ''));
+    $idempotencyKey = clean_text((string) ($input['idempotency_key'] ?? ''));
+    if ($sourceType === '' || $sourceType === 'manual'
+        || preg_match('/^[a-z0-9_.:-]{2,64}$/', $sourceType) !== 1
+        || $sourceId === '' || $idempotencyKey === '') {
+        return ['ok' => false, 'error' => 'source_identity_required'];
+    }
+    if (!app_finance_source_actor_can_write($actor, $sourceType)) {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+
+    $type = strtolower(clean_text((string) ($input['entry_type'] ?? 'expense')));
+    $title = clean_text((string) ($input['title'] ?? ''));
+    $amount = round((float) ($input['amount'] ?? 0), 2);
+    $currency = strtoupper(clean_text((string) ($input['currency'] ?? 'AZN')));
+    $date = clean_text((string) ($input['transaction_date'] ?? date('Y-m-d')));
+    $parsedDate = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+    if (!in_array($type, ['income', 'expense'], true)
+        || $title === '' || $amount <= 0
+        || !$parsedDate || $parsedDate->format('Y-m-d') !== $date
+        || preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
+        return ['ok' => false, 'error' => 'invalid_entry'];
+    }
+
+    $ownsTransaction = !$db->inTransaction();
+    try {
+        if ($ownsTransaction) {
+            $db->beginTransaction();
+        }
+
+        $existing = $db->prepare(
+            'SELECT * FROM finance_entries
+              WHERE (source_type = :source_type AND source_id = :source_id)
+                 OR idempotency_key = :idempotency_key
+              ORDER BY id
+              LIMIT 1
+              FOR UPDATE'
+        );
+        $existing->execute([
+            'source_type' => $sourceType,
+            'source_id' => $sourceId,
+            'idempotency_key' => $idempotencyKey,
+        ]);
+        $existingRow = $existing->fetch(PDO::FETCH_ASSOC);
+        if (is_array($existingRow)) {
+            if ($ownsTransaction) {
+                $db->commit();
+            }
+            return ['ok' => true, 'id' => (int) $existingRow['id'], 'existing' => true, 'record' => $existingRow];
+        }
+
+        $payload = is_array($input['payload'] ?? null) ? $input['payload'] : [];
+        $record = [
+            'entry_type' => $type,
+            'title' => $title,
+            'category' => clean_text((string) ($input['category'] ?? 'system')) ?: 'system',
+            'amount' => $amount,
+            'currency' => $currency,
+            'transaction_date' => $date,
+            'branch_id' => (int) ($input['branch_id'] ?? 0) ?: null,
+            'counterparty_id' => (int) ($input['counterparty_id'] ?? 0) ?: null,
+            'payment_source' => clean_text((string) ($input['payment_source'] ?? $sourceType)) ?: $sourceType,
+            'reference_no' => clean_text((string) ($input['reference_no'] ?? '')) ?: null,
+            'note' => clean_text((string) ($input['note'] ?? '')) ?: null,
+            'source_type' => $sourceType,
+            'source_id' => mb_substr($sourceId, 0, 128),
+            'employee_account_id' => (int) ($input['employee_account_id'] ?? 0) ?: null,
+            'idempotency_key' => mb_substr($idempotencyKey, 0, 191),
+            'correlation_id' => mb_substr(
+                clean_text((string) ($input['correlation_id'] ?? app_request_correlation_id())),
+                0,
+                96
+            ),
+            'payload_json' => app_db_json_encode($payload),
+            'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system')),
+        ];
+        $insert = $db->prepare(
+            'INSERT INTO finance_entries (
+                entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,
+                payment_source,reference_no,note,status,source_type,source_id,employee_account_id,
+                idempotency_key,correlation_id,payload_json,created_by_account_id,created_by_name
+             ) VALUES (
+                :entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,
+                :payment_source,:reference_no,:note,"posted",:source_type,:source_id,:employee_account_id,
+                :idempotency_key,:correlation_id,:payload_json,:actor_id,:actor_name
+             )'
+        );
+        $insert->execute($record);
+        $id = (int) $db->lastInsertId();
+        $after = $db->prepare('SELECT * FROM finance_entries WHERE id = :id');
+        $after->execute(['id' => $id]);
+        $afterRow = $after->fetch(PDO::FETCH_ASSOC) ?: [];
+        app_finance_record_audit(
+            $db,
+            'finance_source_entry_created',
+            (string) $id,
+            $actor,
+            'Finance source ' . $type . ': ' . $title,
+            [
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+                'idempotency_key' => $idempotencyKey,
+                'correlation_id' => $record['correlation_id'],
+                'amount' => $amount,
+                'currency' => $currency,
+            ],
+            '',
+            null,
+            is_array($afterRow) ? $afterRow : [],
+            'entry'
+        );
+        if ($ownsTransaction) {
+            $db->commit();
+        }
+        return ['ok' => true, 'id' => $id, 'existing' => false, 'record' => $afterRow];
+    } catch (Throwable $exception) {
+        if ($ownsTransaction && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'source_entry_save_failed'];
+    }
 }
 
 function app_finance_normalized_name(string $value): string
@@ -141,7 +320,30 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
             unset($record['actor_id'],$record['actor_name']);$record['id']=$id;$statement->execute($record);$auditType='finance_entry_updated';
             $afterStatement=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$afterStatement->execute(['id'=>$id]);$after=$afterStatement->fetch(PDO::FETCH_ASSOC)?:[];
         } else {
-            $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,:actor_id,:actor_name)');
+            if (app_finance_stage1_schema_ready($db)
+                && app_stage1_feature_enabled($db, 'stage1_finance_ledger')) {
+                $idempotencyKey = mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191);
+                if ($idempotencyKey !== '') {
+                    $duplicate = $db->prepare('SELECT * FROM finance_entries WHERE idempotency_key = :idempotency_key LIMIT 1 FOR UPDATE');
+                    $duplicate->execute(['idempotency_key' => $idempotencyKey]);
+                    $duplicateRow = $duplicate->fetch(PDO::FETCH_ASSOC);
+                    if (is_array($duplicateRow)) {
+                        $db->commit();
+                        return ['ok'=>true,'id'=>(int)$duplicateRow['id'],'existing'=>true,'record'=>$duplicateRow];
+                    }
+                }
+                $record['idempotency_key'] = $idempotencyKey !== '' ? $idempotencyKey : null;
+                $record['employee_account_id'] = (int) ($input['employee_account_id'] ?? 0) ?: null;
+                $record['correlation_id'] = mb_substr(app_request_correlation_id(), 0, 96);
+                $record['payload_json'] = app_db_json_encode([
+                    'source' => 'manual',
+                    'category' => $record['category'],
+                    'payment_source' => $record['payment_source'],
+                ]);
+                $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,source_type,employee_account_id,idempotency_key,correlation_id,payload_json,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,"manual",:employee_account_id,:idempotency_key,:correlation_id,:payload_json,:actor_id,:actor_name)');
+            } else {
+                $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,:actor_id,:actor_name)');
+            }
             $statement->execute($record);$id=(int)$db->lastInsertId();$auditType='finance_entry_created';
             $existing=null;$afterStatement=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$afterStatement->execute(['id'=>$id]);$after=$afterStatement->fetch(PDO::FETCH_ASSOC)?:[];
         }

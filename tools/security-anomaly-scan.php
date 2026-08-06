@@ -29,6 +29,6 @@ foreach (array_slice($argv, 1) as $arg) {
     }
 }
 
-$result = app_security_anomaly_run(app_db(), $options);
+$result = app_security_anomaly_run(app_db(), $options, app_noc_system_actor('security-anomaly-worker'));
 echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
 exit(!empty($result['ok']) ? 0 : 1);

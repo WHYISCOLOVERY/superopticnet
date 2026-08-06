@@ -176,15 +176,18 @@ function campaign_scope_stats(): array
         'risk_high' => 0,
     ];
 
-    $riskRows = $db->query('SELECT payload_json FROM portal_accounts WHERE role = "customer"')->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    foreach ($riskRows as $row) {
-        $payload = app_db_json_decode((string) ($row['payload_json'] ?? ''), []);
-        $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
-        $profile = is_array($payload['profile'] ?? null) ? $payload['profile'] : [];
-        if ((int) ($billing['risk_score'] ?? $profile['risk_score'] ?? 0) >= 7) {
-            $stats['risk_high']++;
-        }
-    }
+    // Count high-risk customers in SQL instead of shipping every customer's
+    // payload_json to PHP and JSON-decoding 5k+ rows on each render (~2s).
+    // billing.risk_score takes precedence over profile.risk_score, default 0.
+    $stats['risk_high'] = (int) $db->query(
+        "SELECT COUNT(*) FROM portal_accounts
+          WHERE role = 'customer'
+            AND CAST(COALESCE(
+                    JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.billing.risk_score')),
+                    JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.profile.risk_score')),
+                    '0'
+                ) AS UNSIGNED) >= 7"
+    )->fetchColumn();
 
     return $stats;
 }

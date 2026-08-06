@@ -25,7 +25,7 @@ $actor = ['id' => 0, 'full_name' => 'modem_search_smoke'];
 $originalPathSetting = app_mgs_runtime_setting('monitor_management_vlan_connected', '0');
 app_mgs_set_runtime_setting('monitor_management_vlan_connected', '0', $actor, $db);
 
-$reply = app_mgs_build_modem_search_reply($query, true, $db);
+$reply = app_mgs_build_modem_search_reply($query, true, $db, app_noc_system_actor('modem-search-worker'));
 app_mgs_set_runtime_setting('monitor_management_vlan_connected', $originalPathSetting, $actor, $db);
 
 if (empty($reply['ok'])) {

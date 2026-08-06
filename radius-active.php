@@ -11,7 +11,7 @@ $statusFilter = clean_text((string) ($_GET['status'] ?? ''));
 $flash = null;
 $canRequestDisconnect = app_portal_is_admin($user);
 $radiusSettings = app_radius_settings();
-$disconnectWorkerReadiness = app_radius_disconnect_worker_readiness($radiusSettings);
+$disconnectWorkerReadiness = app_radius_disconnect_worker_readiness($radiusSettings, $db);
 
 $stats = ['total' => 0, 'active' => 0, 'online' => 0, 'traffic24' => 0.0];
 $rows = [];

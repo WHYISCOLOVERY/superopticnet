@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ümumi baxış - Billing</title>
+    <link rel="stylesheet" href="css/fontawesome-lite.css">
+    <link rel="stylesheet" href="css/portal.css?v=1784784173">
+    <link rel="stylesheet" href="css/operations-modules.css?v=1784223307">
+    <link rel="stylesheet" href="css/dashboard.css?v=1785001077">
+</head>
+<body class="portal-body">
+    <header class="portal-topbar">
+        <div class="portal-topbar-inner">
+            <a href="billing-dashboard.php" class="portal-brand">
+                <img src="images/favicon.png" alt="Super Optik Tech">
+                <span>Ümumi baxış</span>
+            </a>
+            <div class="portal-topbar-actions">
+                <a class="portal-ghost-btn portal-inline-link" href="portal.php">Esas portala qayit</a>
+            </div>
+        </div>
+    </header>
+        <nav class="billing-shell-nav portal-reveal" data-module-group-nav aria-label="SuperOptic MGS menyusu">
+                                <details class="billing-nav-group is-active-group" name="billing-nav" data-module-nav-group>
+                <summary class="billing-nav-title">
+                    <svg class="billing-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 15a8 8 0 1 1 16 0"/><path d="M12 15l4-5"/><path d="M7 15h.01M17 15h.01"/></svg>                    <span>Umumi baxis</span>
+                </summary>
+                <div class="billing-nav-links">
+                                            <a class="is-active" href="billing-dashboard.php">
+                            Umumi baxis                        </a>
+                                    </div>
+            </details>
+                                <details class="billing-nav-group" name="billing-nav" data-module-nav-group>
+                <summary class="billing-nav-title">
+                    <svg class="billing-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M3 20a5 5 0 0 1 10 0"/><path d="M11 20a5 5 0 0 1 10 0"/></svg>                    <span>Musteriler</span>
+                </summary>
+                <div class="billing-nav-links">
+                                            <a class="" href="billing-customers.php">
+                            Musteri siyahisi                        </a>
+                                            <a class="" href="billing-balances.php">
+                            Balans ve borclar                        </a>
+                                            <a class="" href="billing-services.php">
+                            Xidmet aktivliyi                        </a>
+                                    </div>
+            </details>
+                                <details class="billing-nav-group" name="billing-nav" data-module-nav-group>
+                <summary class="billing-nav-title">
+                    <svg class="billing-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h15a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3h12"/><path d="M16 13h5"/><path d="M18 13h.01"/></svg>                    <span>Billing</span>
+                </summary>
+                <div class="billing-nav-links">
+                                            <a class="" href="billing-packages.php">
+                            Paketler                        </a>
+                                            <a class="" href="billing-payments.php">
+                            Odenis siyahisi                        </a>
+                                            <a class="" href="billing-providers.php">
+                            Provider inteqrasiyalari                        </a>
+                                            <a class="" href="billing-documents.php">
+                            Billing senedleri                        </a>
+                                    </div>
+            </details>
+                                <details class="billing-nav-group" name="billing-nav" data-module-nav-group>
+                <summary class="billing-nav-title">
+                    <svg class="billing-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19h16"/><path d="M5 16l4-5 4 3 6-8"/><path d="M19 6v5h-5"/></svg>                    <span>Hesabat ve statistika</span>
+                </summary>
+                <div class="billing-nav-links">
+                                            <a class="" href="statistics-center.php">
+                            Hesabatlar                        </a>
+                                            <a class="" href="billing-statistics.php">
+                            Billing statistikasi                        </a>
+                                    </div>
+            </details>
+            </nav>
+    <script>
+    (() => {
+        const nav = document.currentScript.previousElementSibling;
+        if (!nav || !nav.classList || !nav.classList.contains('billing-shell-nav')) {
+            return;
+        }
+        const groups = Array.from(nav.querySelectorAll('.billing-nav-group'));
+        const closeAll = (except = null) => {
+            groups.forEach((group) => {
+                if (group !== except) {
+                    group.open = false;
+                }
+            });
+        };
+        const syncPopover = () => {
+            const openGroup = groups.find((group) => group.open);
+            nav.classList.toggle('has-open', Boolean(openGroup));
+            if (!openGroup) {
+                return;
+            }
+            const title = openGroup.querySelector('.billing-nav-title');
+            if (!title) {
+                return;
+            }
+            const rect = title.getBoundingClientRect();
+            const width = Math.max(220, Math.min(360, Math.round(rect.width)));
+            const top = Math.max(12, Math.min(window.innerHeight - 80, Math.round(rect.bottom + 8)));
+            const maxLeft = Math.max(12, window.innerWidth - width - 12);
+            const left = Math.max(12, Math.min(maxLeft, Math.round(rect.left)));
+            nav.style.setProperty('--billing-nav-popover-top', `${top}px`);
+            nav.style.setProperty('--billing-nav-popover-left', `${left}px`);
+            nav.style.setProperty('--billing-nav-popover-width', `${width}px`);
+        };
+        groups.forEach((group) => {
+            group.addEventListener('toggle', () => {
+                if (group.open) {
+                    closeAll(group);
+                }
+                requestAnimationFrame(syncPopover);
+            });
+        });
+        document.addEventListener('click', (event) => {
+            if (!nav.contains(event.target)) {
+                closeAll();
+                syncPopover();
+            }
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeAll();
+                syncPopover();
+            }
+        });
+        window.addEventListener('resize', syncPopover, {passive: true});
+        window.addEventListener('scroll', syncPopover, {passive: true});
+        syncPopover();
+
+    })();
+    </script>
+        <section class="billing-copilot-widget" data-copilot-widget aria-label="Superpilot">
+        <button class="billing-copilot-toggle" type="button" data-copilot-toggle>
+            <span>Superpilot</span>
+            <small>Analiz et</small>
+        </button>
+        <div class="billing-copilot-panel" data-copilot-panel hidden>
+            <div class="billing-copilot-head">
+                <div>
+                    <strong>Superpilot</strong>
+                    <small>Musteri, RADIUS, ticket, anbar, ONT ve emekdas sorgulari</small>
+                </div>
+                <button type="button" data-copilot-close aria-label="Bagla">x</button>
+            </div>
+            <div class="billing-copilot-log" data-copilot-log>
+                <div class="billing-copilot-msg is-bot">
+                    Numune: "hansi suallara cavab verirsen", "2320025 niye qirilir?", "2320025 odenisi neye cixib?",
+                    "bu modem kimdedir?", "Samir adinda hansi mallar var?", "NOC-da hansi cihazlar problemlidir?",
+                    "bos trafik saatlari ve traffic monetization teklifleri hansilardir?"
+                </div>
+            </div>
+            <form class="billing-copilot-form" data-copilot-form>
+                <input type="hidden" name="csrf_token" value="62c6e0f782d6c5a1428a50207c46b564a41206781edd6cca985daf4fd2485ef1">
+                <textarea name="question" rows="4" maxlength="1200" placeholder="Musteri kodu, SN/MAC, emekdas adi ve ya problem yazin..." required></textarea>
+                <button type="submit">Superpilotdan sorus</button>
+            </form>
+        </div>
+    </section>
+    <style>
+        .billing-copilot-widget{position:fixed;right:18px;bottom:18px;z-index:2147483000;font-family:inherit;pointer-events:none}
+        .billing-copilot-toggle{pointer-events:auto;border:0;border-radius:999px;background:#10233f;color:#fff;padding:12px 16px;box-shadow:0 18px 44px rgba(16,35,63,.24);font-weight:900;cursor:pointer;display:flex;gap:8px;align-items:center}
+        .billing-copilot-toggle small{color:#bde7ef;font-weight:700}
+        .billing-copilot-panel{pointer-events:auto;position:fixed;right:18px;top:96px;bottom:18px;width:min(390px,calc(100vw - 24px));max-height:calc(100vh - 114px);display:grid;grid-template-rows:auto 1fr auto;background:#fff;border:1px solid rgba(42,182,165,.24);border-radius:22px;box-shadow:0 24px 70px rgba(16,35,63,.28);overflow:hidden}
+        .billing-copilot-panel[hidden]{display:none!important}
+        .billing-copilot-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:14px 16px;background:linear-gradient(135deg,#10233f,#0f8a95);color:#fff}
+        .billing-copilot-head small{display:block;color:#d7f6fa;margin-top:4px}
+        .billing-copilot-head button{border:0;background:rgba(255,255,255,.14);color:#fff;border-radius:999px;width:30px;height:30px;cursor:pointer}
+        .billing-copilot-log{display:grid;gap:10px;align-content:start;min-height:0;overflow:auto;padding:14px;background:#f6fbfe}
+        .billing-copilot-msg{border-radius:15px;padding:11px 13px;line-height:1.42;white-space:pre-wrap;font-size:.91rem}
+        .billing-copilot-msg.is-bot{background:#fff;border:1px solid rgba(148,163,184,.28);color:#10233f}
+        .billing-copilot-msg.is-user{background:#e6f8f7;color:#063b42;margin-left:28px}
+        .billing-copilot-msg.is-error{background:#fff1f2;color:#991b1b;border:1px solid #fecdd3}
+        .billing-copilot-form{display:grid;gap:9px;padding:12px;background:#fff;border-top:1px solid rgba(148,163,184,.2)}
+        .billing-copilot-form textarea{width:100%;resize:vertical;min-height:78px;max-height:150px;border:1px solid rgba(148,163,184,.35);border-radius:15px;padding:11px;font:inherit}
+        .billing-copilot-form button{justify-self:end;border:0;border-radius:999px;background:#ff8a4c;color:#111827;padding:10px 16px;font-weight:900;cursor:pointer}
+        @media (max-width:680px){.billing-copilot-widget{position:static;display:flex;justify-content:flex-end;padding:10px 12px 16px}.billing-copilot-toggle{margin-left:auto;padding:10px 13px}.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(78vh,640px);border-radius:20px}.billing-copilot-head{padding:12px 14px}.billing-copilot-log{padding:12px}.billing-copilot-form textarea{min-height:72px;max-height:120px}.billing-copilot-form button{width:100%;justify-self:stretch}}
+    </style>
+    <script>
+    (() => {
+        const root = document.querySelector('[data-copilot-widget]');
+        if (!root || root.dataset.ready === '1') return;
+        root.dataset.ready = '1';
+        const panel = root.querySelector('[data-copilot-panel]');
+        const log = root.querySelector('[data-copilot-log]');
+        const form = root.querySelector('[data-copilot-form]');
+        const toggle = root.querySelector('[data-copilot-toggle]');
+        const close = root.querySelector('[data-copilot-close]');
+        const append = (text, type) => {
+            const item = document.createElement('div');
+            item.className = `billing-copilot-msg is-${type}`;
+            item.textContent = text;
+            log.appendChild(item);
+            log.scrollTop = log.scrollHeight;
+        };
+        toggle.addEventListener('click', () => {
+            panel.hidden = !panel.hidden;
+        });
+        close.addEventListener('click', () => {
+            panel.hidden = true;
+        });
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const data = new FormData(form);
+            const question = String(data.get('question') || '').trim();
+            if (!question) return;
+            append(question, 'user');
+            form.question.value = '';
+            try {
+                const response = await fetch('api/copilot/agent-chat.php', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        csrf_token: String(data.get('csrf_token') || ''),
+                        question,
+                    }),
+                });
+                const payload = await response.json();
+                append(String(payload.text || payload.reason || 'Cavab alina bilmedi.'), payload.ok ? 'bot' : 'error');
+            } catch (error) {
+                append('Superpilot API cavab vermedi: ' + (error && error.message ? error.message : 'network error'), 'error');
+            }
+        });
+    })();
+    </script>
+        <main class="portal-layout"><section class="portal-card portal-reveal billing-module" data-billing-module data-billing-section="overview">
+<div class="portal-card-head billing-module-head"><div><div class="billing-breadcrumb"><span>Portal</span><i class="fa-solid fa-chevron-right"></i><span>Billing</span><i class="fa-solid fa-chevron-right"></i><strong>Ümumi baxış</strong></div><h2>Ümumi baxış</h2><small>Müştəri, paket, balans, ödəniş və xidmət əməliyyatları ayrı iş axınlarında idarə olunur.</small></div></div>
+<div data-billing-content><div data-billing-overview class="dash">
+
+    <div class="dash-kpis">
+                                <div class="dash-kpi dash-tone-info" data-billing-kpi>
+                <span class="dash-kpi-icon"><i class="fa-solid fa-users"></i></span>
+                <span class="dash-kpi-body">
+                    <span class="dash-kpi-label">Cemi musteri</span>
+                    <strong class="dash-kpi-value">5 552</strong>
+                </span>
+            </div>
+                                <div class="dash-kpi dash-tone-success" data-billing-kpi>
+                <span class="dash-kpi-icon"><i class="fa-solid fa-user-check"></i></span>
+                <span class="dash-kpi-body">
+                    <span class="dash-kpi-label">Aktiv musteri</span>
+                    <strong class="dash-kpi-value">3 396</strong>
+                </span>
+            </div>
+                                <div class="dash-kpi dash-tone-primary" data-billing-kpi>
+                <span class="dash-kpi-icon"><i class="fa-solid fa-bolt"></i></span>
+                <span class="dash-kpi-body">
+                    <span class="dash-kpi-label">Aktiv xidmet</span>
+                    <strong class="dash-kpi-value">3 360</strong>
+                </span>
+            </div>
+                                <div class="dash-kpi dash-tone-warning" data-billing-kpi>
+                <span class="dash-kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                <span class="dash-kpi-body">
+                    <span class="dash-kpi-label">Riskli xidmet</span>
+                    <strong class="dash-kpi-value">2 195</strong>
+                </span>
+            </div>
+                                <div class="dash-kpi dash-tone-success" data-billing-kpi>
+                <span class="dash-kpi-icon"><i class="fa-solid fa-coins"></i></span>
+                <span class="dash-kpi-body">
+                    <span class="dash-kpi-label">Bugun odenis</span>
+                    <strong class="dash-kpi-value">18.00 AZN</strong>
+                </span>
+            </div>
+                                <div class="dash-kpi dash-tone-danger" data-billing-kpi>
+                <span class="dash-kpi-icon"><i class="fa-solid fa-scale-balanced"></i></span>
+                <span class="dash-kpi-body">
+                    <span class="dash-kpi-label">Musteri borcu</span>
+                    <strong class="dash-kpi-value">0.00 AZN</strong>
+                </span>
+            </div>
+            </div>
+
+    <div class="dash-charts">
+        <section class="dash-chart-card dash-chart-wide">
+            <div class="dash-chart-head">
+                <div><strong>Son 14 gunun odenisleri</strong><small>Gunluk yigim dinamikasi</small></div>
+                <span class="dash-chip">14 gun</span>
+            </div>
+            <svg class="chart-svg" viewBox="0 0 320 120" role="img" preserveAspectRatio="none" style="height:160px" xmlns="http://www.w3.org/2000/svg"><line x1="0" y1="100" x2="320" y2="100" class="chart-baseline" /><rect x="4.34" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>12.07: 0.00 AZN</title></rect><rect x="27.2" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>13.07: 0.00 AZN</title></rect><rect x="50.06" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>14.07: 0.00 AZN</title></rect><rect x="72.91" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>15.07: 0.00 AZN</title></rect><rect x="95.77" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>16.07: 0.00 AZN</title></rect><rect x="118.63" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>17.07: 0.00 AZN</title></rect><rect x="141.49" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>18.07: 0.00 AZN</title></rect><rect x="164.34" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>19.07: 0.00 AZN</title></rect><rect x="187.2" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>20.07: 0.00 AZN</title></rect><rect x="210.06" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>21.07: 0.00 AZN</title></rect><rect x="232.91" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>22.07: 0.00 AZN</title></rect><rect x="255.77" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>23.07: 0.00 AZN</title></rect><rect x="278.63" y="100" width="14.17" height="0" rx="2.5" fill="var(--ui-color-primary, #087783)"><title>24.07: 0.00 AZN</title></rect><rect x="301.49" y="12" width="14.17" height="88" rx="2.5" fill="var(--ui-color-accent, #f28a45)"><title>25.07: 18.00 AZN</title></rect><text x="11.43" y="114" text-anchor="middle" class="chart-axis">12.07</text><text x="57.14" y="114" text-anchor="middle" class="chart-axis">14.07</text><text x="102.86" y="114" text-anchor="middle" class="chart-axis">16.07</text><text x="148.57" y="114" text-anchor="middle" class="chart-axis">18.07</text><text x="194.29" y="114" text-anchor="middle" class="chart-axis">20.07</text><text x="240" y="114" text-anchor="middle" class="chart-axis">22.07</text><text x="285.71" y="114" text-anchor="middle" class="chart-axis">24.07</text><text x="308.57" y="114" text-anchor="middle" class="chart-axis">25.07</text></svg>        </section>
+        <section class="dash-chart-card">
+            <div class="dash-chart-head"><div><strong>Xidmet statusu</strong><small>Aktiv / riskli</small></div></div>
+            <div class="chart-donut"><svg class="chart-donut-svg" viewBox="0 0 120 120" role="img" xmlns="http://www.w3.org/2000/svg"><circle cx="60" cy="60" r="46" fill="none" stroke="var(--ui-color-surface-muted, #eef2f5)" stroke-width="16" /><circle cx="60" cy="60" r="46" fill="none" stroke="var(--ui-color-success, #16754a)" stroke-width="16" stroke-dasharray="174.82 114.21" stroke-dashoffset="-0" transform="rotate(-90 60 60)"><title>Aktiv: 3 360</title></circle><circle cx="60" cy="60" r="46" fill="none" stroke="var(--ui-color-warning, #9a5a0a)" stroke-width="16" stroke-dasharray="114.21 174.82" stroke-dashoffset="-174.82" transform="rotate(-90 60 60)"><title>Riskli: 2 195</title></circle><text x="60" y="58" text-anchor="middle" class="chart-donut-value">5 555</text><text x="60" y="74" text-anchor="middle" class="chart-donut-label">Xidmet</text></svg><ul class="chart-legend"><li><span class="chart-dot" style="background:var(--ui-color-success, #16754a)"></span>Aktiv <b>3 360</b> <em>60%</em></li><li><span class="chart-dot" style="background:var(--ui-color-warning, #9a5a0a)"></span>Riskli <b>2 195</b> <em>40%</em></li></ul></div>        </section>
+        <section class="dash-chart-card">
+            <div class="dash-chart-head"><div><strong>Musteri statusu</strong><small>Aktiv / passiv</small></div></div>
+            <div class="chart-donut"><svg class="chart-donut-svg" viewBox="0 0 120 120" role="img" xmlns="http://www.w3.org/2000/svg"><circle cx="60" cy="60" r="46" fill="none" stroke="var(--ui-color-surface-muted, #eef2f5)" stroke-width="16" /><circle cx="60" cy="60" r="46" fill="none" stroke="var(--ui-color-primary, #087783)" stroke-width="16" stroke-dasharray="176.79 112.24" stroke-dashoffset="-0" transform="rotate(-90 60 60)"><title>Aktiv: 3 396</title></circle><circle cx="60" cy="60" r="46" fill="none" stroke="var(--ui-color-neutral, #64748b)" stroke-width="16" stroke-dasharray="112.24 176.79" stroke-dashoffset="-176.79" transform="rotate(-90 60 60)"><title>Passiv: 2 156</title></circle><text x="60" y="58" text-anchor="middle" class="chart-donut-value">5 552</text><text x="60" y="74" text-anchor="middle" class="chart-donut-label">Musteri</text></svg><ul class="chart-legend"><li><span class="chart-dot" style="background:var(--ui-color-primary, #087783)"></span>Aktiv <b>3 396</b> <em>61%</em></li><li><span class="chart-dot" style="background:var(--ui-color-neutral, #64748b)"></span>Passiv <b>2 156</b> <em>39%</em></li></ul></div>        </section>
+    </div>
+
+    <div class="dash-actions">
+        <a class="portal-primary-btn portal-inline-link" href="billing-customers.php"><i class="fa-solid fa-users"></i> Musteriler</a>
+        <a class="portal-ghost-btn portal-inline-link" href="billing-payments.php"><i class="fa-solid fa-coins"></i> Odenisler</a>
+        <a class="portal-ghost-btn portal-inline-link" href="billing-balances.php"><i class="fa-solid fa-scale-balanced"></i> Balans ve borclar</a>
+        <a class="portal-ghost-btn portal-inline-link" href="billing-statistics.php"><i class="fa-solid fa-chart-line"></i> Statistika</a>
+    </div>
+
+    <div class="dash-panels">
+        <section class="dash-panel">
+            <div class="dash-panel-head">
+                <div><strong>Diqqet teleb edenler</strong><small>Borc ve yaxinlasan servis bitmeleri</small></div>
+                <a href="billing-balances.php" class="portal-ghost-btn portal-inline-link">Hamisi</a>
+            </div>
+            <div class="portal-table-wrap">
+                <table class="portal-table dash-table">
+                    <thead><tr><th>Abonent</th><th>Borc</th><th>Bitme</th></tr></thead>
+                    <tbody>
+                                                    <tr data-billing-row>
+                                <td><strong>SMOKE-EDIT-082447</strong><br><small>Stable Edit Smoke Updated</small></td>
+                                <td><span class="dash-badge dash-badge-danger">0.00 AZN</span></td>
+                                <td>2026-08-01 08:24:49</td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>SMOKE-CREATE-082500</strong><br><small>Stable Create Smoke</small></td>
+                                <td><span class="dash-badge dash-badge-danger">0.00 AZN</span></td>
+                                <td>2026-08-01 08:25:04</td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>SMOKE-EDIT-082515</strong><br><small>Stable Edit Smoke Updated</small></td>
+                                <td><span class="dash-badge dash-badge-danger">0.00 AZN</span></td>
+                                <td>2026-08-01 08:25:18</td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>SMOKE-CREATE-082527</strong><br><small>Stable Create Smoke</small></td>
+                                <td><span class="dash-badge dash-badge-danger">0.00 AZN</span></td>
+                                <td>2026-08-01 08:25:29</td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>SMOKE-EDIT-083119</strong><br><small>Stable Edit Smoke Updated</small></td>
+                                <td><span class="dash-badge dash-badge-danger">0.00 AZN</span></td>
+                                <td>2026-08-01 08:31:24</td>
+                            </tr>
+                                                                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="dash-panel">
+            <div class="dash-panel-head">
+                <div><strong>Son odenisler</strong><small>Billing daxilinde son qeydler</small></div>
+                <a href="billing-payments.php" class="portal-ghost-btn portal-inline-link">Hamisi</a>
+            </div>
+            <div class="portal-table-wrap">
+                <table class="portal-table dash-table">
+                    <thead><tr><th>Abonent</th><th>Provider</th><th>Mebleg</th></tr></thead>
+                    <tbody>
+                                                    <tr data-billing-row>
+                                <td><strong>UP-SMOKE-205729498</strong><br><small>Up Provider Smoke</small></td>
+                                <td><span class="dash-badge">unitedpayment:Test</span></td>
+                                <td><span class="dash-badge dash-badge-success">18.00 AZN</span></td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>2320773</strong><br><small>ZENFİRA ORUCOVA ABDULRƏHMAN</small></td>
+                                <td><span class="dash-badge">hesab.az</span></td>
+                                <td><span class="dash-badge dash-badge-success">20.00 AZN</span></td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>3001269</strong><br><small>MƏMMƏDOV ELVİN KAZIM</small></td>
+                                <td><span class="dash-badge">million</span></td>
+                                <td><span class="dash-badge dash-badge-success">20.00 AZN</span></td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>2320598</strong><br><small>ƏBÜLFƏZ ŞÜKÜROV FÜZULİ</small></td>
+                                <td><span class="dash-badge">kapitalbank</span></td>
+                                <td><span class="dash-badge dash-badge-success">20.00 AZN</span></td>
+                            </tr>
+                                                    <tr data-billing-row>
+                                <td><strong>3001359</strong><br><small>ƏSGƏROVA GÜNAY RAQİF</small></td>
+                                <td><span class="dash-badge">million</span></td>
+                                <td><span class="dash-badge dash-badge-success">18.00 AZN</span></td>
+                            </tr>
+                                                                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</div>
+</div>
+</section>
+</main>
+<script src="script/portal.js?v=1784784174"></script>
+<script>
+(() => {
+    const module = document.querySelector('[data-billing-module]');
+    if (!module || !window.fetch) return;
+    let controller = null;
+    let filterTimer = null;
+    const buildFormUrl = form => {
+        const url = new URL(form.action || window.location.href, window.location.href);
+        new FormData(form).forEach((value, key) => url.searchParams.set(key, value));
+        return url;
+    };
+    const load = async (url, push = true) => {
+        if (controller) controller.abort();
+        controller = new AbortController();
+        module.classList.add('is-loading');
+        const target = new URL(url, window.location.href);
+        const request = new URL('billing-module-partial.php', window.location.href);
+        target.searchParams.forEach((value, key) => request.searchParams.set(key, value));
+        request.searchParams.set('billing_section', module.dataset.billingSection || 'overview');
+        request.searchParams.set('billing_fragment', 'content');
+        try {
+            const response = await fetch(request, {headers: {'X-Requested-With': 'fetch'}, signal: controller.signal});
+            if (!response.ok) throw new Error('Billing partial request failed');
+            const content = module.querySelector('[data-billing-content]');
+            if (content) content.innerHTML = await response.text();
+            if (push === 'replace') history.replaceState({billing: true}, '', target);
+            else if (push) history.pushState({billing: true}, '', target);
+        } catch (error) {
+            if (error.name !== 'AbortError') window.location.assign(target);
+        } finally {
+            module.classList.remove('is-loading');
+        }
+    };
+    const loadStatistics = async (form, push = true) => {
+        const target = buildFormUrl(form);
+        const request = new URL('billing-module-partial.php', window.location.href);
+        target.searchParams.forEach((value, key) => request.searchParams.set(key, value));
+        request.searchParams.set('billing_section', 'statistics');
+        request.searchParams.set('billing_fragment', 'statistics-results');
+        const status = form.closest('[data-billing-statistics]')?.querySelector('[data-billing-statistics-status]');
+        const current = module.querySelector('[data-billing-statistics-results]');
+        if (!current) {
+            load(target, push);
+            return;
+        }
+        if (controller) controller.abort();
+        controller = new AbortController();
+        current.classList.add('is-loading');
+        if (status) status.textContent = 'Chart yenilenir...';
+        try {
+            const response = await fetch(request, {headers: {'X-Requested-With': 'fetch'}, signal: controller.signal});
+            if (!response.ok) throw new Error('Billing statistics request failed');
+            current.outerHTML = await response.text();
+            if (status) status.textContent = 'Chart yenilendi.';
+            if (push === 'replace') history.replaceState({billing: true, billingStatistics: true}, '', target);
+            else if (push) history.pushState({billing: true, billingStatistics: true}, '', target);
+        } catch (error) {
+            if (error.name !== 'AbortError') window.location.assign(target);
+        }
+    };
+    module.addEventListener('submit', event => {
+        const form = event.target.closest('[data-billing-filter], [data-billing-statistics-form]');
+        if (!form) return;
+        event.preventDefault();
+        const historyMode = form.dataset.filterHistory === 'replace' ? 'replace' : true;
+        delete form.dataset.filterHistory;
+        if (form.matches('[data-billing-statistics-form]')) {
+            loadStatistics(form, historyMode);
+            return;
+        }
+        load(buildFormUrl(form), historyMode);
+    });
+    const scheduleFilter = (field, delay) => {
+        const form = field.closest('[data-billing-filter], [data-billing-statistics-form]');
+        if (!form) return;
+        window.clearTimeout(filterTimer);
+        filterTimer = window.setTimeout(() => {
+            form.dataset.filterHistory = 'replace';
+            form.requestSubmit();
+        }, delay);
+    };
+    module.addEventListener('input', event => {
+        const field = event.target.closest('[data-billing-filter] input, [data-billing-filter] textarea, [data-billing-statistics-form] input');
+        const isTextFilter = field && (field.matches('textarea') || ['search', 'text'].includes(field.type));
+        if (!isTextFilter) return;
+        scheduleFilter(field, 320);
+    });
+    module.addEventListener('change', event => {
+        const field = event.target.closest('[data-billing-filter] select, [data-billing-filter] input, [data-billing-statistics-form] select, [data-billing-statistics-form] input');
+        if (!field) return;
+        scheduleFilter(field, 0);
+    });
+    module.addEventListener('click', event => {
+        const link = event.target.closest('[data-billing-page]');
+        if (!link) return;
+        event.preventDefault();
+        load(link.href);
+    });
+    window.addEventListener('popstate', () => load(window.location.href, false));
+})();
+</script>
+</body>
+</html>

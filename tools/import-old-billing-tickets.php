@@ -587,6 +587,8 @@ $summary = [
     'updated' => 0,
     'skipped' => 0,
     'linked_customers' => 0,
+    'unlinked_customers' => 0,
+    'codes_without_local_customer' => 0,
     'linked_employees' => 0,
     'open' => 0,
     'closed' => 0,
@@ -613,6 +615,11 @@ for ($start = 0; $start < $target; $start += $batch) {
         $summary['processed']++;
         if (!empty($ticket['customer_account_id'])) {
             $summary['linked_customers']++;
+        } else {
+            $summary['unlinked_customers']++;
+            if (trim((string) ($ticket['subscriber_code'] ?? '')) !== '') {
+                $summary['codes_without_local_customer']++;
+            }
         }
         if (!empty($ticket['assigned_technician_account_id'])) {
             $summary['linked_employees']++;

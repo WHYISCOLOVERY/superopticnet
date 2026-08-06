@@ -93,10 +93,28 @@ function app_statistics_center_context(PDO $db, array $user, array $query = []):
     if ($selectedMetric !== 'all' && !isset($allowedMetrics[$selectedMetric])) {
         $selectedMetric = 'all';
     }
+    if (empty($dates['valid'])) {
+        return [
+            'generated_at' => date(DATE_ATOM),
+            'range' => (string) ($dates['range'] ?? 'custom'),
+            'start_date' => '',
+            'end_date' => '',
+            'timezone' => (string) ($dates['timezone'] ?? app_timezone()),
+            'status' => 'error',
+            'error' => (string) ($dates['error'] ?? 'invalid_date_range'),
+            'selected_metric' => $selectedMetric,
+            'available_metrics' => $allowedMetrics,
+            'datasets' => [],
+            'kpis' => [],
+            'is_admin' => app_statistics_user_is_admin($user),
+            'source_notes' => [],
+            'data_quality' => [],
+        ];
+    }
 
     $params = [
-        'start_at' => $dates['start_date'] . ' 00:00:00',
-        'end_at' => date('Y-m-d 00:00:00', strtotime($dates['end_date'] . ' +1 day')),
+        'start_at' => $dates['start_at'],
+        'end_at' => $dates['operational_end_at_exclusive'],
     ];
     $canFinance = app_statistics_user_is_admin($user) || app_portal_can_access_module($user, 'finance');
     $canBilling = app_statistics_user_is_admin($user) || app_portal_can_access_module($user, 'billing');
@@ -146,8 +164,7 @@ function app_statistics_center_context(PDO $db, array $user, array $query = []):
                FROM communication_messages
               WHERE created_at >= :start_at AND created_at < :end_at
               GROUP BY COALESCE(NULLIF(channel, ""), "Digər")
-              ORDER BY value_total DESC
-              LIMIT 12',
+              ORDER BY value_total DESC',
             $params
         );
     }
@@ -180,37 +197,58 @@ function app_statistics_center_context(PDO $db, array $user, array $query = []):
     }
 
     foreach ($allowedMetrics as $key => $metric) {
+        $allRows = (array) ($datasets[$key] ?? []);
+        $totalValue = array_sum(array_column($allRows, 'value'));
+        $totalCount = array_sum(array_column($allRows, 'count'));
         $datasets[$key] = [
             'key' => $key,
             'title' => (string) $metric['label'],
             'kind' => (string) $metric['kind'],
             'icon' => (string) $metric['icon'],
-            'rows' => array_slice((array) ($datasets[$key] ?? []), 0, 12),
+            'rows' => array_slice($allRows, 0, 12),
+            'total_value' => $totalValue,
+            'total_count' => $totalCount,
+            'truncated' => count($allRows) > 12,
         ];
     }
 
     $kpis = [];
     foreach ($datasets as $key => $dataset) {
-        $rows = (array) ($dataset['rows'] ?? []);
         $kpis[$key] = [
             'key' => $key,
             'label' => (string) ($dataset['title'] ?? $key),
             'kind' => (string) ($dataset['kind'] ?? 'count'),
-            'value' => array_sum(array_column($rows, 'value')),
-            'count' => array_sum(array_column($rows, 'count')),
+            'value' => (float) ($dataset['total_value'] ?? 0),
+            'count' => (int) ($dataset['total_count'] ?? 0),
         ];
     }
 
     return [
         'generated_at' => date(DATE_ATOM),
+        'status' => 'ok',
         'range' => $dates['range'],
         'start_date' => $dates['start_date'],
         'end_date' => $dates['end_date'],
+        'timezone' => $dates['timezone'],
+        'semantic' => $dates['semantic'],
+        'as_of_at' => $dates['as_of_at'],
         'selected_metric' => $selectedMetric,
         'available_metrics' => $allowedMetrics,
         'datasets' => $datasets,
         'kpis' => $kpis,
         'is_admin' => app_statistics_user_is_admin($user),
+        'data_quality' => [
+            'future_billing_payment_rows' => (int) (
+                $finance['data_quality']['future_billing_payment_rows']
+                ?? $billing['data_quality']['future_billing_payment_rows']
+                ?? 0
+            ),
+            'future_rows_excluded' => (bool) (
+                $finance['data_quality']['future_rows_excluded']
+                ?? $billing['data_quality']['future_rows_excluded']
+                ?? false
+            ),
+        ],
         'source_notes' => [
             'income' => $canFinance ? 'Billing ödənişləri və təsdiqlənmiş əl ilə daxil edilən gəlirlər.' : 'Billing ödəniş qeydləri.',
             'expenses' => 'Maliyyə modulunda xərc kimi qeydə alınmış əməliyyatlar.',

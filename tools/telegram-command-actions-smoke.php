@@ -57,11 +57,18 @@ try {
 
     $telegramChatId = '-1003976043672';
     $telegramUserId = '777' . substr($stamp, -6);
+    // employee_role must be one both the legacy role-allowlist
+    // (app_copilot_agent_action_allowed) and the Stage 5 module gate
+    // (app_portal_employee_module_keys, config.php) grant for BOTH actions this
+    // test exercises: send_customer_message needs the "messaging" module,
+    // ont_restart_request needs "network". Plain "operator" only has
+    // "messaging" under the current module map (config.php ~1384), so a
+    // restart request is correctly denied for that role. "noc" has both.
     $db->prepare(
         'INSERT INTO portal_accounts (
             login, password_hash, role, account_type, employee_role, full_name, status, is_active, payload_json
          ) VALUES (
-            :login, :password_hash, "employee", "operator", "operator", "Telegram Smoke Operator", "Aktiv", 1, :payload_json
+            :login, :password_hash, "employee", "operator", "noc", "Telegram Smoke NOC", "Aktiv", 1, :payload_json
          )'
     )->execute([
         'login' => 'tg-operator-' . $stamp,

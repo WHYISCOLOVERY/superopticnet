@@ -163,7 +163,62 @@ function Start-WhatsappBridge {
     }
 
     Write-StackLog "Starting WhatsApp bridge on port $WhatsappBridgePort"
-    Start-Process -FilePath $node.Source -ArgumentList "server.js" -WorkingDirectory $WhatsappBridgeRoot -WindowStyle Hidden
+    $logDir = Join-Path $WebRoot "tmp"
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    Start-Process `
+        -FilePath $node.Source `
+        -ArgumentList "server.js" `
+        -WorkingDirectory $WhatsappBridgeRoot `
+        -RedirectStandardOutput (Join-Path $logDir "whatsapp-bridge.out.log") `
+        -RedirectStandardError (Join-Path $logDir "whatsapp-bridge.err.log") `
+        -WindowStyle Hidden
+}
+
+function Sync-WhatsappPairingWorkerToken {
+    if ($SkipWhatsappBridge) {
+        return
+    }
+
+    $php = Join-Path $XamppRoot "php\php.exe"
+    $configureScript = Join-Path $WebRoot "tools\configure-whatsapp-pairing-worker.php"
+    $localConfig = Join-Path $WebRoot "config.local.php"
+    if (!(Test-Path -LiteralPath $php) -or !(Test-Path -LiteralPath $configureScript)) {
+        Write-StackLog "WhatsApp pairing token sync skipped; PHP or configure tool is missing"
+        return
+    }
+    if ($DryRun) {
+        Write-StackLog "[DRY-RUN] Sync WhatsApp pairing-worker token"
+        return
+    }
+
+    $previousDbPass = [Environment]::GetEnvironmentVariable("DB_PASS", "Process")
+    try {
+        if ([string]::IsNullOrWhiteSpace($previousDbPass) -and (Test-Path -LiteralPath $localConfig)) {
+            $configPath = $localConfig.Replace('\', '/').Replace("'", "\\'")
+            $dbPass = & $php -r "`$c=require '$configPath';fwrite(STDOUT,(string)(`$c['db_pass']??''));"
+            if (-not [string]::IsNullOrWhiteSpace([string]$dbPass)) {
+                $env:DB_PASS = [string]$dbPass
+            }
+        }
+
+        for ($attempt = 1; $attempt -le 15; $attempt++) {
+            $output = & $php $configureScript 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-StackLog "WhatsApp pairing-worker token synchronized"
+                return
+            }
+            Start-Sleep -Seconds 1
+        }
+        Write-StackLog "WhatsApp pairing-worker token sync did not complete"
+    } finally {
+        if ([string]::IsNullOrWhiteSpace($previousDbPass)) {
+            Remove-Item Env:DB_PASS -ErrorAction SilentlyContinue
+        } else {
+            $env:DB_PASS = $previousDbPass
+        }
+        $dbPass = $null
+        $output = $null
+    }
 }
 
 function Start-WorkerSupervisor {
@@ -197,6 +252,7 @@ Write-StackLog "SuperOptic stack autostart begin"
 Start-ServiceOrBatch -Label "Apache" -ServiceNames @("Apache2.4", "apache2.4") -BatchPath (Join-Path $XamppRoot "apache_start.bat") -Port $ApachePort
 Start-ServiceOrBatch -Label "MySQL" -ServiceNames @("mysql", "mysql80", "mariadb", "mysqlxampp") -BatchPath (Join-Path $XamppRoot "mysql_start.bat") -Port $MysqlPort
 Start-MgsNode
+Sync-WhatsappPairingWorkerToken
 Start-WhatsappBridge
 Start-WorkerSupervisor
 Write-StackLog "SuperOptic stack autostart end"

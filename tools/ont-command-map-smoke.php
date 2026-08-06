@@ -27,8 +27,9 @@ $device = [
     'ip_address' => '127.0.0.1',
     'command_map_json' => '{}',
 ];
+$nocActor = ['role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'is_active' => 1, 'name' => 'ONT command smoke'];
 
-$plan = app_mgs_hsgq_ont_control_plan($device, 'restart', 'PON03', '032', $db);
+$plan = app_mgs_hsgq_ont_control_plan($device, 'restart', 'PON03', '032', $db, $nocActor);
 $commands = array_values(array_map('strval', (array) ($plan['commands'] ?? [])));
 $ok = !empty($plan['ok'])
     && ($plan['operation'] ?? '') === 'ont_restart'

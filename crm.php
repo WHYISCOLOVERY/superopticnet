@@ -70,6 +70,7 @@ $areas = app_service_areas();
 $subjects = app_portal_ticket_subjects();
 $db = app_db();
 $recentCustomers = [];
+$crmDataErrorReference = '';
 $openCreatePanel = (string) ($_GET['create'] ?? '') === '1' || $status === 'operator_ticket_failed';
 if ($openCreatePanel && $db instanceof PDO) {
     try {
@@ -80,11 +81,12 @@ if ($openCreatePanel && $db instanceof PDO) {
              ORDER BY updated_at DESC, id DESC
              LIMIT 80"
         )->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable) {
+    } catch (Throwable $exception) {
         $recentCustomers = [];
+        $crmDataErrorReference = app_runtime_error_reference('crm_recent_customers', $exception);
     }
 }
-if ($openCreatePanel && $recentCustomers === []) {
+if ($openCreatePanel && $recentCustomers === [] && app_demo_fixtures_enabled()) {
     $recentCustomers = array_map(static function (array $row): array {
         return [
             'id' => (int) ($row['id'] ?? 0),
@@ -119,7 +121,28 @@ $tickets = $openCreatePanel ? [] : app_portal_crm_tickets($crmTicketFilters + [
     'offset' => ($page - 1) * $perPage,
 ]);
 $stats = $openCreatePanel ? ['total' => 0, 'open' => 0, 'closed' => 0] : app_portal_ticket_stats();
-$technicians = app_portal_mock_technicians();
+$legacyTicketCount = 0;
+$technicians = [];
+if ($db instanceof PDO) {
+    try {
+        $legacyTicketCount = (int) ($db->query(
+            'SELECT COUNT(*) FROM portal_tickets WHERE ticket_no LIKE "LEGACY-TICKET-%"'
+        )->fetchColumn() ?: 0);
+        $technicians = $db->query(
+            "SELECT id, full_name AS name, employee_role, phone, area, status
+               FROM portal_accounts
+              WHERE role = 'employee' AND is_active = 1
+                AND employee_role IN ('technician', 'engineer', 'field_technician')
+              ORDER BY full_name"
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $exception) {
+        $crmDataErrorReference = app_runtime_error_reference('crm_technicians', $exception);
+    }
+} elseif (app_demo_fixtures_enabled()) {
+    $technicians = app_portal_mock_technicians();
+} else {
+    $crmDataErrorReference = app_runtime_error_reference('crm_database_unavailable');
+}
 $technicianNames = array_values(array_unique(array_map(
     static fn ($item): string => is_array($item) ? (string) ($item['name'] ?? '') : '',
     $technicians
@@ -189,6 +212,12 @@ unset($kanbanParams['page'], $tableParams['page']);
     <?php billing_render_header('Operator CRM', 'tickets', $lang); ?>
 
     <main class="portal-layout">
+        <?php if ($crmDataErrorReference !== ''): ?>
+            <div class="portal-alert portal-alert-error">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <span>CRM melumatlari tam yuklenmedi. Xeta arayisi: <?= e($crmDataErrorReference); ?></span>
+            </div>
+        <?php endif; ?>
         <?php if ($flash !== null): ?>
             <div class="portal-alert portal-alert-<?= e($flash['type']); ?>">
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
@@ -205,7 +234,8 @@ unset($kanbanParams['page'], $tableParams['page']);
                     <a class="portal-primary-btn portal-inline-link" href="crm.php?create=1<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">Yeni bilet yarat</a>
                     <a class="portal-ghost-btn portal-inline-link<?= $viewMode === 'kanban' ? ' is-active' : ''; ?>" href="crm.php?<?= e(http_build_query($kanbanParams)); ?>">Kanban</a>
                     <a class="portal-ghost-btn portal-inline-link<?= $viewMode === 'table' ? ' is-active' : ''; ?>" href="crm.php?<?= e(http_build_query($tableParams)); ?>">Cedvel</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="problem-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Statistika</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="crm.php?q=LEGACY-TICKET-<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">Kohne ticketler (<?= e((string) $legacyTicketCount); ?>)</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="problem-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Ticket analitikasi</a>
                     <?php if (app_portal_is_admin($user)): ?>
                         <a class="portal-ghost-btn portal-inline-link" href="admin-users.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">İstifadəçi idarəsi</a>
                     <?php endif; ?>
@@ -455,6 +485,9 @@ unset($kanbanParams['page'], $tableParams['page']);
                                 <td>
                                     <?php if ((string) ($ticket['resolved_at'] ?? '') !== ''): ?>
                                         <strong><?= e((string) ($ticket['resolved_at'] ?? '')); ?></strong><br>
+                                        <?php if ((string) ($ticket['handled_by'] ?? '') !== ''): ?>
+                                            <small>Bağladı: <strong><?= e((string) ($ticket['handled_by'] ?? '')); ?></strong></small><br>
+                                        <?php endif; ?>
                                         <small><?= e((string) ($ticket['resolution_reason'] ?? '')); ?></small><br>
                                         <small><?= e((string) ($ticket['resolution_note'] ?? '')); ?></small>
                                     <?php else: ?>

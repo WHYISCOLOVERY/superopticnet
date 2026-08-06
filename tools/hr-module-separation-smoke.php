@@ -19,7 +19,6 @@ $expectedTabs = [
     'attendance',
     'leave-travel',
     'performance',
-    'payroll',
     'documents',
     'statistics',
 ];
@@ -94,7 +93,7 @@ if (function_exists('app_hr_tabs')) {
 if (function_exists('app_hr_tab')) {
     $expect(app_hr_tab([]) === 'overview', 'hr_default_tab_not_overview');
     $expect(app_hr_tab(['hr_tab' => 'invalid']) === 'overview', 'hr_invalid_tab_not_normalized');
-    $expect(app_hr_tab(['hr_tab' => 'payroll']) === 'payroll', 'hr_selected_tab_not_preserved');
+    $expect(app_hr_tab(['hr_tab' => 'payroll']) === 'overview', 'legacy_hr_payroll_tab_not_normalized');
     $expect(app_hr_tab(['focus' => 'kpi']) === 'performance', 'hr_kpi_focus_not_mapped');
 }
 if (function_exists('app_hr_pagination')) {
@@ -161,7 +160,6 @@ if ($mode !== '--queries') {
         'attendance' => ['data-hr-attendance', 'save_attendance_profile'],
         'leave-travel' => ['data-hr-leave-travel', 'create_hr_leave_request', 'create_hr_travel_request'],
         'performance' => ['data-hr-performance', 'record_hr_score_event'],
-        'payroll' => ['data-hr-payroll', 'create_hr_payroll_record'],
         'documents' => ['data-hr-documents', 'create_hr_employee_document', 'update_hr_record_status'],
         'statistics' => ['data-hr-statistics-panel'],
     ];

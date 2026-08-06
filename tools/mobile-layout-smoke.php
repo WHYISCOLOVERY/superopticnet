@@ -44,8 +44,17 @@ $checks = [
         && str_contains($copilot, '.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto'),
     'customer_create_mobile_modal' => is_string($customers)
         && str_contains($customers, '@media (max-width:700px)')
-        && str_contains($customers, 'max-height:calc(100dvh - 78px)')
+        && str_contains($customers, '.billing-create-panel[open]')
+        && str_contains($customers, 'overflow-y:auto')
+        && str_contains($customers, '.billing-create-panel[open] .billing-create-inner')
+        && str_contains($customers, 'overflow:visible')
+        && !str_contains($customers, 'max-height:calc(100dvh - 78px)')
+        && str_contains($customers, 'env(safe-area-inset-bottom)')
+        && str_contains($customers, 'class="billing-create-footer"')
+        && str_contains($customers, '.billing-create-footer .portal-primary-btn')
         && str_contains($customers, '.billing-create-panel .mgs-wizard-steps'),
+    'customer_create_mobile_scroll_lock' => is_string($css)
+        && preg_match('/body\.billing-modal-open\s*\{[\s\S]*?height:\s*100dvh;[\s\S]*?overflow:\s*hidden;[\s\S]*?overscroll-behavior:\s*none;/s', $css) === 1,
     'no_mobile_column_hiding' => is_string($adminUsers)
         && is_string($crm)
         && is_string($radiusActive)

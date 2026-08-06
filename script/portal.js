@@ -1,3 +1,99 @@
+(() => {
+    const current = document.currentScript;
+    if (!current || document.querySelector('script[data-superoptic-design-system]')) {
+        return;
+    }
+    const source = new URL(current.src, window.location.href);
+    const runtime = document.createElement('script');
+    runtime.src = new URL('design-system.js', source).toString();
+    runtime.dataset.superopticDesignSystem = '';
+    runtime.defer = true;
+    document.head.appendChild(runtime);
+})();
+
+window.superopticInitModuleGroupNav = (root = document) => {
+    const navs = [];
+    if (root instanceof Element && root.matches('[data-module-group-nav]')) {
+        navs.push(root);
+    }
+    root.querySelectorAll?.('[data-module-group-nav]').forEach((nav) => navs.push(nav));
+
+    navs.forEach((nav) => {
+        if (nav.dataset.moduleGroupNavReady === '1') {
+            return;
+        }
+        nav.dataset.moduleGroupNavReady = '1';
+
+        const groups = () => Array.from(nav.querySelectorAll('details.billing-nav-group'));
+        const closeAll = (except = null) => {
+            groups().forEach((group) => {
+                if (group !== except) {
+                    group.open = false;
+                }
+            });
+        };
+        const syncPopover = () => {
+            const open = groups().find((group) => group.open);
+            nav.classList.toggle('has-open', Boolean(open));
+            if (!open || window.matchMedia('(max-width: 560px)').matches) {
+                return;
+            }
+
+            const title = open.querySelector('.billing-nav-title');
+            if (!title) {
+                return;
+            }
+            const rect = title.getBoundingClientRect();
+            const width = Math.max(240, Math.min(380, Math.round(rect.width)));
+            const left = Math.max(12, Math.min(window.innerWidth - width - 12, Math.round(rect.left)));
+            const top = Math.max(12, Math.min(window.innerHeight - 80, Math.round(rect.bottom + 8)));
+            nav.style.setProperty('--billing-nav-popover-top', `${top}px`);
+            nav.style.setProperty('--billing-nav-popover-left', `${left}px`);
+            nav.style.setProperty('--billing-nav-popover-width', `${width}px`);
+        };
+
+        groups().forEach((group) => {
+            group.addEventListener('toggle', () => {
+                if (group.open) {
+                    closeAll(group);
+                }
+                window.requestAnimationFrame(syncPopover);
+            });
+        });
+
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+            let leaveTimer = 0;
+            groups().forEach((group) => {
+                group.addEventListener('mouseenter', () => {
+                    closeAll(group);
+                    group.open = true;
+                });
+            });
+            nav.addEventListener('mouseleave', () => {
+                leaveTimer = window.setTimeout(() => closeAll(), 150);
+            });
+            nav.addEventListener('mouseenter', () => {
+                window.clearTimeout(leaveTimer);
+                leaveTimer = 0;
+            });
+        }
+
+        document.addEventListener('click', (event) => {
+            if (!nav.contains(event.target)) {
+                closeAll();
+            }
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeAll();
+            }
+        });
+        window.addEventListener('resize', syncPopover, {passive: true});
+        window.addEventListener('scroll', syncPopover, {passive: true});
+        syncPopover();
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     const topbar = document.querySelector('.portal-topbar');
     const roleButtons = document.querySelectorAll('[data-role-switch]');
@@ -9,8 +105,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const ticketMessages = document.querySelectorAll('[data-ticket-message]');
     const crmLookupRoot = document.querySelector('[data-crm-customer-lookup]');
     const alerts = document.querySelectorAll('[data-autohide-alert]');
-    const billingNavGroups = document.querySelectorAll('.billing-nav-group');
-    const billingShellNav = document.querySelector('.billing-shell-nav');
     const customerProfileNav = document.querySelector('.customer-profile-nav');
     const customerProfileSections = document.querySelectorAll('.mgs-profile-main .customer-profile-section');
     const customerProfileSectionGroups = document.querySelectorAll('.mgs-profile-main .customer-profile-section-group');
@@ -70,78 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
     syncTopbarState();
     window.addEventListener('scroll', syncTopbarState, { passive: true });
 
-    const syncBillingNavOpenState = () => {
-        if (!billingShellNav) {
-            return;
-        }
-
-        const hasOpenGroup = Array.from(billingNavGroups).some((group) => group.open);
-        billingShellNav.classList.toggle('has-open', hasOpenGroup);
-    };
-
-    const positionBillingNavPopover = (group) => {
-        if (!group?.open || window.matchMedia('(max-width: 560px)').matches) {
-            return;
-        }
-
-        const title = group.querySelector('.billing-nav-title');
-        const links = group.querySelector('.billing-nav-links');
-        if (!title || !links) {
-            return;
-        }
-
-        const rect = title.getBoundingClientRect();
-        const gap = 8;
-        const viewportPadding = 12;
-        const width = Math.max(220, Math.min(rect.width, window.innerWidth - (viewportPadding * 2)));
-        const left = Math.min(
-            Math.max(rect.left, viewportPadding),
-            Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
-        );
-        const top = Math.min(
-            rect.bottom + gap,
-            Math.max(viewportPadding, window.innerHeight - 180),
-        );
-
-        links.style.setProperty('--billing-nav-popover-left', `${left}px`);
-        links.style.setProperty('--billing-nav-popover-top', `${top}px`);
-        links.style.setProperty('--billing-nav-popover-width', `${width}px`);
-    };
-
-    const syncOpenBillingNavPopover = () => {
-        billingNavGroups.forEach((group) => {
-            positionBillingNavPopover(group);
-        });
-    };
-
-    billingNavGroups.forEach((group) => {
-        group.addEventListener('toggle', () => {
-            if (group.open) {
-                billingNavGroups.forEach((other) => {
-                    if (other !== group) {
-                        other.open = false;
-                    }
-                });
-                window.requestAnimationFrame(() => positionBillingNavPopover(group));
-            }
-            syncBillingNavOpenState();
-        });
-    });
-    syncBillingNavOpenState();
-
-    window.addEventListener('resize', syncOpenBillingNavPopover, { passive: true });
-    window.addEventListener('scroll', syncOpenBillingNavPopover, { passive: true });
-
-    document.addEventListener('click', (event) => {
-        if (!(event.target instanceof Element) || event.target.closest('.billing-nav-group')) {
-            return;
-        }
-
-        billingNavGroups.forEach((group) => {
-            group.open = false;
-        });
-        syncBillingNavOpenState();
-    });
+    window.superopticInitModuleGroupNav(document);
 
     if (customerProfileNav && customerProfileSections.length > 0) {
         const navLinks = Array.from(customerProfileNav.querySelectorAll('a[href^="#profile-"]'));
@@ -710,4 +733,52 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     revealTargets.forEach((item) => revealObserver.observe(item));
+});
+
+document.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('[data-table-action]');
+    if (!actionButton) {
+        return;
+    }
+    const action = actionButton.dataset.tableAction;
+    if (action === 'print') {
+        window.print();
+        return;
+    }
+    const toolbar = actionButton.closest('[data-table-toolbar]');
+    const targetId = toolbar?.dataset.targetTable || '';
+    const table = targetId ? document.getElementById(targetId) : null;
+    if (!table) {
+        return;
+    }
+    const rows = Array.from(table.querySelectorAll('tr')).map(
+        (row) => Array.from(row.querySelectorAll('th,td')).map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())
+    );
+    if (action === 'copy') {
+        const text = rows.map((row) => row.join('\t')).join('\n');
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+                const original = actionButton.textContent;
+                actionButton.textContent = 'Kopyalandı';
+                setTimeout(() => { actionButton.textContent = original; }, 1500);
+            }).catch(() => {});
+        }
+        return;
+    }
+    if (action === 'csv' || action === 'excel') {
+        const csvBody = rows.map(
+            (row) => row.map((cell) => '"' + cell.replace(/"/g, '""') + '"').join(',')
+        ).join('\r\n');
+        const isExcel = action === 'excel';
+        const byteOrderMark = String.fromCharCode(0xFEFF);
+        const blob = new Blob([byteOrderMark + csvBody], { type: `${isExcel ? 'application/vnd.ms-excel' : 'text/csv'};charset=utf-8` });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${targetId || 'cedvel'}-${new Date().toISOString().slice(0, 10)}.${isExcel ? 'xls' : 'csv'}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    }
 });

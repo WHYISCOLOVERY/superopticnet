@@ -72,7 +72,7 @@ $openDialog = clean_text((string) ($query['open'] ?? ''));
                     <tr data-inventory-row>
                         <td><?= e((string) ($row['movement_no'] ?? $row['id'] ?? '-')); ?></td>
                         <td><?= e((string) ($row['item_name'] ?? $row['sku'] ?? '-')); ?></td>
-                        <td><?= e(app_ui_term((string) ($row['movement_type'] ?? '-'))); ?></td>
+                        <td><?php $mt = strtolower((string) ($row['movement_type'] ?? '')); $mtCls = in_array($mt, ['in', 'intake', 'return'], true) ? 'dash-badge-success' : (in_array($mt, ['out', 'issue', 'handover', 'customer_install'], true) ? 'dash-badge-info' : (in_array($mt, ['adjust', 'writeoff', 'scrap'], true) ? 'dash-badge-warning' : '')); ?><span class="dash-badge <?= $mtCls; ?>"><?= e(app_ui_term((string) ($row['movement_type'] ?? '-'))); ?></span></td>
                         <td><?= e($inventoryFormat($row['quantity'] ?? 0)); ?></td>
                         <td><?= e(app_ui_term((string) ($row['from_location_type'] ?? '-'))); ?> / <?= e((string) ($row['from_location_id'] ?? '-')); ?></td>
                         <td><?= e(app_ui_term((string) ($row['to_location_type'] ?? '-'))); ?> / <?= e((string) ($row['to_location_id'] ?? '-')); ?></td>

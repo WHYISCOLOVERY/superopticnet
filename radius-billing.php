@@ -220,8 +220,7 @@ D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tmp\seed-ipoe-test-user.php 1
 D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tmp\check-radius-db.php 1200000
 
 # SQL modul aktiv olandan sonra Ubuntu-da:
-radtest 1100000 UCuvsbLA2b 127.0.0.1 0 menim_gizli_acarim123
-radtest 1200000 any-test-password 127.0.0.1 0 menim_gizli_acarim123</code></pre>
+radtest "$RADIUS_TEST_USER" "$RADIUS_TEST_PASSWORD" 127.0.0.1 0 "$RADIUS_SHARED_SECRET"</code></pre>
         </section>
     </main>
 </body>

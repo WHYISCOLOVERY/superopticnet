@@ -143,17 +143,41 @@ function billing_payments_import_csv(string $file, bool $apply, string $method, 
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && clean_text((string) ($_POST['action'] ?? '')) === 'provider_import') {
-    if (!$db instanceof PDO) {
+    $providerCsvMaxBytes = 10 * 1024 * 1024;
+    $providerCsvAllowedMime = ['text/csv', 'text/plain', 'application/csv', 'application/vnd.ms-excel'];
+    $csrfToken = $_POST['csrf_token'] ?? '';
+    $uploadedFile = is_array($_FILES['provider_csv'] ?? null) ? $_FILES['provider_csv'] : [];
+    $uploadExtension = strtolower((string) pathinfo((string) ($uploadedFile['name'] ?? ''), PATHINFO_EXTENSION));
+    $uploadTmpName = (string) ($uploadedFile['tmp_name'] ?? '');
+    $actualUploadSize = $uploadTmpName !== '' && is_file($uploadTmpName) ? @filesize($uploadTmpName) : false;
+    $uploadSize = $actualUploadSize !== false ? (int) $actualUploadSize : (int) ($uploadedFile['size'] ?? 0);
+    $uploadMime = '';
+    if ($uploadTmpName !== '' && is_uploaded_file($uploadTmpName) && function_exists('finfo_open')) {
+        $fileInfo = @finfo_open(FILEINFO_MIME_TYPE);
+        if ($fileInfo !== false) {
+            $uploadMime = (string) (@finfo_file($fileInfo, $uploadTmpName) ?: '');
+            finfo_close($fileInfo);
+        }
+    }
+
+    if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
+        $importError = 'Sessiya yoxlaması uğursuz oldu. Səhifəni yeniləyib yenidən cəhd edin.';
+    } elseif (!$db instanceof PDO) {
         $importError = 'MySQL bağlantısı hazır deyil.';
-    } elseif (!isset($_FILES['provider_csv']) || (int) ($_FILES['provider_csv']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+    } elseif ($uploadedFile === [] || (int) ($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         $importError = 'CSV faylı seçilməyib və ya yüklənmə xətası var.';
+    } elseif ($uploadSize <= 0 || $uploadSize > $providerCsvMaxBytes) {
+        $importError = 'CSV fayl ölçüsü 10 MB limitini keçir.';
+    } elseif ($uploadExtension !== 'csv') {
+        $importError = 'Yalnız .csv uzantılı fayl qəbul olunur.';
+    } elseif (!in_array($uploadMime, $providerCsvAllowedMime, true)) {
+        $importError = 'Fayl növü CSV kimi təsdiqlənmədi.';
     } else {
         $importMethod = clean_text((string) ($_POST['import_method'] ?? 'provider'));
         $importMethod = $importMethod !== '' ? $importMethod : 'provider';
         $importDays = max(0, min(366, (int) ($_POST['import_days'] ?? 0)));
         $importApply = clean_text((string) ($_POST['import_mode'] ?? 'dry-run')) === 'apply';
-        $tmpName = (string) ($_FILES['provider_csv']['tmp_name'] ?? '');
-        $importResult = billing_payments_import_csv($tmpName, $importApply, $importMethod, $importDays);
+        $importResult = billing_payments_import_csv($uploadTmpName, $importApply, $importMethod, $importDays);
         if (isset($importResult['error'])) {
             $importError = (string) $importResult['error'];
             $importResult = null;
@@ -341,6 +365,7 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
     <title>Odenisler</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/dashboard.css')); ?>">
 </head>
 <body class="portal-body">
     <?php billing_render_header('Odenisler', 'payments', $lang); ?>
@@ -437,6 +462,7 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                 <?php endif; ?>
             <?php endif; ?>
             <form method="post" enctype="multipart/form-data" class="portal-stacked-form">
+                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                 <input type="hidden" name="action" value="provider_import">
                 <div class="billing-filter-grid">
                     <div class="portal-form-row">
@@ -543,11 +569,11 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                     <button type="submit" class="portal-primary-btn">Axtar</button>
                     <a class="portal-ghost-btn portal-inline-link" href="billing-payments.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sıfırla</a>
                 </div>
-                <div class="billing-export-actions">
-                    <button type="button" class="portal-ghost-btn">Kopyala</button>
-                    <button type="button" class="portal-ghost-btn">Excel</button>
-                    <button type="button" class="portal-ghost-btn">CSV</button>
-                    <button type="button" class="portal-ghost-btn">Çap et</button>
+                <div class="billing-export-actions" data-table-toolbar data-target-table="billing-payments-table">
+                    <button type="button" class="portal-ghost-btn" data-table-action="copy">Kopyala</button>
+                    <button type="button" class="portal-ghost-btn" data-table-action="excel">Excel</button>
+                    <button type="button" class="portal-ghost-btn" data-table-action="csv">CSV</button>
+                    <button type="button" class="portal-ghost-btn" data-table-action="print">Çap et</button>
                 </div>
                 <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
@@ -559,15 +585,15 @@ $importPanelUrl = 'billing-payments.php?' . http_build_query($importPanelParams)
                 <?php billing_render_empty_state('Ödəniş tapılmadı', 'Axtarış və filtr şərtlərini dəyişib yenidən yoxlayın.', 'fa-receipt'); ?>
             <?php else: ?>
             <div class="portal-table-wrap">
-                <table class="portal-table">
+                <table class="portal-table" id="billing-payments-table">
                     <thead><tr><th>№</th><th>Müştəri</th><th>Terminal/metod</th><th>Ödəniş</th><th>Transaction</th><th>Tarix</th><th>Profil</th></tr></thead>
                     <tbody>
                         <?php foreach ($payments as $payment): ?>
                             <tr>
                                 <td><?= e((string) ($payment['id'] ?? '-')); ?></td>
                                 <td><?= e((string) ($payment['subscriber_code'] ?? '-')); ?><br><small><?= e((string) ($payment['full_name'] ?? '-')); ?></small><br><small><?= e((string) ($payment['phone'] ?? '-')); ?></small></td>
-                                <td><?= e((string) ($payment['payment_method'] ?? '-')); ?></td>
-                                <td><?= e(billing_money($payment['amount'] ?? 0)); ?></td>
+                                <td><?php $pm = strtolower((string) ($payment['payment_method'] ?? '')); $pmCash = in_array($pm, ['manual', 'cash', 'nagd'], true); ?><span class="dash-badge<?= $pmCash ? '' : ' dash-badge-info'; ?>"><?= e((string) ($payment['payment_method'] ?? '-')); ?></span></td>
+                                <td><span class="dash-badge dash-badge-success"><?= e(billing_money($payment['amount'] ?? 0)); ?></span></td>
                                 <td><?= e((string) ($payment['transaction_id'] ?? '-')); ?></td>
                                 <td><?= e(billing_datetime($payment['created_at'] ?? null)); ?></td>
                                 <td><a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) ($payment['account_id'] ?? 0)); ?>#profile-payments">Aç</a></td>

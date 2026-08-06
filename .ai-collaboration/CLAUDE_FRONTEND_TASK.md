@@ -1,28 +1,34 @@
-# Claude frontend tapsirigi - SAR-5
+# Claude frontend tapsirigi
 
-Status: `READY`
+Status: `DONE`
 
-Evvelce `TASK.md`, `FILE_OWNERSHIP.md` ve `BACKEND_CONTRACT.md` oxu.
+## Meqsed
 
-## Real tapsiriq
+WhatsApp chat monitorunu nomre/emekdas uzre ayirmaq ve stream olmayan canli monitor kartlarini kompakt hala getirmek.
 
-1. `views/finance/module.php`, `views/hr/module.php`,
-   `views/inventory/module.php` ve `views/billing/module.php` daxilindeki boyuk
-   inline `<style>` bloklarini yeni `css/operations-modules.css` faylina cixar.
-2. Ortak qaydalari birlesdir; modul-spesifik class ve davranislari qoru.
-3. `views/_module-group-nav.php` daxilindeki inline `<style>` blokunu da yeni
-   stylesheet-e dasi.
-4. Yalniz bu bes view faylinda gorunen basliq, izah, nav label ve aria metnlerini
-   duzgun Azerbaycan diline sal. Texniki key/value/data atributlarini deyisme.
-5. Basliq action-larinin wrap, KPI mebleglerinin overflow, modal viewport ve
-   mobil nav davranisini tamamla.
-6. Yeni framework, gradient, orb, boyuk radius ve agir animasiya elave etme.
-7. Backend, DB, API, permission, CSRF ve biznes mentiqine toxunma.
-8. Neticeni `.ai-collaboration/CLAUDE_FRONTEND_RESULT.md` faylinda yeni
-   `SAR-5 shell kecidi` bolmesi ile qeyd et.
+## Fayllar
 
-## Yoxlama
+- `views/whatsapp-monitor/chats.php`
+- `views/whatsapp-monitor/screen-wall.php`
+- `css/whatsapp-monitor.css`
 
-- Inline style bloklari hedef view-lardan cixmalidir.
-- CSS brace balansi ve PHP syntax manual yoxlanmalidir.
-- Deyisen butun fayllar netice hesabatinda sadalanmalidir.
+## Telebler
+
+1. `chat_number_groups` ile nomre/emekdas secici yarat.
+2. `chat_rows` yalniz secilmis nomrenin chatlari kimi gosterilsin.
+3. `data-selected-number-id` hook-u `data-wa-chat-monitor` elementinde olsun.
+4. Stream olmayan cihazda boyuk qara frame render etme.
+5. Stream olmayan cihaz ucun status sebebi ve acilib-baglanan kompakt `Qeyd yarat` formu goster.
+6. Real stream ucun iframe ve fullscreen qorunsun.
+7. Mobilde daxili scroll ve input/button ust-uste minmesi olmasin.
+8. Gorunen metnler temiz ve tebii Azerbaycan dilinde olsun.
+
+## Qadağalar
+
+- Backend, DB, API, auth, permission, CSRF ve JS fayllarini deyisme.
+- Movcud istifadeci deyisikliklerini geri qaytarma.
+- Form action/name/value contractlarini deyisme.
+
+## Netice
+
+Deyisdirilen fayllari ve lint neticesini `.ai-collaboration/CLAUDE_FRONTEND_RESULT.md` faylina elave et.

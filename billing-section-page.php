@@ -23,6 +23,7 @@ $billingTitle = (string) (($billingContext['sections'] ?? [])[$billingSection] ?
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/dashboard.css')); ?>">
 </head>
 <body class="portal-body">
 <?php billing_render_header($billingTitle, $billingSection, $lang); ?>

@@ -8,10 +8,9 @@ if (PHP_SAPI !== 'cli') {
     exit('CLI only');
 }
 
-function provider_up_smoke_finish(array $payload, int $code = 0): never
+function provider_up_smoke_finish(array $payload): void
 {
     echo json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-    exit($code);
 }
 
 $_SERVER['CONTENT_TYPE'] = 'application/x-www-form-urlencoded';
@@ -21,7 +20,8 @@ if (($parsed['memberId'] ?? '') !== '100' || ($parsed['amount'] ?? '') !== '12.5
         'status' => 'failed',
         'reason' => 'form_urlencoded_parser_failed',
         'parsed' => $parsed,
-    ], 2);
+    ]);
+    exit(2);
 }
 
 $db = app_db();
@@ -30,12 +30,14 @@ if (!$db instanceof PDO) {
         'status' => 'skipped',
         'reason' => 'database_unavailable',
     ]);
+    exit(0);
 }
 
 $subscriberCode = 'UP-SMOKE-' . date('His') . random_int(100, 999);
 $transactionId = 'UP-TX-' . date('YmdHis') . random_int(100, 999);
 $externalId = app_provider_external_id('unitedpayment', $transactionId);
 $accountId = 0;
+$exitCode = 1;
 
 try {
     $payload = [
@@ -88,6 +90,7 @@ try {
     $paymentCountStatement->execute(['external_id' => $externalId]);
     $paymentCount = (int) $paymentCountStatement->fetchColumn();
 
+    $passed = $applied && $appliedDuplicateSafe && $paymentCount === 1 && $duplicateBeforeApplyAgain;
     provider_up_smoke_finish([
         'status' => ($applied && $appliedDuplicateSafe && $paymentCount === 1 && $duplicateBeforeApplyAgain) ? 'ok' : 'failed',
         'lookup_response_shape' => [
@@ -105,14 +108,22 @@ try {
             'stored_rows' => $paymentCount,
         ],
         'mpay_pending' => app_provider_is_mpay('MPay'),
-    ], ($applied && $appliedDuplicateSafe && $paymentCount === 1 && $duplicateBeforeApplyAgain) ? 0 : 3);
+    ]);
+    $exitCode = $passed ? 0 : 3;
 } catch (Throwable $exception) {
     provider_up_smoke_finish([
         'status' => 'failed',
         'reason' => $exception->getMessage(),
-    ], 2);
+    ]);
+    $exitCode = 2;
 } finally {
     if ($accountId > 0) {
+        $db->prepare('DELETE r FROM billing_payment_reversals r JOIN billing_payment_operations o ON o.id = r.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE e FROM billing_payment_operation_events e JOIN billing_payment_operations o ON o.id = e.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE a FROM billing_payment_service_attempts a JOIN billing_payment_service_actions s ON s.id = a.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE b FROM billing_payment_outbox b JOIN billing_payment_service_actions s ON s.id = b.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE s FROM billing_payment_service_actions s JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+        $db->prepare('DELETE FROM billing_payment_operations WHERE account_id = :id')->execute(['id' => $accountId]);
         $db->prepare('DELETE FROM billing_payments WHERE subscriber_code = :code OR external_id = :external_id')->execute([
             'code' => $subscriberCode,
             'external_id' => $externalId,
@@ -123,3 +134,5 @@ try {
         $db->prepare('DELETE FROM portal_accounts WHERE id = :id')->execute(['id' => $accountId]);
     }
 }
+
+exit($exitCode);

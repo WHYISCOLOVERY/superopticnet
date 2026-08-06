@@ -27,6 +27,7 @@ $routes = (array) ($aiContext['routes'] ?? []);
             <?php if (isset($sections['customer-analytics'])): ?><a class="portal-ghost-btn portal-inline-link" data-ai-nav data-module-section="customer-analytics" href="<?= e((string) ($routes['customer-analytics'] ?? 'ai-customer-analytics.php')); ?>"><i class="fa-solid fa-user-check"></i> Musteri analizi</a><?php endif; ?>
             <?php if (isset($sections['network-analytics'])): ?><a class="portal-ghost-btn portal-inline-link" data-ai-nav data-module-section="network-analytics" href="<?= e((string) ($routes['network-analytics'] ?? 'ai-network-analytics.php')); ?>"><i class="fa-solid fa-network-wired"></i> Sebeke analizi</a><?php endif; ?>
             <?php if (isset($sections['risks'])): ?><a class="portal-ghost-btn portal-inline-link" data-ai-nav data-module-section="risks" href="<?= e((string) ($routes['risks'] ?? 'ai-risks.php')); ?>"><i class="fa-solid fa-triangle-exclamation"></i> Risk novbesi</a><?php endif; ?>
+            <?php if (isset($sections['work-queue'])): ?><a class="portal-ghost-btn portal-inline-link" data-ai-nav data-module-section="work-queue" href="<?= e((string) ($routes['work-queue'] ?? 'ai-work-queue.php')); ?>"><i class="fa-solid fa-list-check"></i> Təsdiq Mərkəzi</a><?php endif; ?>
         </div>
     </div>
     <?php
@@ -45,7 +46,7 @@ $routes = (array) ($aiContext['routes'] ?? []);
         return $links;
     };
     $moduleNavGroups = [];
-    $everydayLinks = $aiNavLinksFor(['overview', 'copilot', 'customer-analytics', 'network-analytics', 'finance-analytics', 'risks', 'recommendations']);
+    $everydayLinks = $aiNavLinksFor(['overview', 'copilot', 'customer-analytics', 'network-analytics', 'finance-analytics', 'risks', 'recommendations', 'work-queue']);
     if ($everydayLinks !== []) {
         $moduleNavGroups[] = ['label' => 'Gunluk AI aletleri', 'icon' => 'fa-bolt', 'links' => $everydayLinks];
     }

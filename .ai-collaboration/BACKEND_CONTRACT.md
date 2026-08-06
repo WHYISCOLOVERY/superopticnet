@@ -1,40 +1,41 @@
-# Backend contract - SAR-5 shell ve dil standarti
+# Backend contract - Cross-module defect duzelisi round
 
-Status: `READY_FOR_FRONTEND`
+Bu sened evvelki WhatsApp-only backend kontraktini legv etmir; o hele qüvvədədir (asagida qorunur) ve bu round ucun umumi invariantlar elave olunur.
 
-## Render contract-i
+## Ümumi invariantlar (butun modullar, bu round)
 
-- `operations-center.php` Maliyye, HR ve Anbar modul view-larini render edir.
-- `billing-section-page.php` Billing modul view-ini render edir.
-- Hedef entrypoint-ler `css/portal.css`-den sonra yeni
-  `css/operations-modules.css` faylini yukleyecek.
-- Partial endpointler eyni view-lari qaytarir; stylesheet esas sehifede bir defe yuklenir.
+- Auth/session, CSRF, rol/permission ve object-scope yoxlamalari servis qatinda qalir; UI-da gizletmek permission yoxlamasinin evezi deyil.
+- Append-only audit jurnali davam edir; her write action audit qeydi yaradir.
+- Payment/RADIUS idempotency: movcud state machine ve compensation davranisi deyismir; retry duplicate yaratmamalidir.
+- Schema deyisikliyi yalniz elave (additive), versiyali ve rollback-li migration ile.
+- Movcud service/API-ler tekrarlanmir; duzelis movcud qati genisləndirir.
+- Production write/deploy, real mesaj gonderisi ve canli device/router emeliyyati bu roundda tetiklenmir.
 
-## Modul nav contract-i
+## WhatsApp chat monitor kontrakti (evvelki rounddan, hele qüvvədədir)
 
-`views/_module-group-nav.php` asagidaki deyisenleri qoruyur:
+`views/whatsapp-monitor/chats.php` ucun:
 
-- `$moduleNavGroups`
-- `$moduleNavActive`
-- `$moduleNavAria`
-- `$moduleNavName`
-- `$moduleNavLinkAttribute`
+- `chat_number_groups`: `number_id`, `company_number`, `employee_name`, `chat_count`, `message_count`, `last_message_at`, `qr_status`.
+- `selected_number_id`: aktiv sirket WhatsApp nomresinin ID-si.
+- `chat_rows`: yalniz `selected_number_id` ucun chatlar.
+- `selected_chat_id`, `selected_chat`, `chat_messages`: secilmis nomre daxilindeki thread.
 
-`data-module-group-nav`, `data-module-nav-group`, `data-module-section` ve modul
-uzre `data-finance-nav`, `data-hr-nav`, `data-inventory-nav` atributlari
-deyismemelidir. Aktiv link ve `<details name>` davranisi qorunmalidir.
+`api/whatsapp-monitor/chat-list.php` `number_id` teleb edir. `number_id` olmadan `422 number_scope_required` qaytarir.
 
-## Tehlukesizlik ve biznes qaydalari
+Frontend hook-lari: `data-wa-chat-monitor`, `data-selected-number-id`, `data-wa-chat-thread`, `data-wa-chat-list`, `data-wa-chat-search-item`, `data-screen-wall`, `data-screen-wall-fullscreen`.
 
-- Rol/permission neticesine gore action-larin gorunmesi eyni qalir.
-- Form POST, CSRF, action adlari ve URL parametrleri deyismir.
-- Dil helper-i yalniz gorunen label qaytarir; DB key ve saxlanan deyerleri cevirmir.
-- Filter/statistika submit ve AJAX intercept contract-lari qorunur.
+`api/provider/whatsapp-status.php` yalniz admin ucun read-only JSON endpointdir. Provider token browser-e verilmir. Cavab: `connected`, `reachable`, `status`, `provider_number`, `last_qr_at`, `last_error`; `qr` yalniz `data:image/` URI kimi. Stream iframe yalniz backend `canShowStream` serti dogru olduqda render edilir.
 
-## Responsive qebul
+## Bu round ucun elave qayda
 
-- 1280px ve 390px enlikde horizontal sehife overflow-u yoxdur.
-- Modal panel viewport daxilinde qalir; yalniz modal body ehtiyac olduqda scroll edir.
-- KPI `<strong>` metni parent qutudan dasmir.
-- Basliq action-lari wrap edir ve klik sahesi minimum 40px qalir.
-- Modul nav daxilinde ikinci horizontal scroll konteyneri yaranmir.
+Claude bu roundda backend/API/DB/permission kodunu birbasa deyise bilir, amma:
+
+- yuxaridaki umumi invariantlari ve WhatsApp kontraktini pozmur;
+- production writes/deploy/external send/live device action tetikleyen yeni yol elave etmir;
+- her deyisiklik ucun fokuslu smoke/regression testi elave edir ve ishe salir;
+- natamam/yoxlanilmamis sahede real data yoxdursa mock/demo fallback yaratmaq evezine acıq bos/error veziyyeti saxlayir;
+- Codex-in implementasiyadan sonrakı review-u production go-live-dan evvel mecburidir; bu sened tek basina go-live tesdiqi sayilmir.
+
+## Tehlukesizlik
+
+`docs/32_UNIFIED_UX_AUDIT.md` bolme 4-de qeyd olunan tesdiqlenmis problemler (payment/RADIUS idempotency, Finance GET side-effect, NOC credential/permission, plaintext sirr riski) bu roundun prioritet siyahisinin bir hissesidir; hell olunmadan uygun go-live blocker kimi qalir.

@@ -13,6 +13,8 @@ require_once __DIR__ . '/inventory-operations-lib.php';
 require_once __DIR__ . '/operations-permission-lib.php';
 require_once __DIR__ . '/analytics-center-lib.php';
 require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/design-system-lib.php';
+require_once __DIR__ . '/workspace-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
@@ -419,7 +421,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'maxHosts' => max(1, min(1024, (int) ($_POST['scan_max_hosts'] ?? 64))),
                 'concurrency' => max(1, min(128, (int) ($_POST['scan_concurrency'] ?? 24))),
             ];
-            $result = app_mgs_service_request_json('/api/service/network-scan', 'POST', $payload, 60);
+            $result = app_mgs_noc_service_request_json(
+                '/api/service/network-scan',
+                'POST',
+                $payload,
+                $user,
+                'scan_network',
+                [],
+                60
+            );
             if (empty($result['ok'])) {
                 spog_operations_flash_redirect([
                     'type' => 'error',
@@ -458,7 +468,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? 'private')),
                 'driverMode' => clean_text((string) ($_POST['driver_mode'] ?? 'real')),
             ];
-            $result = app_mgs_service_request_json('/api/service/devices', 'POST', $payload, 60);
+            $result = app_mgs_noc_service_request_json(
+                '/api/service/devices',
+                'POST',
+                $payload,
+                $user,
+                'create_monitor_device',
+                ['management_network' => (string) ($payload['location'] ?? '')],
+                60
+            );
             if (empty($result['ok'])) {
                 spog_operations_flash_redirect([
                     'type' => 'error',
@@ -473,7 +491,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'save_asset_depreciation', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
+    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'save_asset_depreciation', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
         if (!app_verify_csrf($_POST['csrf_token'] ?? null)) {
             $csrfSection = (str_contains($action, 'finance') || in_array($action, ['save_asset_depreciation','import_finance_e_invoice'], true)) ? 'finance' : (str_contains($action, 'hr_') || in_array($action, ['save_attendance_profile','record_attendance_event'], true) ? 'hr' : 'inventory');
             $csrfExtra = $csrfSection === 'finance' ? ['finance_tab' => clean_text((string)($_POST['finance_tab'] ?? 'overview'))] : ($csrfSection === 'hr' ? ['hr_tab' => clean_text((string)($_POST['hr_tab'] ?? 'overview'))] : []);
@@ -482,6 +500,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'message' => 'Emeliyyat ucun CSRF yoxlamasi ugursuz oldu.',
             ], $lang, $csrfSection, $csrfExtra);
         }
+
+        // Payroll/tax moved HR→Finance: when a payroll form is submitted from the
+        // Finance module it posts nav_section=finance, so redirect back into Finance.
+        $hrPayrollAnchor = clean_text((string) ($_POST['nav_section'] ?? '')) === 'finance' ? 'finance' : 'hr';
 
         $endpoint = '';
         $anchor = 'inventory';
@@ -640,7 +662,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $localResult = app_hr_create_employee($db, [
                 'full_name' => (string) ($_POST['full_name'] ?? ''),
                 'login' => (string) ($_POST['login'] ?? ''),
-                'job_title' => (string) ($_POST['job_title'] ?? ''),
+                'position_id' => (int) ($_POST['position_id'] ?? 0),
                 'hire_date' => (string) ($_POST['hire_date'] ?? ''),
                 'phone' => (string) ($_POST['phone'] ?? ''),
                 'email' => (string) ($_POST['email'] ?? ''),
@@ -660,7 +682,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $localResult = app_hr_update_employee($db, [
                 'employee_account_id' => (int) ($_POST['employee_account_id'] ?? 0),
                 'full_name' => (string) ($_POST['full_name'] ?? ''), 'login' => (string) ($_POST['login'] ?? ''),
-                'job_title' => (string) ($_POST['job_title'] ?? ''), 'hire_date' => (string) ($_POST['hire_date'] ?? ''),
+                'position_id' => (int) ($_POST['position_id'] ?? 0), 'hire_date' => (string) ($_POST['hire_date'] ?? ''),
                 'phone' => (string) ($_POST['phone'] ?? ''), 'email' => (string) ($_POST['email'] ?? ''),
                 'area' => (string) ($_POST['area'] ?? ''), 'branch_id' => (string) ($_POST['branch_id'] ?? ''), 'address' => (string) ($_POST['address'] ?? ''),
             ], $user);
@@ -751,6 +773,65 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'type' => !empty($localResult['ok']) ? 'success' : 'error',
                 'message' => !empty($localResult['ok']) ? 'Emekdasdan qaytarma qebul edildi: ' . (string) ($localResult['document_no'] ?? '') : 'Qaytarma alinmadi: ' . (string) ($localResult['error'] ?? 'namelum xeta'),
             ], $lang, 'inventory', ['inventory_tab' => 'technicians']);
+        } elseif ($action === 'receive_inventory_asset_return') {
+            $localResult = app_inventory_receive_asset_return($db, [
+                'asset_id' => (int) ($_POST['asset_id'] ?? 0),
+                'customer_code' => (string) ($_POST['customer_code'] ?? ''),
+                'technician_code' => (string) ($_POST['technician_code'] ?? ''),
+                'ticket_no' => (string) ($_POST['ticket_no'] ?? ''),
+                'reason' => (string) ($_POST['reason'] ?? ''),
+                'location_type' => (string) ($_POST['location_type'] ?? 'warehouse'),
+                'location_id' => (string) ($_POST['location_id'] ?? 'MAIN'),
+                'idempotency_key' => (string) ($_POST['idempotency_key'] ?? ''),
+            ], $user);
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Seriyali cihaz karantine qebul edildi.'
+                    : 'Cihaz qaytarmasi alinmadi: ' . (string) ($localResult['error'] ?? 'namelum xeta'),
+            ], $lang, 'inventory', ['inventory_tab' => 'returns-inspection', 'return_view' => 'returns']);
+        } elseif ($action === 'inspect_inventory_asset_return') {
+            $localResult = app_inventory_inspect_asset_return($db, [
+                'return_id' => (int) ($_POST['return_id'] ?? 0),
+                'inspection_status' => (string) ($_POST['inspection_status'] ?? ''),
+                'reason' => (string) ($_POST['reason'] ?? ''),
+                'notes' => (string) ($_POST['notes'] ?? ''),
+                'idempotency_key' => (string) ($_POST['idempotency_key'] ?? ''),
+            ], $user);
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Cihaz yoxlamasi saxlanildi.'
+                    : 'Yoxlama saxlanmadi: ' . (string) ($localResult['error'] ?? 'namelum xeta'),
+            ], $lang, 'inventory', ['inventory_tab' => 'returns-inspection', 'return_view' => 'inspection']);
+        } elseif ($action === 'create_inventory_repair') {
+            $localResult = app_inventory_create_asset_repair($db, [
+                'inspection_id' => (int) ($_POST['inspection_id'] ?? 0),
+                'vendor_name' => (string) ($_POST['vendor_name'] ?? ''),
+                'external_reference' => (string) ($_POST['external_reference'] ?? ''),
+                'reason' => (string) ($_POST['reason'] ?? ''),
+                'notes' => (string) ($_POST['notes'] ?? ''),
+                'idempotency_key' => (string) ($_POST['idempotency_key'] ?? ''),
+            ], $user);
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Temir/RMA qeydi yaradildi.'
+                    : 'Temir qeydi yaradilmadi: ' . (string) ($localResult['error'] ?? 'namelum xeta'),
+            ], $lang, 'inventory', ['inventory_tab' => 'repair-rma']);
+        } elseif ($action === 'update_inventory_repair_status') {
+            $localResult = app_inventory_update_asset_repair_status($db, [
+                'repair_id' => (int) ($_POST['repair_id'] ?? 0),
+                'status' => (string) ($_POST['repair_status'] ?? ''),
+                'reason' => (string) ($_POST['reason'] ?? ''),
+                'idempotency_key' => (string) ($_POST['idempotency_key'] ?? ''),
+            ], $user);
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Temir statusu yenilendi.'
+                    : 'Temir statusu yenilenmedi: ' . (string) ($localResult['error'] ?? 'namelum xeta'),
+            ], $lang, 'inventory', ['inventory_tab' => 'repair-rma']);
         } elseif ($action === 'create_inventory_external_request') {
             [$sourceLocationType, $sourceLocationId] = app_inventory_normalize_location_pair($_POST, 'source', 'branch', (string) ($_POST['source_location_id'] ?? ''));
             $localResult = app_inventory_create_external_request($db, [
@@ -893,16 +974,26 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             ];
         } elseif ($action === 'create_finance_entry') {
             $anchor = 'finance';
-            $endpoint = '/api/service/finance/entries';
-            $payload = [
-                'entryType' => clean_text((string) ($_POST['entry_type'] ?? 'expense')),
+            $localResult = app_finance_save_entry($db, [
+                'entry_type' => clean_text((string) ($_POST['entry_type'] ?? 'expense')),
                 'category' => clean_text((string) ($_POST['category'] ?? 'manual')),
                 'title' => clean_text((string) ($_POST['title'] ?? '')),
                 'amount' => max(0, (float) ($_POST['amount'] ?? 0)),
-                'branchId' => clean_text((string) ($_POST['branch_id'] ?? '')),
-                'employeeUserId' => clean_text((string) ($_POST['employee_user_id'] ?? '')),
-                'noteText' => clean_text((string) ($_POST['note_text'] ?? '')),
-            ];
+                'currency' => clean_text((string) ($_POST['currency'] ?? 'AZN')),
+                'transaction_date' => clean_text((string) ($_POST['transaction_date'] ?? date('Y-m-d'))),
+                'branch_id' => (int) ($_POST['branch_id'] ?? 0),
+                'employee_account_id' => (int) ($_POST['employee_user_id'] ?? 0),
+                'payment_source' => clean_text((string) ($_POST['payment_source'] ?? 'manual')),
+                'reference_no' => clean_text((string) ($_POST['reference_no'] ?? '')),
+                'note' => clean_text((string) ($_POST['note_text'] ?? '')),
+                'idempotency_key' => clean_text((string) ($_POST['idempotency_key'] ?? '')),
+            ], $user);
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Xerc Finance ledger-e yazildi.'
+                    : 'Xerc yazilmadi: ' . (string) ($localResult['error'] ?? 'namelum xeta'),
+            ], $lang, $anchor, ['finance_tab' => 'expenses']);
         } elseif ($action === 'save_asset_depreciation') {
             $anchor = 'finance';
             $localResult = app_mgs_save_inventory_depreciation([
@@ -1048,7 +1139,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     : ('Sicil bal hadisesi saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur')),
             ], $lang, $anchor);
         } elseif ($action === 'create_hr_payroll_record') {
-            $anchor = 'hr';
+            $anchor = $hrPayrollAnchor;
             $localResult = app_mgs_save_hr_payroll_record([
                 'employee_account_id' => (int) ($_POST['payroll_employee_account_id'] ?? 0),
                 'period_month' => clean_text((string) ($_POST['period_month'] ?? date('Y-m'))),
@@ -1124,7 +1215,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     : ('Isci senedi saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur')),
             ], $lang, $anchor);
         } elseif ($action === 'update_hr_record_status') {
-            $anchor = 'hr';
+            $anchor = $hrPayrollAnchor;
             $localResult = app_mgs_hr_update_record_status(
                 clean_text((string) ($_POST['hr_record_type'] ?? '')),
                 max(0, (int) ($_POST['hr_record_id'] ?? 0)),
@@ -1140,7 +1231,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     : ('HR status yenilenmedi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur')),
             ], $lang, $anchor);
         } elseif ($action === 'record_hr_finance_expense') {
-            $anchor = 'hr';
+            $anchor = $hrPayrollAnchor;
             $localResult = app_mgs_hr_record_finance_expense(
                 clean_text((string) ($_POST['hr_record_type'] ?? '')),
                 max(0, (int) ($_POST['hr_record_id'] ?? 0)),
@@ -1392,9 +1483,12 @@ $customerResults = [];
 $ticketResults = [];
 $radiusResults = [];
 $vlanResults = [];
+$actorCanBillingRead = app_portal_can_access_module($user, 'billing');
+$actorCanMessagingRead = app_portal_can_access_module($user, 'messaging');
+$actorCanNetworkRead = app_portal_can_access_module($user, 'network');
 if ($query !== '' && $db instanceof PDO) {
     $like = '%' . $query . '%';
-    $customerResults = spog_rows(
+    $customerResults = !$actorCanBillingRead ? [] : spog_rows(
         $db,
         "SELECT id, subscriber_code, full_name, phone, area, plan, status, is_active
          FROM portal_accounts
@@ -1404,7 +1498,7 @@ if ($query !== '' && $db instanceof PDO) {
         ['q' => $like],
         8
     );
-    $ticketResults = spog_rows(
+    $ticketResults = !$actorCanMessagingRead ? [] : spog_rows(
         $db,
         "SELECT ticket_no, customer_account_id, subscriber_code, customer_name, subject, status, area, opened_at
          FROM portal_tickets
@@ -1413,7 +1507,7 @@ if ($query !== '' && $db instanceof PDO) {
         ['q' => $like],
         8
     );
-    $radiusResults = spog_rows(
+    $radiusResults = !$actorCanNetworkRead ? [] : spog_rows(
         $db,
         "SELECT username, framedipaddress, callingstationid, nasipaddress, acctstarttime, acctstoptime, acctinputoctets, acctoutputoctets
          FROM radacct
@@ -1422,7 +1516,7 @@ if ($query !== '' && $db instanceof PDO) {
         ['q' => $like],
         8
     );
-    if ($hasNetworkDefinitions) {
+    if ($hasNetworkDefinitions && $actorCanNetworkRead) {
         $vlanResults = spog_rows(
             $db,
             "SELECT id, name, vlan_id, customer_name, customer_code, branch, primary_device_name, primary_device_ip, access_port, status
@@ -1435,7 +1529,7 @@ if ($query !== '' && $db instanceof PDO) {
     }
 }
 
-$recentTickets = spog_rows(
+$recentTickets = !$actorCanMessagingRead ? [] : spog_rows(
     $db,
     "SELECT ticket_no, customer_account_id, subscriber_code, customer_name, subject, status, area, opened_at
      FROM portal_tickets
@@ -1444,7 +1538,7 @@ $recentTickets = spog_rows(
     [],
     8
 );
-$recentPayments = spog_rows(
+$recentPayments = !$actorCanBillingRead ? [] : spog_rows(
     $db,
     "SELECT p.account_id, p.subscriber_code, p.amount, p.payment_method, p.transaction_id, p.created_at, a.full_name
      FROM billing_payments p
@@ -1453,7 +1547,7 @@ $recentPayments = spog_rows(
     [],
     8
 );
-$recentMessages = spog_rows(
+$recentMessages = !$actorCanMessagingRead ? [] : spog_rows(
     $db,
     "SELECT account_id, subscriber_code, recipient_name, channel, status, template_code, created_at
      FROM communication_messages
@@ -1461,7 +1555,7 @@ $recentMessages = spog_rows(
     [],
     8
 );
-$recentRadius = spog_rows(
+$recentRadius = !$actorCanNetworkRead ? [] : spog_rows(
     $db,
     "SELECT username, framedipaddress, callingstationid, nasipaddress, acctstarttime, acctstoptime, acctinputoctets, acctoutputoctets
      FROM radacct
@@ -1605,6 +1699,7 @@ $shouldRenderSearch = $activeOpsSection === 'search' || ($query !== '' && $activ
 $moduleCards = [
     [
         'title' => 'Musteri 360',
+        'module' => 'billing',
         'status' => 'aktiv',
         'icon' => 'fa-user-shield',
         'text' => 'Profil, balans, Radius, ONT, odenis, ticket ve mesaj tarixcesi bir yerde.',
@@ -1612,6 +1707,7 @@ $moduleCards = [
     ],
     [
         'title' => 'Billing / maliyye',
+        'module' => 'billing',
         'status' => 'aktiv',
         'icon' => 'fa-wallet',
         'text' => 'Odenisler, nagd odenis, paketler, borclular ve provider tarixcesi.',
@@ -1619,6 +1715,7 @@ $moduleCards = [
     ],
     [
         'title' => 'RADIUS / NAS',
+        'module' => 'network',
         'status' => 'aktiv',
         'icon' => 'fa-satellite-dish',
         'text' => 'Online sessiyalar, auth/reject, accounting ve NAT log axtarisi.',
@@ -1626,6 +1723,7 @@ $moduleCards = [
     ],
     [
         'title' => 'Network / NOC',
+        'module' => 'network',
         'status' => $serviceHealth['network'] ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-network-wired',
         'text' => 'VLAN/MPLS planlari, alarmlar, root cause ve device konteksti.',
@@ -1633,6 +1731,7 @@ $moduleCards = [
     ],
     [
         'title' => 'Anbar',
+        'module' => 'inventory',
         'status' => $serviceHealth['inventory'] ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-boxes-stacked',
         'text' => 'Modem/ONT, kabel baraban, kritik stok ve barkod axini burada birlesmelidir.',
@@ -1640,6 +1739,7 @@ $moduleCards = [
     ],
     [
         'title' => 'Maliyyə',
+        'module' => 'finance',
         'status' => $serviceHealth['finance'] ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-coins',
         'text' => 'Medaxil, mexaric, satis, filial kesri ve gunluk maliyye qeydleri.',
@@ -1647,6 +1747,7 @@ $moduleCards = [
     ],
     [
         'title' => 'Texniki isler',
+        'module' => 'network',
         'status' => $serviceHealth['technical'] ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-screwdriver-wrench',
         'text' => 'Ticketden texniki task yaratmaq, saha isi ve material istifadesi.',
@@ -1654,13 +1755,23 @@ $moduleCards = [
     ],
     [
         'title' => 'HR / KPI',
+        'module' => 'hr',
         'status' => ($serviceHealth['attendance'] && $serviceHealth['kpi']) ? 'Aktiv' : 'Yoxlanilir',
         'icon' => 'fa-id-card-clip',
         'text' => 'Is qrafiki, davamiyyet, mezuniyyet, ticket performansi ve KPI.',
         'href' => spog_operations_url('hr', $lang),
     ],
     [
+        'title' => 'Hesabat / statistika',
+        'module' => 'statistics',
+        'status' => $serviceHealth['reports'] ? 'Aktiv' : 'Yoxlanilir',
+        'icon' => 'fa-chart-line',
+        'text' => 'Modullar uzre hesabatlar, statistika, backup ve restore veziyyeti.',
+        'href' => spog_operations_url('reports', $lang),
+    ],
+    [
         'title' => 'SPoG integration',
+        'module' => 'network',
         'status' => 'aktiv',
         'icon' => 'fa-layer-group',
         'text' => 'Alarm, dedup, Telegram bot, backup worker ve process registry vahid panelde.',
@@ -1681,6 +1792,7 @@ if (app_portal_is_admin($user)) {
 $legacyModuleMap = [
     [
         'title' => 'Network monitor',
+        'module' => 'network',
         'source' => 'GET /api/service/network-dashboard',
         'target' => 'NOC panel',
         'href' => 'noc-devices.php?view=monitor',
@@ -1689,6 +1801,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'OLT / ONT axtaris',
+        'module' => 'network',
         'source' => 'native NOC + live OLT context',
         'target' => 'OLT / ONT panel',
         'href' => 'noc-devices.php?view=devices',
@@ -1697,6 +1810,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'MPLS / VLAN',
+        'module' => 'network',
         'source' => 'oltidareetme/public/modules/mpls-page.js',
         'target' => 'Network definitions',
         'href' => 'network-definitions.php',
@@ -1705,6 +1819,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'Anbar / barkod',
+        'module' => 'inventory',
         'source' => 'GET /api/service/inventory',
         'target' => 'Anbar panel',
         'href' => spog_operations_url('inventory', $lang),
@@ -1713,6 +1828,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'HR / davamiyyet',
+        'module' => 'hr',
         'source' => 'GET /api/service/attendance',
         'target' => 'HR panel',
         'href' => spog_operations_url('hr', $lang),
@@ -1721,6 +1837,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'KPI / statistika',
+        'module' => 'hr',
         'source' => 'GET /api/service/kpi',
         'target' => 'Analitika',
         'href' => spog_operations_url('hr', $lang, ['focus' => 'kpi']),
@@ -1729,6 +1846,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'Maliyye hereketleri',
+        'module' => 'finance',
         'source' => 'GET /api/service/finance',
         'target' => 'Finance panel',
         'href' => spog_operations_url('finance', $lang),
@@ -1737,6 +1855,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'Texniki task paneli',
+        'module' => 'network',
         'source' => 'GET /api/service/technical',
         'target' => 'Texniki isler',
         'href' => spog_operations_url('technical', $lang),
@@ -1745,6 +1864,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'Istifadeciler / rollar',
+        'module' => 'hr',
         'source' => 'GET /api/service/attendance + portal auth',
         'target' => 'Users panel',
         'href' => spog_operations_url('hr', $lang),
@@ -1753,6 +1873,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'Hesabat / backup',
+        'module' => 'statistics',
         'source' => 'GET /api/service/reports',
         'target' => 'Hesabat ve backup',
         'href' => 'statistics-center.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''),
@@ -1761,6 +1882,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'SNMP trap / botlar',
+        'module' => 'ai',
         'source' => 'oltidareetme/server/services/snmp-trap-service.js',
         'target' => 'NOC + mesaj merkezi',
         'href' => spog_operations_url('bots', $lang),
@@ -1769,6 +1891,7 @@ $legacyModuleMap = [
     ],
     [
         'title' => 'SPoG process registry',
+        'module' => 'network',
         'source' => 'superopticnet/mgs-integration.php',
         'target' => 'SPoG integration',
         'href' => 'mgs-integration.php',
@@ -1787,6 +1910,9 @@ if (app_portal_is_admin($user)) {
         'icon' => 'fa-id-card',
     ];
 }
+
+$moduleCards = app_stage3_filter_workspace_cards($moduleCards, $user, $db);
+$legacyModuleMap = app_stage3_filter_workspace_cards($legacyModuleMap, $user, $db);
 ?>
 <!DOCTYPE html>
 <html lang="<?= e($lang); ?>">
@@ -1797,6 +1923,9 @@ if (app_portal_is_admin($user)) {
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/design-system.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/dashboard.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/barcode-scan.css')); ?>">
     <style>
         .spog-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}
         .spog-module-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:18px}
@@ -1937,7 +2066,7 @@ if (app_portal_is_admin($user)) {
         }
     </style>
 </head>
-<body class="portal-body">
+<body class="portal-body"<?= app_design_system_body_attribute(); ?>>
     <?php billing_render_header($operationsPageTitle, 'operations', $lang); ?>
 
     <main class="portal-layout">
@@ -2496,6 +2625,46 @@ if (app_portal_is_admin($user)) {
                     </div>
                 </article>
             </div>
+            <?php
+            // Anbar senedleri — cap linkleri. Her mal verme/medaxil/transfer/qaytarma
+            // senedi inventory-document.php?id=X ile capa acilir (kimden-kime, tarix,
+            // cedvel, imza yerleri hazir sablonla).
+            $recentInventoryDocs = function_exists('app_inventory_document_page')
+                ? app_inventory_document_page($db, ['limit' => 12])
+                : ['rows' => []];
+            $docTypeLabels = [
+                'intake' => 'Medaxil', 'handover' => 'Tehvil-teslim',
+                'branch_transfer' => 'Filial transfer', 'location_transfer' => 'Lokasiya transfer',
+                'external_return' => 'Qaytarma',
+            ];
+            $docStatusLabels = [
+                'draft' => 'Qaralama', 'pending' => 'Tesdiq gozleyir',
+                'approved' => 'Tesdiqlenib', 'rejected' => 'Imtina',
+            ];
+            ?>
+            <article class="portal-muted-card" style="margin-top:14px">
+                <strong><i class="fa-solid fa-boxes-stacked"></i> Anbar senedleri — cap</strong>
+                <small>Her mal verme / medaxil / transfer / qaytarma senedini cap ucun acin: kimden-kime, tarix, mal cedveli ve imza yeri hazirdir.</small>
+                <div class="portal-table-wrap" style="margin-top:10px">
+                    <table class="portal-table">
+                        <thead><tr><th>Sened No</th><th>Nov</th><th>Status</th><th>Tarix</th><th>Cap</th></tr></thead>
+                        <tbody>
+                        <?php foreach ((array) ($recentInventoryDocs['rows'] ?? []) as $doc): ?>
+                            <tr>
+                                <td><strong><?= e((string) ($doc['document_no'] ?? '-')); ?></strong></td>
+                                <td><?= e($docTypeLabels[(string) ($doc['document_type'] ?? '')] ?? (string) ($doc['document_type'] ?? '-')); ?></td>
+                                <td><?= e($docStatusLabels[(string) ($doc['status'] ?? '')] ?? (string) ($doc['status'] ?? '-')); ?></td>
+                                <td><?= e(billing_datetime($doc['created_at'] ?? null)); ?></td>
+                                <td><a class="portal-inline-link" target="_blank" rel="noopener" href="inventory-document.php?id=<?= (int) ($doc['id'] ?? 0); ?>"><i class="fa-solid fa-receipt"></i> Cap et</a></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if ((array) ($recentInventoryDocs['rows'] ?? []) === []): ?>
+                            <tr><td colspan="5">Hele sened yoxdur.</td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
             <?php endif; ?>
             <?php if ($inventoryTab === 'lifecycle'): ?>
             <div class="portal-grid portal-grid-3" data-inventory-lifecycle-panel style="margin-top:14px">
@@ -3952,6 +4121,7 @@ if (app_portal_is_admin($user)) {
                 }
 
                 target.replaceWith(replacement);
+                window.superopticInitModuleGroupNav?.(replacement);
                 if (options.history === 'replace') {
                     history.replaceState({finance: true}, '', canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
                 } else if (options.history !== 'none') {
@@ -3970,8 +4140,9 @@ if (app_portal_is_admin($user)) {
                 }
                 target.removeAttribute('aria-busy');
                 if (status) {
-                    status.textContent = 'Yenileme alinmadi. Bir daha cehd edin.';
+                    status.textContent = 'Yenileme alinmadi. Sehife acilir...';
                 }
+                window.location.assign(canonicalUrl.href);
             }
         };
 
@@ -4188,6 +4359,7 @@ if (app_portal_is_admin($user)) {
                 }
 
                 target.replaceWith(replacement);
+                window.superopticInitModuleGroupNav?.(replacement);
                 if (options.history === 'replace') {
                     history.replaceState({hr: true}, '', canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
                 } else if (options.history !== 'none') {
@@ -4206,8 +4378,9 @@ if (app_portal_is_admin($user)) {
                 }
                 target.removeAttribute('aria-busy');
                 if (status) {
-                    status.textContent = 'Yenileme alinmadi. Bir daha cehd edin.';
+                    status.textContent = 'Yenileme alinmadi. Sehife acilir...';
                 }
+                window.location.assign(canonicalUrl.href);
             }
         };
 
@@ -4231,7 +4404,7 @@ if (app_portal_is_admin($user)) {
                 }
                 if (form) {
                     const values = {...data, employee_account_id: data.id || ''};
-                    ['employee_account_id', 'full_name', 'login', 'job_title', 'hire_date', 'phone', 'email', 'area', 'branch_id', 'address'].forEach((name) => {
+                    ['employee_account_id', 'full_name', 'login', 'position_id', 'hire_date', 'phone', 'email', 'area', 'branch_id', 'address'].forEach((name) => {
                         const field = form.elements.namedItem(name);
                         if (field) field.value = values[name] ?? '';
                     });
@@ -4363,6 +4536,7 @@ if (app_portal_is_admin($user)) {
                 }
 
                 target.replaceWith(replacement);
+                window.superopticInitModuleGroupNav?.(replacement);
                 if (options.history === 'replace') {
                     history.replaceState({inventory: true}, '', canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
                 } else if (options.history !== 'none') {
@@ -4381,8 +4555,9 @@ if (app_portal_is_admin($user)) {
                 }
                 target.removeAttribute('aria-busy');
                 if (status) {
-                    status.textContent = 'Yenileme alinmadi. Bir daha cehd edin.';
+                    status.textContent = 'Yenileme alinmadi. Sehife acilir...';
                 }
+                window.location.assign(canonicalUrl.href);
             }
         };
 
@@ -4634,5 +4809,7 @@ if (app_portal_is_admin($user)) {
     </script>
     <?php app_noc_render_scan_bulk_script(); ?>
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
+    <script src="<?= e(app_asset('script/barcode-scan.js')); ?>" defer></script>
 </body>
 </html>

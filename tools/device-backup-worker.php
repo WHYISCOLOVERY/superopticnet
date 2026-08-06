@@ -33,7 +33,13 @@ if (!$db instanceof PDO) {
     exit(2);
 }
 
-$result = app_mgs_run_backup_worker($db, $apply, $limit, $backupType);
+$result = app_mgs_run_backup_worker(
+    $db,
+    $apply,
+    $limit,
+    $backupType,
+    app_noc_system_actor('device-backup-worker')
+);
 $status = !empty($result['ok']) ? 'ok' : 'failed';
 
 echo json_encode([

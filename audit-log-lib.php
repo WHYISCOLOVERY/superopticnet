@@ -6,10 +6,33 @@ const APP_AUDIT_SCHEMA_VERSION = '2026-07-06-audit-ledger-v3';
 const APP_AUDIT_SCHEMA_LOCK = 'superopticnet:audit-ledger-schema';
 const APP_AUDIT_VERIFY_BATCH_SIZE = 250;
 
-function app_audit_ensure_schema(PDO $db): bool
+function app_audit_ensure_schema(PDO $db, bool $forceValidation = false): bool
 {
     if ($db->inTransaction()) {
         throw new LogicException('Audit schema migration cannot run inside a transaction.');
+    }
+
+    try {
+        $marker = $db->prepare(
+            'SELECT schema_hash
+               FROM security_audit_schema_migrations
+              WHERE version_key = :version_key'
+        );
+        $marker->execute(['version_key' => APP_AUDIT_SCHEMA_VERSION]);
+        $markerIsCurrent = hash_equals(
+            hash('sha256', APP_AUDIT_SCHEMA_VERSION),
+            (string) $marker->fetchColumn()
+        );
+        if ($markerIsCurrent && !$forceValidation) {
+            return true;
+        }
+
+        app_audit_validate_schema($db);
+        if ($markerIsCurrent) {
+            return true;
+        }
+    } catch (RuntimeException) {
+        // Only the versioned migration account may repair a missing or drifted schema.
     }
 
     $lock = $db->prepare('SELECT GET_LOCK(:lock_name, 10)');
@@ -47,7 +70,7 @@ function app_audit_apply_schema(PDO $db): void
             action_type VARCHAR(64) NOT NULL,
             entity_type VARCHAR(64) NOT NULL DEFAULT '',
             entity_id VARCHAR(191) NOT NULL DEFAULT '',
-            status ENUM('planned','dry_run','pending','executed','failed','skipped') NOT NULL DEFAULT 'planned',
+            status ENUM('planned','dry_run','pending','executed','failed','skipped','reversed') NOT NULL DEFAULT 'planned',
             actor_account_id BIGINT UNSIGNED DEFAULT NULL,
             actor_name VARCHAR(191) DEFAULT NULL,
             summary VARCHAR(255) DEFAULT NULL,
@@ -211,13 +234,42 @@ function app_audit_normalize_sql(string $sql): string
     return strtolower(trim((string) preg_replace('/\s+/', ' ', str_replace('`', '', $sql))));
 }
 
+function app_audit_normalize_column_type(string $type): string
+{
+    $type = strtolower(trim($type));
+    return (string) preg_replace(
+        '/\b(bigint|int|tinyint|smallint|mediumint)\(\d+\)/',
+        '$1',
+        $type
+    );
+}
+
+function app_audit_normalize_column_default(mixed $value): ?string
+{
+    if ($value === null || strcasecmp((string) $value, 'NULL') === 0) {
+        return null;
+    }
+    $value = strtolower(trim((string) $value));
+    if (strlen($value) >= 2 && $value[0] === "'" && $value[strlen($value) - 1] === "'") {
+        $value = substr($value, 1, -1);
+    }
+    return str_replace('current_timestamp()', 'current_timestamp', $value);
+}
+
+function app_audit_normalize_column_extra(mixed $value): string
+{
+    $value = strtolower(trim((string) preg_replace('/\s+/', ' ', (string) $value)));
+    $value = str_replace(['default_generated', 'current_timestamp()'], ['', 'current_timestamp'], $value);
+    return trim((string) preg_replace('/\s+/', ' ', $value));
+}
+
 function app_audit_validate_schema(PDO $db): void
 {
     $c = static fn(string $type, string $nullable = 'NO', ?string $default = null, string $extra = ''): array => [
-        'type' => $type,
+        'type' => app_audit_normalize_column_type($type),
         'nullable' => $nullable,
-        'default' => $default,
-        'extra' => $extra,
+        'default' => app_audit_normalize_column_default($default),
+        'extra' => app_audit_normalize_column_extra($extra),
     ];
     $tables = [
         'mgs_operation_actions' => [
@@ -225,7 +277,7 @@ function app_audit_validate_schema(PDO $db): void
             'action_type' => $c('varchar(64)'),
             'entity_type' => $c('varchar(64)', 'NO', "''"),
             'entity_id' => $c('varchar(191)', 'NO', "''"),
-            'status' => $c("enum('planned','dry_run','pending','executed','failed','skipped')", 'NO', "'planned'"),
+            'status' => $c("enum('planned','dry_run','pending','executed','failed','skipped','reversed')", 'NO', "'planned'"),
             'actor_account_id' => $c('bigint(20) unsigned', 'YES'),
             'actor_name' => $c('varchar(191)', 'YES'),
             'summary' => $c('varchar(255)', 'YES'),
@@ -296,15 +348,6 @@ function app_audit_validate_schema(PDO $db): void
            FROM INFORMATION_SCHEMA.COLUMNS
           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name'
     );
-    $normalizeDefault = static function (mixed $value): ?string {
-        if ($value === null || strcasecmp((string) $value, 'NULL') === 0) {
-            return null;
-        }
-        return strtolower((string) $value);
-    };
-    $normalizeExtra = static fn(mixed $value): string => strtolower(
-        trim((string) preg_replace('/\s+/', ' ', (string) $value))
-    );
     foreach ($tables as $table => $requiredColumns) {
         $tableStatement->execute(['table_name' => $table]);
         if (strcasecmp((string) $tableStatement->fetchColumn(), 'InnoDB') !== 0) {
@@ -314,10 +357,10 @@ function app_audit_validate_schema(PDO $db): void
         $actualColumns = [];
         foreach ($columnStatement->fetchAll(PDO::FETCH_ASSOC) as $column) {
             $actualColumns[(string) $column['COLUMN_NAME']] = [
-                'type' => strtolower((string) $column['COLUMN_TYPE']),
+                'type' => app_audit_normalize_column_type((string) $column['COLUMN_TYPE']),
                 'nullable' => strtoupper((string) $column['IS_NULLABLE']),
-                'default' => $normalizeDefault($column['COLUMN_DEFAULT']),
-                'extra' => $normalizeExtra($column['EXTRA']),
+                'default' => app_audit_normalize_column_default($column['COLUMN_DEFAULT']),
+                'extra' => app_audit_normalize_column_extra($column['EXTRA']),
             ];
         }
         foreach ($requiredColumns as $column => $expected) {

@@ -3,9 +3,15 @@ declare(strict_types=1);
 
 require __DIR__ . '/config.php';
 
+// Sessiyanı hər hansı çıxışdan ƏVVƏL başlat ki, CSRF cookie-si düzgün qoyulsun.
+if (function_exists('app_session_boot')) {
+    app_session_boot();
+}
+
 $lang = app_lang();
 $flash = app_flash_message();
 $hasRecaptcha = app_config('recaptcha_site_key') !== '';
+$portalLoginUrl = rtrim(app_config('portal_url', 'https://mgt.superoptic.net/portal-login.php'), '/');
 $status = $_GET['status'] ?? '';
 
 $flagMap = [
@@ -666,24 +672,24 @@ $currentPath = strtok((string) ($_SERVER['REQUEST_URI'] ?? '/'), '?') ?: '/';
 $canonicalUrl = $siteUrl . ($currentPath === '/' ? '' : $currentPath);
 $seoMeta = [
     'az' => [
-        'title' => 'Super Optik | Fiber internet, TV, IT dəstək və proqram təminatı',
-        'description' => 'Super Optik Bakıda və bölgələrdə fiber internet, TV xidməti, biznes interneti, IT dəstək, server, şəbəkə və proqram təminatı həlləri təqdim edir.',
-        'keywords' => 'internet, internet tv, fiber internet, biznes interneti, tv xidməti, it dəstək, it support, proqram təminatı, software, server, şəbəkə, lan wan, super optik',
-        'service_type' => 'Fiber internet, TV, IT dəstək və proqram təminatı',
+        'title' => 'Super Optik | İnternet, İnternet TV, telefon və yüksək sürət',
+        'description' => 'Super Optik Bakıda və bölgələrdə yüksək sürətli fiber internet, internet TV, telefon xidməti, biznes interneti, IT dəstək, server və şəbəkə həlləri təqdim edir.',
+        'keywords' => 'internet, internet tv, telefon, yüksək sürət, yüksək sürətli internet, sürətli internet, fiber internet, ev interneti, biznes interneti, tv xidməti, ip telefoniya, telefon xidməti, it dəstək, it support, proqram təminatı, software, server, şəbəkə, lan wan, super optik, super optik tech, superoptic, superoptic.net',
+        'service_type' => 'İnternet, internet TV, telefon və yüksək sürətli fiber həllər',
         'locale' => 'az_AZ',
     ],
     'en' => [
-        'title' => 'Super Optik | Fiber internet, TV, IT support and software',
-        'description' => 'Super Optik provides fiber internet, TV service, business connectivity, IT support, server, network and software solutions in Baku and regional areas.',
-        'keywords' => 'fiber internet, internet tv, business internet, tv service, IT support, software, server, network solutions, LAN WAN, Super Optik',
-        'service_type' => 'Fiber internet, TV, IT support and software',
+        'title' => 'Super Optik | Internet, Internet TV, phone and high speed',
+        'description' => 'Super Optik provides high-speed fiber internet, internet TV, phone service, business connectivity, IT support, server and network solutions in Baku and the regions.',
+        'keywords' => 'internet, internet tv, phone, telephone, high speed, high speed internet, fast internet, fiber internet, home internet, business internet, tv service, VoIP, IP telephony, IT support, software, server, network solutions, LAN WAN, Super Optik, Super Optik Tech, superoptic, superoptic.net',
+        'service_type' => 'Internet, internet TV, phone and high-speed fiber solutions',
         'locale' => 'en_US',
     ],
     'ru' => [
-        'title' => 'Super Optik | Оптоволоконный интернет, ТВ, IT-поддержка и ПО',
-        'description' => 'Super Optik предоставляет оптоволоконный интернет, ТВ, бизнес-интернет, IT-поддержку, серверные, сетевые и программные решения в Баку и регионах.',
-        'keywords' => 'интернет, интернет тв, оптоволоконный интернет, бизнес интернет, тв, it поддержка, программное обеспечение, сервер, сеть, Super Optik',
-        'service_type' => 'Оптоволоконный интернет, ТВ, IT-поддержка и программное обеспечение',
+        'title' => 'Super Optik | Интернет, интернет ТВ, телефон и высокая скорость',
+        'description' => 'Super Optik предоставляет высокоскоростной оптоволоконный интернет, интернет ТВ, телефонию, бизнес-интернет, IT-поддержку, серверные и сетевые решения в Баку и регионах.',
+        'keywords' => 'интернет, интернет тв, телефон, высокая скорость, высокоскоростной интернет, быстрый интернет, оптоволоконный интернет, домашний интернет, бизнес интернет, тв, ip телефония, телефония, it поддержка, программное обеспечение, сервер, сеть, Super Optik, Super Optik Tech, superoptic, superoptic.net',
+        'service_type' => 'Интернет, интернет ТВ, телефон и высокоскоростные оптоволоконные решения',
         'locale' => 'ru_RU',
     ],
 ];
@@ -1178,6 +1184,8 @@ $tariffs = [
     ['audience' => 'home', 'filter' => 'bundle', 'type' => ['az' => 'Fərdi tam paket', 'en' => 'Home full bundle', 'ru' => 'Домашний полный пакет'], 'speed' => 150, 'price' => 40, 'features' => ['az' => ['İnternet', 'TV xidməti', 'Telefon xətti'], 'en' => ['Internet', 'TV service', 'Phone line'], 'ru' => ['Интернет', 'ТВ сервис', 'Телефонная линия']], 'badge' => ['az' => 'Ən çox seçilən', 'en' => 'Most chosen', 'ru' => 'Самый популярный']],
     ['audience' => 'home', 'filter' => 'internet', 'type' => ['az' => 'Fərdi internet', 'en' => 'Home internet', 'ru' => 'Домашний интернет'], 'speed' => 250, 'price' => 36, 'features' => ['az' => ['4K streaming üçün uyğun', 'Wi-Fi router dəstəyi', 'Sabit fiber xətt'], 'en' => ['Suitable for 4K streaming', 'Wi-Fi router support', 'Stable fiber line'], 'ru' => ['Подходит для 4K streaming', 'Поддержка Wi-Fi роутера', 'Стабильная fiber-линия']]],
     ['audience' => 'home', 'filter' => 'bundle', 'type' => ['az' => 'Fərdi tam paket', 'en' => 'Home full bundle', 'ru' => 'Домашний полный пакет'], 'speed' => 250, 'price' => 46, 'features' => ['az' => ['İnternet', 'TV xidməti', 'Telefon xətti'], 'en' => ['Internet', 'TV service', 'Phone line'], 'ru' => ['Интернет', 'ТВ сервис', 'Телефонная линия']]],
+    ['audience' => 'home', 'filter' => 'internet', 'type' => ['az' => 'Fərdi internet', 'en' => 'Home internet', 'ru' => 'Домашний интернет'], 'speed' => 500, 'price' => 45, 'features' => ['az' => ['Çoxcihazlı ev üçün yüksək sürət', '4K/8K streaming və oyun', 'Wi-Fi router dəstəyi'], 'en' => ['High speed for multi-device homes', '4K/8K streaming and gaming', 'Wi-Fi router support'], 'ru' => ['Высокая скорость для дома с многими устройствами', '4K/8K streaming и игры', 'Поддержка Wi-Fi роутера']], 'badge' => ['az' => 'Sürət seçimi', 'en' => 'Speed pick', 'ru' => 'Выбор скорости']],
+    ['audience' => 'home', 'filter' => 'internet', 'type' => ['az' => 'Fərdi internet', 'en' => 'Home internet', 'ru' => 'Домашний интернет'], 'speed' => 1000, 'price' => 70, 'features' => ['az' => ['1 Gbit maksimal sürət', 'Ağır yükləmə və peşəkar istifadə', 'Sabit fiber xətt'], 'en' => ['1 Gbit maximum speed', 'Heavy downloads and professional use', 'Stable fiber line'], 'ru' => ['Максимальная скорость 1 Гбит', 'Тяжелые загрузки и профессиональное использование', 'Стабильная fiber-линия']], 'badge' => ['az' => 'Maksimal sürət', 'en' => 'Max speed', 'ru' => 'Максимальная скорость']],
     ['audience' => 'business', 'filter' => 'internet', 'type' => ['az' => 'Biznes internet', 'en' => 'Business internet', 'ru' => 'Бизнес интернет'], 'speed' => 100, 'price' => 30, 'features' => ['az' => ['Fərdi paketdən 5 AZN yuxarı baza', 'Prioritet dəstək', 'Ofis üçün sabit xətt'], 'en' => ['Base price 5 AZN above home plan', 'Priority support', 'Stable line for office use'], 'ru' => ['Базовая цена на 5 AZN выше домашнего тарифа', 'Приоритетная поддержка', 'Стабильная линия для офиса']]],
     ['audience' => 'business', 'filter' => 'internet-tv', 'type' => ['az' => 'Biznes internet + TV', 'en' => 'Business internet + TV', 'ru' => 'Бизнес интернет + ТВ'], 'speed' => 100, 'price' => 40, 'features' => ['az' => ['Baza qiymət + TV 10 AZN', 'Gözləmə zonası üçün TV', 'Fiber optik xətt'], 'en' => ['Base price + TV 10 AZN', 'TV for waiting areas', 'Fiber line'], 'ru' => ['Базовая цена + ТВ 10 AZN', 'ТВ для зоны ожидания', 'Оптоволоконная линия']]],
     ['audience' => 'business', 'filter' => 'internet-phone', 'type' => ['az' => 'Biznes internet + Telefon', 'en' => 'Business internet + Phone', 'ru' => 'Бизнес интернет + Телефон'], 'speed' => 100, 'price' => 40, 'features' => ['az' => ['Baza qiymət + Telefon 10 AZN', 'Sabit əlaqə xətti', 'Ofis üçün uyğun'], 'en' => ['Base price + Phone 10 AZN', 'Fixed communication line', 'Suitable for office use'], 'ru' => ['Базовая цена + Телефон 10 AZN', 'Стационарная линия связи', 'Подходит для офиса']]],
@@ -1186,6 +1194,8 @@ $tariffs = [
     ['audience' => 'business', 'filter' => 'bundle', 'type' => ['az' => 'Biznes tam paket', 'en' => 'Business full bundle', 'ru' => 'Бизнес полный пакет'], 'speed' => 150, 'price' => 55, 'features' => ['az' => ['İnternet', 'TV xidməti', 'Telefon xətti'], 'en' => ['Internet', 'TV service', 'Phone line'], 'ru' => ['Интернет', 'ТВ сервис', 'Телефонная линия']]],
     ['audience' => 'business', 'filter' => 'internet', 'type' => ['az' => 'Biznes internet', 'en' => 'Business internet', 'ru' => 'Бизнес интернет'], 'speed' => 250, 'price' => 41, 'features' => ['az' => ['Ofis və kamera sistemi üçün uyğun', 'Şəbəkə dayanıqlığı', 'Prioritet xidmət'], 'en' => ['Suitable for office and camera systems', 'Network stability', 'Priority service'], 'ru' => ['Подходит для офиса и камер', 'Стабильность сети', 'Приоритетный сервис']]],
     ['audience' => 'business', 'filter' => 'bundle', 'type' => ['az' => 'Biznes tam paket', 'en' => 'Business full bundle', 'ru' => 'Бизнес полный пакет'], 'speed' => 250, 'price' => 61, 'features' => ['az' => ['İnternet', 'TV xidməti', 'Telefon xətti'], 'en' => ['Internet', 'TV service', 'Phone line'], 'ru' => ['Интернет', 'ТВ сервис', 'Телефонная линия']]],
+    ['audience' => 'business', 'filter' => 'internet', 'type' => ['az' => 'Biznes internet', 'en' => 'Business internet', 'ru' => 'Бизнес интернет'], 'speed' => 500, 'price' => 50, 'features' => ['az' => ['Böyük ofis və server yükü üçün', 'Prioritet dəstək', 'Şəbəkə dayanıqlığı'], 'en' => ['For large offices and server load', 'Priority support', 'Network stability'], 'ru' => ['Для крупных офисов и серверной нагрузки', 'Приоритетная поддержка', 'Стабильность сети']]],
+    ['audience' => 'business', 'filter' => 'internet', 'type' => ['az' => 'Biznes internet', 'en' => 'Business internet', 'ru' => 'Бизнес интернет'], 'speed' => 1000, 'price' => 75, 'features' => ['az' => ['1 Gbit maksimal sürət', 'Kamera və bulud sistemləri üçün', 'Prioritet xidmət'], 'en' => ['1 Gbit maximum speed', 'For camera and cloud systems', 'Priority service'], 'ru' => ['Максимальная скорость 1 Гбит', 'Для камер и облачных систем', 'Приоритетный сервис']], 'badge' => ['az' => 'Maksimal sürət', 'en' => 'Max speed', 'ru' => 'Максимальная скорость']],
 ];
 $supportPhoneDisplay = '+994 12 525 88 11';
 $supportPhoneHref = 'tel:+994125258811';
@@ -1281,9 +1291,22 @@ $toSearchKey = static function (string $value): string {
     <meta name="description" content="<?= e($seo['description']); ?>">
     <meta name="keywords" content="<?= e($seo['keywords']); ?>">
     <meta name="author" content="Super Optik Tech">
+    <meta name="application-name" content="Super Optik">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
     <meta name="theme-color" content="#10233f">
+    <meta name="geo.region" content="AZ">
+    <meta name="geo.placename" content="Bakı, Azərbaycan">
     <link rel="canonical" href="<?= e($canonicalUrl); ?>">
+    <?php
+    $seoBase = $siteUrl . ($currentPath === '/' ? '/' : $currentPath);
+    $seoAlt = static function (string $l) use ($seoBase): string {
+        return $l === 'az' ? $seoBase : $seoBase . (strpos($seoBase, '?') !== false ? '&' : '?') . 'lang=' . $l;
+    };
+    ?>
+    <link rel="alternate" hreflang="az" href="<?= e($seoAlt('az')); ?>">
+    <link rel="alternate" hreflang="en" href="<?= e($seoAlt('en')); ?>">
+    <link rel="alternate" hreflang="ru" href="<?= e($seoAlt('ru')); ?>">
+    <link rel="alternate" hreflang="x-default" href="<?= e($seoAlt('az')); ?>">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Super Optik">
     <meta property="og:locale" content="<?= e($seo['locale']); ?>">
@@ -1298,63 +1321,136 @@ $toSearchKey = static function (string $value): string {
     <link rel="shortcut icon" href="images/favicon.png">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="stylesheet" href="css/fontawesome-lite.css">
-    <link rel="stylesheet" href="<?= e(app_asset('css/style.css')); ?>">
-    <link rel="stylesheet" href="<?= e(app_asset('css/stylemedia.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/fiber-site.css')); ?>">
     <script type="application/ld+json"><?= json_encode(['@context' => 'https://schema.org', '@graph' => $schemaGraph], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?></script>
 </head>
     <body>
-        <?php if ($flash !== null): ?>
-        <div class="notice notice-<?= e($flash['type']); ?>" data-flash-notice>
-            <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
-            <span><?= e($flash['message']); ?></span>
-        </div>
+    <div id="fiber-loader"><div><div class="loader-mark">Super <span>Optik</span> Tech</div><div class="loader-line"><i></i></div></div></div>
+    <script>try{var _t=localStorage.getItem('so-theme');if(_t)document.documentElement.setAttribute('data-theme',_t);}catch(e){}</script>
+    <canvas id="fiber-bg" aria-hidden="true"></canvas>
+    <canvas id="cursor-trail" aria-hidden="true"></canvas>
+    <div class="fiber-veil" aria-hidden="true"></div>
+    <div class="cursor-ring" aria-hidden="true"></div><div class="cursor-dot" aria-hidden="true"></div>
+    <?php
+    $qs = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
+    // Yeni bölmələr üçün tərcümələr (dil dəyişəndə hamısı dəyişsin).
+    $fiberTr = [
+        'az' => [
+            'adv_title' => 'Niyə Super Optik?',
+            'adv' => [['Öz fiber şəbəkəmiz','Uçdan-uca öz infrastrukturumuz — stabil sürət, aşağı gecikmə.'],['TV + İnternet + Telefon','Hər şey bir xətdə, bir hesabda, bir ödənişdə.'],['7/24 texniki dəstək','Yerli komanda, sürətli çıxış, uzaqdan diaqnostika.'],['Etibarlı ödəniş','Terminal, onlayn və avtomatik ödəniş — istədiyin kimi.']],
+            'cov_title' => 'Fiber şəbəkəmiz genişlənir', 'cov_text' => 'Bakı və regionlar üzrə aktiv xidmət. Ünvanını yaz — əhatəni yoxlayaq.',
+            'pay_title' => 'Rahat ödəniş kanalları', 'pay_text' => 'Ödənişinizi istədiyiniz platformadan edin — sistem avtomatik oturur.',
+            'con_title' => 'Bizimlə əlaqə', 'con_text' => 'Sual, qoşulma və ya texniki dəstək — qısa müddətdə cavab veririk.',
+            'c_phone' => 'Qaynar xətt', 'c_mail' => 'E-poçt', 'c_portal' => 'Müştəri paneli',
+            'sup_help' => 'Problemi həll edə bilmədinizsə, birbaşa komandamızla əlaqə saxlayın.',
+            'news_all' => 'Hamısı', 'f_home' => 'Ev interneti', 'f_biz' => 'Biznes', 'f_tv' => 'TV + İnternet',
+        ],
+        'en' => [
+            'adv_title' => 'Why Super Optik?',
+            'adv' => [['Our own fiber network','End-to-end own infrastructure — stable speed, low latency.'],['TV + Internet + Phone','Everything on one line, one account, one payment.'],['24/7 technical support','Local team, fast dispatch, remote diagnostics.'],['Reliable payment','Terminal, online and automatic payment — your choice.']],
+            'cov_title' => 'Our fiber network is expanding', 'cov_text' => 'Active service across Baku and regions. Type your address — we will check coverage.',
+            'pay_title' => 'Convenient payment channels', 'pay_text' => 'Pay from any platform you prefer — it posts to the system automatically.',
+            'con_title' => 'Contact us', 'con_text' => 'Questions, connection or technical support — we reply quickly.',
+            'c_phone' => 'Hotline', 'c_mail' => 'Email', 'c_portal' => 'Customer panel',
+            'sup_help' => 'If you could not resolve the issue, contact our team directly.',
+            'news_all' => 'All', 'f_home' => 'Home internet', 'f_biz' => 'Business', 'f_tv' => 'TV + Internet',
+        ],
+        'ru' => [
+            'adv_title' => 'Почему Super Optik?',
+            'adv' => [['Собственная оптоволоконная сеть','Собственная инфраструктура — стабильная скорость, низкая задержка.'],['ТВ + Интернет + Телефон','Всё на одной линии, одном счёте, одном платеже.'],['Поддержка 24/7','Местная команда, быстрый выезд, удалённая диагностика.'],['Надёжная оплата','Терминал, онлайн и автоплатёж — как удобно вам.']],
+            'cov_title' => 'Наша оптоволоконная сеть расширяется', 'cov_text' => 'Активный сервис по Баку и регионам. Укажите адрес — проверим покрытие.',
+            'pay_title' => 'Удобные каналы оплаты', 'pay_text' => 'Оплачивайте с любой удобной платформы — платёж поступает автоматически.',
+            'con_title' => 'Связаться с нами', 'con_text' => 'Вопросы, подключение или техподдержка — отвечаем быстро.',
+            'c_phone' => 'Горячая линия', 'c_mail' => 'Эл. почта', 'c_portal' => 'Панель клиента',
+            'sup_help' => 'Если не удалось решить проблему, свяжитесь с командой напрямую.',
+            'news_all' => 'Все', 'f_home' => 'Домашний интернет', 'f_biz' => 'Бизнес', 'f_tv' => 'ТВ + Интернет',
+        ],
+    ];
+    $T = $fiberTr[$lang] ?? $fiberTr['az'];
+    require_once __DIR__ . '/page-helpers.php';
+    $PL = page_labels()[$lang] ?? page_labels()['az'];
+    // Inline SVG icons — fontawesome-lite məhdud olduğu üçün (internetsiz serverdə etibarlı).
+    if (!function_exists('svgi')) {
+        function svgi(string $name, int $size = 20): string {
+            $p = [
+                'bolt' => '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
+                'tv' => '<rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>',
+                'headset' => '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2" y="13" width="4" height="7" rx="2"/><rect x="18" y="13" width="4" height="7" rx="2"/><path d="M20 20a4 4 0 0 1-4 4h-2"/>',
+                'shield' => '<path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3z"/><path d="m9 12 2 2 4-4"/>',
+                'phone' => '<path d="M4 4h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 2 6a2 2 0 0 1 2-2z"/>',
+                'mail' => '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m3 6 9 7 9-7"/>',
+                'user-shield' => '<circle cx="9" cy="8" r="4"/><path d="M3 20a6 6 0 0 1 9-5"/><path d="M18 13l3 1v3c0 2-1.5 3.5-3 4-1.5-.5-3-2-3-4v-3l3-1z"/>',
+                'chevron' => '<path d="m6 9 6 6 6-6"/>',
+                'help' => '<circle cx="12" cy="12" r="10"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .8-1 1.7M12 17h.01"/>',
+                'wifi' => '<path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 15.5a6 6 0 0 1 7 0M12 19h.01"/>',
+                'server' => '<rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><path d="M7 7h.01M7 17h.01"/>',
+                'globe' => '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>',
+                'router' => '<rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 17h.01M11 17h6M12 9V6M12 6a4 4 0 0 0-4 4M12 6a4 4 0 0 1 4 4"/>',
+                'house' => '<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>',
+                'house-signal' => '<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-4h4v4"/><path d="M16 6a4 4 0 0 1 0 6"/>',
+                'download' => '<path d="M12 3v12M7 11l5 5 5-5M4 21h16"/>',
+                'upload' => '<path d="M12 21V9M7 13l5-5 5 5M4 3h16"/>',
+                'gamepad' => '<rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 11v2M6 12h2M15 11h.01M18 13h.01"/>',
+                'video' => '<rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3z"/>',
+                'satellite' => '<path d="M4 11a9 9 0 0 1 9 9M4 16a4 4 0 0 1 4 4"/><circle cx="5" cy="19" r="1"/><path d="M14 4l6 6-3 3-6-6z"/>',
+                'coins' => '<ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v5c0 1.7 2.7 3 6 3M3 12v5c0 1.7 2.7 3 6 3"/><ellipse cx="16" cy="14" rx="5" ry="2.5"/><path d="M11 14v5c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5v-5"/>',
+                'bars' => '<path d="M3 6h18M3 12h18M3 18h18"/>',
+                'search' => '<circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/>',
+                'zap' => '<path d="M4 12h4l2-4 4 8 2-4h4"/>',
+                'check' => '<circle cx="12" cy="12" r="10" fill="rgba(0,229,255,.16)"/><path d="m8 12 2.5 2.5L16 9"/>',
+                'sun' => '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/>',
+                'moon' => '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+            ];
+            $d = $p[$name] ?? '<circle cx="12" cy="12" r="9"/>';
+            return '<svg class="svgi" width="' . $size . '" height="' . $size . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $d . '</svg>';
+        }
+    }
+    ?>
+
+    <?php if ($flash !== null): ?>
+    <div class="notice notice-<?= e($flash['type']); ?>" data-flash-notice>
+        <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
+        <span><?= e($flash['message']); ?></span>
+    </div>
     <?php endif; ?>
 
     <header class="site-header">
         <div class="container header-inner">
-            <a href="index.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="brand" aria-label="Home">
+            <a href="index.php<?= $qs; ?>" class="brand" aria-label="Home">
                 <img src="images/favicon.png" alt="Super Optik Tech logo">
-                <span class="brand-mark">
-                    <span class="brand-word brand-word-super">Super</span>
-                    <span class="brand-word brand-word-optik">Optik</span>
-                </span>
+                <span class="brand-mark"><span class="brand-word-super">Super</span><span class="brand-word-optik">Optik</span></span>
             </a>
-
-            <button class="mobile-nav-toggle" type="button" aria-label="Menu" data-mobile-nav-toggle>
-                <i class="fa-solid fa-bars"></i>
-            </button>
-
+            <button class="mobile-nav-toggle" type="button" aria-label="Menu" data-mobile-nav-toggle><?= svgi("bars") ?></button>
             <nav class="main-nav" data-mobile-nav>
                 <a href="#tariffs"><?= e($copy['nav'][1]); ?></a>
                 <a href="#services"><?= e($copy['nav'][2]); ?></a>
                 <a href="#coverage"><?= e($copy['nav'][3]); ?></a>
-                <a href="#support"><?= e($copy['nav'][4]); ?></a>
-                <a href="#news"><?= e($copy['nav'][5]); ?></a>
+                <a href="#support"><?= e($copy['support']['eyebrow']); ?></a>
                 <a href="#tvnet"><?= e($sectionLabels['tv'][$lang] ?? $sectionLabels['tv']['az']); ?></a>
+                <a href="#news"><?= e($copy['nav'][5] ?? 'Xəbərlər'); ?></a>
                 <a href="#payments"><?= e($sectionLabels['payments'][$lang] ?? $sectionLabels['payments']['az']); ?></a>
+                <a href="#contact"><?= e($copy['nav'][4]); ?></a>
             </nav>
-
             <div class="header-actions" data-mobile-actions>
                 <a class="header-link header-link-phone" href="<?= e($supportPhoneHref); ?>">
-                    <i class="fa-solid fa-phone-volume"></i>
-                    <span class="header-link-stack">
-                        <strong><?= e($supportPhoneDisplay); ?></strong>
-                        <small><?= e($publicCta[$lang]['call_note'] ?? $publicCta['az']['call_note']); ?></small>
-                    </span>
+                    <?= svgi("phone") ?>
+                    <span class="header-link-stack"><strong><?= e($supportPhoneDisplay); ?></strong><small><?= e($publicCta[$lang]['call_note'] ?? $publicCta['az']['call_note']); ?></small></span>
                 </a>
-                <a class="header-link header-link-portal header-link-muted" href="portal-login.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><?= e($publicCta[$lang]['portal_label'] ?? $publicCta['az']['portal_label']); ?></a>
-
+                <a class="header-link header-link-portal" href="<?= e($portalLoginUrl . $qs); ?>"><?= e($publicCta[$lang]['portal_label'] ?? $publicCta['az']['portal_label']); ?></a>
                 <?php if ($showLanguageMenu): ?>
-                <div class="language-dropdown">
-                    <button class="language-button" type="button" aria-label="Language">
-                        <img id="selectedLangFlag" src="images/<?= e($flagMap[$lang] ?? 'azerbaijan.png'); ?>" alt="<?= e(strtoupper($lang)); ?>">
-                        <span id="selectedLangName"><?= e(strtoupper($lang)); ?></span>
-                        <i class="fa-solid fa-chevron-down"></i>
+                <button class="theme-toggle" type="button" data-theme-toggle aria-label="Tema">
+                    <span class="tt-moon"><?= svgi('moon',18); ?></span>
+                    <span class="tt-sun"><?= svgi('sun',18); ?></span>
+                </button>
+                <div class="language-dropdown" data-lang-dropdown>
+                    <button class="language-button" type="button" aria-label="Language" data-lang-toggle>
+                        <img src="images/<?= e($flagMap[$lang] ?? 'azerbaijan.png'); ?>" alt="<?= e(strtoupper($lang)); ?>">
+                        <span><?= e(strtoupper($lang)); ?></span><?= svgi("chevron",14) ?>
                     </button>
                     <div class="language-menu">
-                        <a href="#" class="lang-option" data-lang="az"><img src="images/azerbaijan.png" alt="AZ"> <span>AZ</span></a>
-                        <a href="#" class="lang-option" data-lang="en"><img src="images/eng.png" alt="EN"> <span>EN</span></a>
-                        <a href="#" class="lang-option" data-lang="ru"><img src="images/rus.png" alt="RU"> <span>RU</span></a>
+                        <a class="lang-option" data-lang="az" href="?lang=az"><img src="images/azerbaijan.png" alt="AZ"><span>AZ</span></a>
+                        <a class="lang-option" data-lang="en" href="?lang=en"><img src="images/eng.png" alt="EN"><span>EN</span></a>
+                        <a class="lang-option" data-lang="ru" href="?lang=ru"><img src="images/rus.png" alt="RU"><span>RU</span></a>
                     </div>
                 </div>
                 <?php endif; ?>
@@ -1363,338 +1459,175 @@ $toSearchKey = static function (string $value): string {
     </header>
 
     <main>
+        <!-- HERO -->
         <section class="hero-section" id="home">
-            <div class="hero-backdrop"></div>
             <div class="container hero-grid">
                 <div class="hero-copy">
                     <span class="eyebrow"><?= e($publicCta[$lang]['hero_eyebrow'] ?? $publicCta['az']['hero_eyebrow']); ?></span>
                     <h1><?= e($publicCta[$lang]['hero_title'] ?? $publicCta['az']['hero_title']); ?></h1>
                     <p class="hero-text"><?= e($publicCta[$lang]['hero_text'] ?? $publicCta['az']['hero_text']); ?></p>
-
                     <div class="hero-points">
                         <?php foreach (($salesHero[$lang]['proofs'] ?? $salesHero['az']['proofs']) as $proof): ?>
-                            <div class="hero-point">
-                                <i class="fa-solid fa-circle-check"></i>
-                                <div>
-                                    <strong><?= e($proof['value']); ?></strong>
-                                    <span><?= e($proof['label']); ?></span>
-                                </div>
-                            </div>
+                        <div class="hero-point"><span class="hp-check"><?= svgi("check",20) ?></span><div><strong><?= e($proof['value']); ?></strong><span><?= e($proof['label']); ?></span></div></div>
                         <?php endforeach; ?>
                     </div>
-
                     <div class="hero-actions">
                         <a href="#connection-form" class="button button-primary"><?= e($publicCta[$lang]['hero_primary'] ?? $publicCta['az']['hero_primary']); ?></a>
                         <a href="#coverage" class="button button-secondary"><?= e($publicCta[$lang]['hero_secondary'] ?? $publicCta['az']['hero_secondary']); ?></a>
                     </div>
                     <p class="hero-copy-note"><?= e($publicCta[$lang]['hero_note'] ?? $publicCta['az']['hero_note']); ?></p>
                 </div>
-
                 <div class="hero-panel">
-                    <div class="panel-content is-active panel-content-primary" id="connection-form">
-                        <div class="lead-box-title">
-                            <h2><?= e($publicCta[$lang]['form_title'] ?? $publicCta['az']['form_title']); ?></h2>
-                            <p><?= e($publicCta[$lang]['form_text'] ?? $publicCta['az']['form_text']); ?></p>
+                    <div class="panel-content" id="connection-form">
+                        <div class="lead-gauge">
+                            <svg width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="25" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="6"/><circle cx="30" cy="30" r="25" fill="none" stroke="url(#gg)" stroke-width="6" stroke-linecap="round" stroke-dasharray="157" stroke-dashoffset="26" transform="rotate(-90 30 30)"/><defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6e0"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs></svg>
+                            <div><div class="g-val grad-txt" id="live-speed">940</div><div class="g-lab">Mbit/s — canlı fiber sürəti</div></div>
                         </div>
-
-                        <form class="lead-form" action="form-telegram.php" method="post">
+                        <div class="lead-box-title"><h2><?= e($publicCta[$lang]['form_title'] ?? $publicCta['az']['form_title']); ?></h2><p><?= e($publicCta[$lang]['form_text'] ?? $publicCta['az']['form_text']); ?></p></div>
+                        <form class="lead-form" action="muraciet-gonder.php" method="post">
                             <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                             <input type="hidden" name="lang" value="<?= e($lang); ?>">
                             <input type="hidden" name="message" value="<?= e($salesHero[$lang]['default_message'] ?? $salesHero['az']['default_message']); ?>">
-
-                            <div class="form-row honeypot-row" aria-hidden="true">
-                                <label for="website">Website</label>
-                                <input id="website" type="text" name="website" tabindex="-1" autocomplete="off">
-                            </div>
-
+                            <div class="form-row honeypot-row" aria-hidden="true"><label for="website">Website</label><input id="website" type="text" name="website" tabindex="-1" autocomplete="off"></div>
                             <p class="lead-form-hint"><?= e($publicCta[$lang]['form_hint'] ?? $publicCta['az']['form_hint']); ?></p>
-
                             <div class="form-row two-columns">
-                                <div>
-                                    <label for="area"><?= e($copy['lead']['area']); ?></label>
-                                    <select id="area" name="area" required>
-                                        <option value=""><?= e($copy['lead']['area_default']); ?></option>
-                                        <?php foreach ($copy['coverage']['areas'] as $area): ?>
-                                            <option value="<?= e($area); ?>"><?= e($area); ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="phone"><?= e($copy['lead']['phone']); ?></label>
-                                    <input id="phone" type="tel" name="phone" inputmode="numeric" placeholder="<?= e($copy['lead']['placeholders'][1]); ?>" required>
-                                </div>
+                                <div><label for="area"><?= e($copy['lead']['area']); ?></label>
+                                    <select id="area" name="area" required><option value=""><?= e($copy['lead']['area_default']); ?></option>
+                                    <?php foreach ($copy['coverage']['areas'] as $area): ?><option value="<?= e($area); ?>"><?= e($area); ?></option><?php endforeach; ?></select></div>
+                                <div><label for="phone"><?= e($copy['lead']['phone']); ?></label><input id="phone" type="tel" name="phone" inputmode="numeric" placeholder="<?= e($copy['lead']['placeholders'][1]); ?>" required></div>
                             </div>
-
-                            <div class="form-row">
-                                <label for="fullName"><?= e($copy['lead']['name']); ?></label>
-                                <input id="fullName" type="text" name="full_name" placeholder="<?= e($copy['lead']['placeholders'][0]); ?>" required>
-                            </div>
-
-                            <div class="form-row">
-                                <label for="serviceType"><?= e($copy['lead']['service']); ?></label>
-                                <select id="serviceType" name="service_type" required>
-                                    <?php foreach ($copy['lead']['options'] as $index => $option): ?>
-                                        <option value="<?= $index === 0 ? '' : e($option); ?>"><?= e($option); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-
-                            <div class="form-row">
-                                <label for="email"><?= e($copy['lead']['email']); ?></label>
-                                <input id="email" type="email" name="email" placeholder="<?= e($copy['lead']['placeholders'][2]); ?>">
-                            </div>
-
-                            <?php if ($hasRecaptcha): ?>
-                                <div class="recaptcha-row">
-                                    <div class="g-recaptcha" data-sitekey="<?= e(app_config('recaptcha_site_key')); ?>"></div>
-                                </div>
-                            <?php endif; ?>
-
+                            <div class="form-row"><label for="fullName"><?= e($copy['lead']['name']); ?></label><input id="fullName" type="text" name="full_name" placeholder="<?= e($copy['lead']['placeholders'][0]); ?>" required></div>
+                            <div class="form-row"><label for="serviceType"><?= e($copy['lead']['service']); ?></label>
+                                <select id="serviceType" name="service_type" required><?php foreach ($copy['lead']['options'] as $index => $option): ?><option value="<?= $index === 0 ? '' : e($option); ?>"><?= e($option); ?></option><?php endforeach; ?></select></div>
+                            <div class="form-row"><label for="email"><?= e($copy['lead']['email']); ?></label><input id="email" type="email" name="email" placeholder="<?= e($copy['lead']['placeholders'][2]); ?>"></div>
+                            <?php if ($hasRecaptcha): ?><div class="form-row"><div class="g-recaptcha" data-sitekey="<?= e(app_config('recaptcha_site_key')); ?>"></div></div><?php endif; ?>
                             <button class="button button-primary button-block" type="submit" data-submit-label data-submitting-label="<?= e($copy['lead']['submitting']); ?>"><?= e($copy['lead']['submit']); ?></button>
                         </form>
                     </div>
-
                 </div>
             </div>
         </section>
 
-        <section class="section section-featured-offers">
+        <!-- LIVE STATS -->
+        <?php $statLabels = ['az'=>['Uptime (dayanıqlılıq)','Orta ping','Şəbəkə tutumu','Aktiv abunəçi'],'en'=>['Uptime','Average ping','Network capacity','Active subscribers'],'ru'=>['Аптайм','Средний пинг','Ёмкость сети','Активные абоненты']]; $sl = $statLabels[$lang] ?? $statLabels['az']; ?>
+        <section class="section" id="stats" style="padding-top:14px">
             <div class="container">
-                <div class="section-heading">
-                    <span class="eyebrow"><?= e($featuredOfferSection[$lang]['eyebrow'] ?? $featuredOfferSection['az']['eyebrow']); ?></span>
-                    <h2><?= e($featuredOfferSection[$lang]['title'] ?? $featuredOfferSection['az']['title']); ?></h2>
-                    <p><?= e($featuredOfferSection[$lang]['text'] ?? $featuredOfferSection['az']['text']); ?></p>
-                </div>
-
-                <div class="featured-offers-grid">
-                    <?php foreach ($featuredOffers as $offer): ?>
-                        <article class="featured-offer-card">
-                            <span class="featured-offer-tag"><?= e($offer['tag'][$lang] ?? $offer['tag']['az']); ?></span>
-                            <h3><?= e($offer['name'][$lang] ?? $offer['name']['az']); ?></h3>
-                            <div class="featured-offer-metrics">
-                                <strong><?= e((string) $offer['speed']); ?> <small>Mb/s</small></strong>
-                                <span><?= e((string) $offer['price']); ?> AZN <small><?= e($copy['tariffs']['per_month']); ?></small></span>
-                            </div>
-                            <p><?= e($offer['description'][$lang] ?? $offer['description']['az']); ?></p>
-                            <a href="#tariffs" class="button button-secondary"><?= e($featuredOfferSection[$lang]['cta'] ?? $featuredOfferSection['az']['cta']); ?></a>
-                        </article>
-                    <?php endforeach; ?>
-                </div>
-
-                <div class="order-flow-grid">
-                    <div class="order-flow-copy">
-                        <span class="eyebrow"><?= e($featuredOfferSection[$lang]['eyebrow'] ?? $featuredOfferSection['az']['eyebrow']); ?></span>
-                        <h3><?= e($featuredOfferSection[$lang]['steps_title'] ?? $featuredOfferSection['az']['steps_title']); ?></h3>
-                    </div>
-                    <div class="order-flow-steps">
-                        <?php foreach (($featuredOfferSection[$lang]['steps'] ?? $featuredOfferSection['az']['steps']) as $step): ?>
-                            <article class="order-step-card">
-                                <strong><?= e($step['title']); ?></strong>
-                                <p><?= e($step['text']); ?></p>
-                            </article>
-                        <?php endforeach; ?>
-                    </div>
+                <div class="stats-band" data-stats>
+                    <div class="stat"><div class="stat-num" data-count="99.98" data-suffix="%">0</div><div class="stat-lab"><?= e($sl[0]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="8" data-suffix=" ms">0</div><div class="stat-lab"><?= e($sl[1]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="120" data-suffix=" Gbps">0</div><div class="stat-lab"><?= e($sl[2]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="18450" data-suffix="+">0</div><div class="stat-lab"><?= e($sl[3]); ?></div></div>
                 </div>
             </div>
         </section>
 
+        <!-- PACKAGES -->
         <section class="section" id="tariffs">
             <div class="container">
-                <div class="section-heading">
-                    <span class="eyebrow"><?= e($copy['tariffs']['eyebrow']); ?></span>
-                    <h2><?= e($copy['tariffs']['title']); ?></h2>
-                    <p><?= e($copy['tariffs']['subtitle']); ?></p>
+                <div class="section-heading"><span class="eyebrow"><?= e($featuredOfferSection[$lang]['eyebrow'] ?? $featuredOfferSection['az']['eyebrow'] ?? 'Tariflər'); ?></span>
+                    <h2><?= e($featuredOfferSection[$lang]['title'] ?? $featuredOfferSection['az']['title'] ?? 'Sürətini seç — qalanını biz quraq'); ?></h2>
+                    <p><?= e($featuredOfferSection[$lang]['text'] ?? $featuredOfferSection['az']['text'] ?? 'Bütün paketlərə fiber qoşulma, modem quraşdırma və texniki dəstək daxildir.'); ?></p></div>
+                <div class="plans-grid">
+                    <?php foreach ($featuredOffers as $i => $offer): ?>
+                    <div class="plan<?= $i === 1 ? ' feat' : ''; ?>">
+                        <?php if ($i === 1): ?><span class="plan-tag"><?= e($offer['tag'][$lang] ?? $offer['tag']['az']); ?></span><?php endif; ?>
+                        <div class="plan-name"><?= e($offer['name'][$lang] ?? $offer['name']['az']); ?></div>
+                        <div class="plan-speed grad-txt"><?= (int) $offer['speed']; ?><small> Mbit</small></div>
+                        <div class="plan-price"><?= (int) $offer['price']; ?> AZN<span class="cur"> / ay</span></div>
+                        <p class="plan-desc"><?= e($offer['description'][$lang] ?? $offer['description']['az']); ?></p>
+                        <?php $sp = (int) $offer['speed']; $dl = min(100, 40 + $sp / 12); $ul = min(100, 30 + $sp / 16); ?>
+                        <div class="plan-speedbars spd-fill" data-spd>
+                            <div class="spd-row"><?= svgi("download",16) ?><div class="spd-bar"><b style="--w:<?= round($dl); ?>%"></b></div><span>Download</span></div>
+                            <div class="spd-row"><?= svgi("upload",16) ?><div class="spd-bar"><b style="--w:<?= round($ul); ?>%"></b></div><span>Upload</span></div>
+                        </div>
+                        <div class="plan-usecases">
+                            <span class="usecase <?= $sp >= 100 ? 'good' : ''; ?>"><?= svgi("tv",16) ?> 4K TV</span>
+                            <span class="usecase <?= $sp >= 300 ? 'good' : ''; ?>"><?= svgi("gamepad",16) ?> Gaming</span>
+                            <span class="usecase <?= $sp >= 500 ? 'good' : ''; ?>"><?= svgi("video",16) ?> Streaming</span>
+                        </div>
+                        <a class="button <?= $i === 1 ? 'button-primary' : 'button-secondary'; ?>" href="#connection-form"><?= e($copy['lead']['submit']); ?></a>
+                    </div>
+                    <?php endforeach; ?>
                 </div>
 
-                <div class="audience-pills">
-                    <button type="button" class="audience-pill is-active" data-audience="all"><?= e($copy['tariffs']['audiences'][0]); ?></button>
-                    <button type="button" class="audience-pill" data-audience="home"><?= e($copy['tariffs']['audiences'][1]); ?></button>
-                    <button type="button" class="audience-pill" data-audience="business"><?= e($copy['tariffs']['audiences'][2]); ?></button>
-                </div>
-
-                <div class="filter-pills">
-                    <button type="button" class="filter-pill is-active" data-filter="all"><?= e($copy['tariffs']['filters'][0]); ?></button>
-                    <button type="button" class="filter-pill" data-filter="internet"><?= e($copy['tariffs']['filters'][1]); ?></button>
-                    <button type="button" class="filter-pill" data-filter="internet-tv"><?= e($copy['tariffs']['filters'][2]); ?></button>
-                    <button type="button" class="filter-pill" data-filter="internet-phone"><?= e($copy['tariffs']['filters'][3]); ?></button>
-                    <button type="button" class="filter-pill" data-filter="bundle"><?= e($copy['tariffs']['filters'][4]); ?></button>
-                </div>
-
-                <div class="tariff-slider-shell">
-                    <button
-                        type="button"
-                        class="tariff-slider-btn tariff-slider-btn-prev"
-                        data-tariff-scroll="prev"
-                        aria-label="<?= e($tariffNavLabels['prev'][$lang] ?? $tariffNavLabels['prev']['az']); ?>"
-                    >
-                        <i class="fa-solid fa-chevron-left"></i>
-                    </button>
-
-                    <div class="tariff-slider-track" data-tariff-track>
-                        <div class="tariff-grid">
-                            <?php foreach ($tariffs as $tariff): ?>
-                                <article
-                                    class="tariff-card<?= isset($tariff['badge']) ? ' tariff-card-badged' : ''; ?>"
-                                    data-filter-item="<?= e($tariff['filter']); ?>"
-                                    data-audience-item="<?= e($tariff['audience']); ?>"
-                                    data-tariff-speed="<?= e((string) $tariff['speed']); ?>"
-                                    data-popup-theme="<?= e($tariff['audience'] === 'business' ? 'business' : ($tariff['speed'] >= 250 ? 'gaming' : 'family')); ?>"
-                                    data-tariff-card
-                                >
-                                    <div class="tariff-topline">
-                                        <span class="tariff-segment tariff-segment-<?= e($tariff['audience']); ?>"><?= e($tariff['audience'] === 'business' ? $copy['tariffs']['segment_business'] : $copy['tariffs']['segment_home']); ?></span>
-                                        <?php if (isset($tariff['badge'])): ?>
-                                            <span class="tariff-badge"><?= e($tariff['badge'][$lang] ?? $tariff['badge']['az']); ?></span>
-                                        <?php endif; ?>
-                                    </div>
-
-                                    <div class="tariff-top">
-                                        <span class="tariff-type"><?= e($tariff['type'][$lang] ?? $tariff['type']['az']); ?></span>
-                                        <strong class="tariff-speed"><?= e((string) $tariff['speed']); ?> <small>Mb/s</small></strong>
-                                    </div>
-
-                                    <ul class="tariff-features">
-                                        <?php foreach (($tariff['features'][$lang] ?? $tariff['features']['az']) as $feature): ?>
-                                            <li><?= e($feature); ?></li>
-                                        <?php endforeach; ?>
-                                    </ul>
-
-                                    <div class="tariff-bottom">
-                                        <div class="tariff-price"><?= e((string) $tariff['price']); ?> AZN <span><?= e($copy['tariffs']['per_month']); ?></span></div>
-                                        <a href="#contact" class="button button-secondary"><?= e($copy['tariffs']['order']); ?></a>
-                                    </div>
-                                </article>
+                <!-- Full tariff table (home + business) -->
+                <?php
+                $tHome = array_values(array_filter($tariffs, static fn ($t) => ($t['audience'] ?? '') === 'home'));
+                $tBiz  = array_values(array_filter($tariffs, static fn ($t) => ($t['audience'] ?? '') === 'business'));
+                $tLabel = ['az' => ['all' => 'Bütün tariflər', 'home' => 'Ev', 'business' => 'Biznes', 'title' => 'Tam tarif cədvəli', 'speed' => 'Sürət', 'price' => 'Qiymət', 'select' => 'Seç'], 'en' => ['all' => 'All plans', 'home' => 'Home', 'business' => 'Business', 'title' => 'Full tariff table', 'speed' => 'Speed', 'price' => 'Price', 'select' => 'Select'], 'ru' => ['all' => 'Все тарифы', 'home' => 'Дом', 'business' => 'Бизнес', 'title' => 'Полная таблица тарифов', 'speed' => 'Скорость', 'price' => 'Цена', 'select' => 'Выбрать']];
+                $tl = $tLabel[$lang] ?? $tLabel['az'];
+                ?>
+                <div class="tariff-full" style="margin-top:46px">
+                    <div class="section-heading" style="margin-bottom:24px"><h2 style="font-size:1.5rem"><?= e($tl['title']); ?></h2></div>
+                    <div class="tariff-filters">
+                        <button type="button" class="tariff-filter active" data-tf="all"><?= e($tl['all']); ?></button>
+                        <button type="button" class="tariff-filter" data-tf="home"><?= svgi('house-signal',16); ?> <?= e($tl['home']); ?></button>
+                        <button type="button" class="tariff-filter" data-tf="business"><?= svgi('server',16); ?> <?= e($tl['business']); ?></button>
+                    </div>
+                    <div class="tariff-carousel">
+                        <button type="button" class="tc-nav tc-prev" data-tc="prev" aria-label="Əvvəlki"><?= svgi('chevron',22); ?></button>
+                        <div class="tariff-rows" id="tariff-track">
+                            <?php foreach ($tariffs as $t): $aud = (string) ($t['audience'] ?? 'home'); ?>
+                            <div class="tariff-row" data-aud="<?= e($aud); ?>">
+                                <span class="tr-badge tr-<?= e($aud); ?>"><?= $aud === 'business' ? svgi('server',15) : svgi('house-signal',15); ?> <?= e($tl[$aud] ?? $aud); ?></span>
+                                <span class="tr-name"><?= e($t['type'][$lang] ?? $t['type']['az'] ?? ''); ?></span>
+                                <span class="tr-speed"><?= (int) ($t['speed'] ?? 0); ?> <small>Mbit</small></span>
+                                <span class="tr-price"><?= (int) ($t['price'] ?? 0); ?> <small>AZN/ay</small></span>
+                                <a class="button button-secondary tr-btn" href="#connection-form"><?= e($tl['select']); ?></a>
+                            </div>
                             <?php endforeach; ?>
                         </div>
+                        <button type="button" class="tc-nav tc-next" data-tc="next" aria-label="Növbəti"><?= svgi('chevron',22); ?></button>
                     </div>
-
-                    <button
-                        type="button"
-                        class="tariff-slider-btn tariff-slider-btn-next"
-                        data-tariff-scroll="next"
-                        aria-label="<?= e($tariffNavLabels['next'][$lang] ?? $tariffNavLabels['next']['az']); ?>"
-                    >
-                        <i class="fa-solid fa-chevron-right"></i>
-                    </button>
-                </div>
-
-                <div class="modem-strip">
-                    <?php foreach ($copy['tariffs']['modems'] as $modem): ?>
-                        <article class="modem-card">
-                            <strong><?= e($modem['title']); ?></strong>
-                            <span><?= e($modem['text']); ?></span>
-                        </article>
-                    <?php endforeach; ?>
                 </div>
             </div>
         </section>
 
+        <!-- ADVANTAGES -->
         <section class="section section-alt" id="services">
             <div class="container">
-                <div class="section-heading">
-                    <span class="eyebrow"><?= e($copy['services']['eyebrow']); ?></span>
-                    <h2><?= e($copy['services']['title']); ?></h2>
-                    <p><?= e($copy['services']['subtitle']); ?></p>
-                </div>
-
-                <div class="service-grid">
-                    <?php foreach ($copy['services']['items'] as $service): ?>
-                        <details class="service-card">
-                            <summary>
-                                <div class="service-icon"><i class="<?= e($service['icon']); ?>"></i></div>
-                                <div>
-                                    <h3><?= e($service['title']); ?></h3>
-                                    <p><?= e($service['summary']); ?></p>
-                                </div>
-                                <i class="fa-solid fa-plus"></i>
-                            </summary>
-                            <div class="service-body">
-                                <p><?= e($service['details']); ?></p>
-                            </div>
-                        </details>
+                <div class="section-heading"><span class="eyebrow"><?= e($copy['nav'][2]); ?></span><h2><?= e($T['adv_title']); ?></h2></div>
+                <div class="feat-grid">
+                    <?php $advIcons = ['bolt','tv','headset','shield']; foreach ($T['adv'] as $ai => $adv): ?>
+                    <div class="feat"><div class="ic"><?= svgi($advIcons[$ai] ?? 'zap', 24); ?></div><h3><?= e($adv[0]); ?></h3><p><?= e($adv[1]); ?></p></div>
                     <?php endforeach; ?>
                 </div>
             </div>
         </section>
 
-        <section class="section" id="coverage">
-            <div class="container coverage-grid">
-                <div class="coverage-copy">
-                    <div class="section-heading left-aligned">
-                        <span class="eyebrow"><?= e($copy['coverage']['eyebrow']); ?></span>
-                        <h2><?= e($copy['coverage']['title']); ?></h2>
-                        <p><?= e($copy['coverage']['subtitle']); ?></p>
-                    </div>
-
-                    <div class="coverage-directory">
-                        <div class="coverage-search">
-                            <label for="coverageSearch"><?= e($coveragePanel[$lang]['search_label']); ?></label>
-                            <input id="coverageSearch" type="search" placeholder="<?= e($coveragePanel[$lang]['search_placeholder']); ?>" data-coverage-search>
-                        </div>
-                        <div class="coverage-list-scroll">
-                            <ul class="coverage-list">
-                                <?php foreach ($copy['coverage']['areas'] as $area): ?>
-                                    <li data-coverage-item data-coverage-name="<?= e($area); ?>" data-coverage-key="<?= e($toSearchKey($area)); ?>">
-                                        <strong><?= e($area); ?></strong>
-                                        <small><?= e($coveragePanel[$lang]['service_tag']); ?></small>
-                                    </li>
-                                <?php endforeach; ?>
-                            </ul>
-                        </div>
-                        <p class="coverage-list-empty" data-coverage-empty hidden><?= e($coveragePanel[$lang]['search_empty']); ?></p>
-                    </div>
-                </div>
-
-                <div class="coverage-visual">
-                    <div class="coverage-map">
-                        <img src="images/az.svg" alt="Coverage map">
-                        <?php foreach ($mapPoints as $point): ?>
-                            <?php $pointLabel = $point['label'][$lang] ?? $point['label']['az']; ?>
-                            <button type="button" id="<?= e($point['id']); ?>" class="coverage-point" style="top: calc(<?= e($point['top']); ?> - 2%); left: calc(<?= e($point['left']); ?> - 3%);" aria-label="<?= e($pointLabel); ?>">
-                                <span><?= e($pointLabel); ?></span>
-                            </button>
-                        <?php endforeach; ?>
-                    </div>
-                    <div class="coverage-note coverage-interest-card">
-                        <div class="coverage-interest-copy">
-                            <strong><?= e($coveragePanel[$lang]['interest_title']); ?></strong>
-                            <p><?= e($coveragePanel[$lang]['interest_text']); ?></p>
-                        </div>
-                        <form class="coverage-interest-form" action="area-interest.php" method="post">
-                            <input type="hidden" name="lang" value="<?= e($lang); ?>">
-                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
-                            <label for="districtInterest"><?= e($coveragePanel[$lang]['interest_label']); ?></label>
-                            <select id="districtInterest" name="district" required>
-                                <option value=""><?= e($coveragePanel[$lang]['interest_placeholder']); ?></option>
-                                <?php foreach ($districtOptions as $district): ?>
-                                    <option value="<?= e($district); ?>"><?= e($district); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <button type="submit" class="button button-primary"><?= e($coveragePanel[$lang]['interest_action']); ?></button>
-                        </form>
-                        <div class="coverage-stats">
-                            <div class="coverage-stats-head">
-                                <strong><?= e($coveragePanel[$lang]['stats_title']); ?></strong>
-                                <span><?= e($coveragePanel[$lang]['stats_total']); ?>: <?= e((string) $areaInterestSummary['total']); ?></span>
-                            </div>
-                            <?php if ($areaInterestSummary['items'] !== []): ?>
-                                <div class="coverage-stats-list">
-                                    <?php foreach ($areaInterestSummary['items'] as $item): ?>
-                                        <div class="coverage-stat-item">
-                                            <span><?= e($item['district']); ?></span>
-                                            <strong><?= e((string) $item['count']); ?></strong>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php else: ?>
-                                <p class="coverage-stats-empty"><?= e($coveragePanel[$lang]['stats_empty']); ?></p>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+        <!-- SIGNAL PATH (scroll story) -->
+        <?php $spStory = ['az'=>['Fiber işıq siqnalının səyahəti','Data mərkəzindən evinizə — hər addım öz infrastrukturumuzda.'],'en'=>['The journey of the fiber light signal','From the data center to your home — every step on our own infrastructure.'],'ru'=>['Путь оптического сигнала','От дата-центра до вашего дома — каждый шаг на нашей инфраструктуре.']]; $sps = $spStory[$lang] ?? $spStory['az'];
+        $spNodes = [['globe','Backbone','Magistral'],['server','POP','Regional qovşaq'],['router','OLT','Optik terminal'],['satellite','Splitter','Bölücü'],['house-signal','ONT','Ev modemi'],['house','Ev','Siz']]; ?>
+        <section class="section section-alt" id="path">
+            <div class="container">
+                <div class="section-heading"><span class="eyebrow">Fiber axını</span><h2><?= e($sps[0]); ?></h2><p><?= e($sps[1]); ?></p></div>
+                <div class="signal-path" data-signal>
+                    <div class="sp-line"></div>
+                    <?php foreach ($spNodes as $nd): ?>
+                    <div class="sp-node"><div class="sp-dot"><?= svgi($nd[0], 22); ?></div><b><?= e($nd[1]); ?></b><small><?= e($nd[2]); ?></small></div>
+                    <?php endforeach; ?>
                 </div>
             </div>
         </section>
 
+        <!-- COVERAGE -->
+        <section class="section" id="coverage">
+            <div class="container">
+                <div class="cov-grid">
+                    <div>
+                        <span class="eyebrow"><?= e($copy['nav'][3]); ?></span>
+                        <h2 style="font-size:clamp(1.7rem,3.4vw,2.4rem);margin:12px 0 14px"><?= e($T['cov_title']); ?></h2>
+                        <p style="color:var(--muted);margin-bottom:22px"><?= e($T['cov_text']); ?></p>
+                        <div class="chips">
+                            <?php foreach (array_slice($copy['coverage']['areas'], 0, 14) as $area): ?><span class="chip"><?= e($area); ?></span><?php endforeach; ?>
+                        </div>
+                    </div>
+                    <div class="cov-visual"><img class="cov-map" src="images/az.svg" alt="Azərbaycan əhatə xəritəsi" loading="lazy"><canvas id="net-map"></canvas></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SUPPORT / EQUIPMENT (modem self-config + FAQ) -->
         <section class="section section-alt" id="support">
             <div class="container">
                 <div class="section-heading">
@@ -1702,278 +1635,259 @@ $toSearchKey = static function (string $value): string {
                     <h2><?= e($copy['support']['title']); ?></h2>
                     <p><?= e($copy['support']['subtitle']); ?></p>
                 </div>
-
                 <div class="support-grid">
-                    <article class="support-card">
-                        <div class="support-icon"><i class="fa-solid fa-wifi"></i></div>
-                        <h3><?= e($copy['support']['wifi_title']); ?></h3>
-                        <p><?= e($copy['support']['wifi_text']); ?></p>
-                        <div class="modem-guide-list">
-                            <?php foreach ($supportGuides as $guide): ?>
-                                <details class="modem-guide">
-                                    <summary><?= e($guide['title'][$lang] ?? $guide['title']['az']); ?></summary>
-                                    <p><?= e($guide['summary'][$lang] ?? $guide['summary']['az']); ?></p>
-                                    <ol>
-                                        <?php foreach ($guide['steps'] as $step): ?>
-                                            <li><?= e($step[$lang] ?? $step['az']); ?></li>
-                                        <?php endforeach; ?>
-                                    </ol>
-                                </details>
-                            <?php endforeach; ?>
+                    <div>
+                        <h3 style="margin-bottom:14px;font-size:1.15rem"><span style="color:var(--cyan)"><?= svgi("wifi") ?></span> <?= e($copy['support']['wifi_title']); ?></h3>
+                        <p style="color:var(--muted);margin:0 0 16px;font-size:.9rem"><?= e($copy['support']['wifi_text']); ?></p>
+                        <?php
+                        $codeify = static fn (string $s): string => preg_replace('/`([^`]+)`/u', '<code>$1</code>', e($s));
+                        $sg = isset($supportGuides) && is_array($supportGuides) ? $supportGuides : [];
+                        foreach ($sg as $guide): ?>
+                        <details class="modem-guide">
+                            <summary class="mg-head"><span class="mg-ic"><?= svgi('router'); ?></span><span><?= e($guide['title'][$lang] ?? $guide['title']['az'] ?? ''); ?></span><span class="mg-chev"><?= svgi('chevron', 18); ?></span></summary>
+                            <div class="mg-body">
+                                <p class="mg-sum"><?= $codeify((string) ($guide['summary'][$lang] ?? $guide['summary']['az'] ?? '')); ?></p>
+                                <ol><?php foreach (($guide['steps'] ?? []) as $step): ?><li><?= $codeify((string) ($step[$lang] ?? $step['az'] ?? '')); ?></li><?php endforeach; ?></ol>
+                            </div>
+                        </details>
+                        <?php endforeach; ?>
+                    </div>
+                    <div>
+                        <h3 style="margin-bottom:14px;font-size:1.15rem"><span style="color:var(--cyan)"><?= svgi("help") ?></span> <?= e($copy['support']['faq_title']); ?></h3>
+                        <?php foreach ($copy['support']['faq'] as $item): ?>
+                        <details class="acc-item">
+                            <summary class="acc-head"><span><?= e($item['q']); ?></span><span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></summary>
+                            <div class="acc-body"><?= e($item['a']); ?></div>
+                        </details>
+                        <?php endforeach; ?>
+                        <div class="support-side" style="margin-top:16px">
+                            <h3><?= e($copy['support']['contact_title']); ?></h3>
+                            <p><?= e($T['sup_help']); ?></p>
+                            <a class="button button-secondary" href="<?= e($supportPhoneHref); ?>"><?= svgi("phone") ?> <?= e($supportPhoneDisplay); ?></a>
+                            <a class="button button-primary" href="#connection-form"><?= svgi("headset") ?> <?= e($publicCta[$lang]['hero_primary'] ?? $publicCta['az']['hero_primary']); ?></a>
                         </div>
-                    </article>
-
-                    <article class="support-card">
-                        <div class="support-icon"><i class="fa-solid fa-circle-question"></i></div>
-                        <h3><?= e($copy['support']['faq_title']); ?></h3>
-                        <div class="faq-list">
-                            <?php foreach ($copy['support']['faq'] as $faq): ?>
-                                <details>
-                                    <summary><?= e($faq['q']); ?></summary>
-                                    <p><?= e($faq['a']); ?></p>
-                                </details>
-                            <?php endforeach; ?>
-                        </div>
-                    </article>
-
-                    <article class="support-card">
-                        <div class="support-icon"><i class="fa-solid fa-headset"></i></div>
-                        <h3><?= e($copy['support']['contact_title']); ?></h3>
-                        <div class="contact-list">
-                            <a href="tel:+994125258811"><i class="fa-solid fa-phone"></i> +994 12 525 88 11</a>
-                            <a href="mailto:info@superoptic.net"><i class="fa-solid fa-envelope"></i> info@superoptic.net</a>
-                            <a href="https://wa.me/994512055566?text=Super%20Optik%20Tech" target="_blank" rel="noreferrer"><i class="fa-brands fa-whatsapp"></i> +994 51 205 55 66</a>
-                        </div>
-                    </article>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <section class="section" id="news">
-            <div class="container">
-                <div class="section-heading">
-                    <span class="eyebrow"><?= e($copy['news']['eyebrow']); ?></span>
-                    <h2><?= e($copy['news']['title']); ?></h2>
-                    <p><?= e($publicCta[$lang]['news_subtitle'] ?? $publicCta['az']['news_subtitle']); ?></p>
-                </div>
-
-                <div class="news-tabs">
-                    <button class="news-tab is-active" type="button" data-news-tab="network"><?= e($copy['news']['tabs'][0]); ?></button>
-                    <button class="news-tab" type="button" data-news-tab="systems"><?= e($copy['news']['tabs'][1]); ?></button>
-                </div>
-
-                <div class="news-grid">
-                    <?php foreach ($copy['news']['items'] as $index => $item): ?>
-                        <?php if (($item['category'] ?? '') === 'crypto') { continue; } ?>
-                        <?php $visual = $newsVisuals[$index % count($newsVisuals)]; ?>
-                        <?php $newsTone = $item['tone'] ?? $visual['tone']; ?>
-                        <?php $newsImage = $item['image'] ?? $visual['image']; ?>
-                        <article class="news-card news-card-<?= e($newsTone); ?><?= $item['category'] === 'network' ? ' is-visible' : ''; ?><?= !empty($item['featured']) ? ' news-card-featured' : ''; ?>" data-news-category="<?= e($item['category']); ?>">
-                            <div class="news-media">
-                                <img src="<?= e(app_asset($newsImage)); ?>" alt="<?= e($item['title']); ?>">
-                                <div class="news-media-overlay">
-                                    <span class="news-kicker"><?= e($item['source']); ?></span>
-                                    <span class="news-category-badge"><?= e($item['category_label']); ?></span>
-                                </div>
-                            </div>
-                            <div class="news-body">
-                                <h3><?= e($item['title']); ?></h3>
-                                <p><?= e($item['summary']); ?></p>
-                                <div class="news-meta">
-                                    <span><?= e($item['date']); ?></span>
-                                    <span><?= e($item['category_label']); ?></span>
-                                </div>
-                            </div>
-                        </article>
-                    <?php endforeach; ?>
-                </div>
-            </div>
-        </section>
-
+        <!-- TV CHANNELS (3-row moving marquee + search) -->
         <section class="section section-tv" id="tvnet">
             <div class="container">
                 <div class="section-heading">
-                    <span class="eyebrow"><?= e($tvSection[$lang]['eyebrow']); ?></span>
-                    <h2><?= e($tvSection[$lang]['title']); ?></h2>
-                    <p><?= e($tvSection[$lang]['subtitle']); ?></p>
+                    <span class="eyebrow"><?= e($tvSection[$lang]['eyebrow'] ?? $tvSection['az']['eyebrow']); ?></span>
+                    <h2><?= e($tvSection[$lang]['title'] ?? $tvSection['az']['title']); ?></h2>
+                    <p><?= e($tvSection[$lang]['subtitle'] ?? $tvSection['az']['subtitle']); ?></p>
                 </div>
-
                 <div class="tv-layout">
                     <div class="tv-showcase">
                         <div class="tv-marquee-stack">
                             <?php foreach ($tvChannelRows as $rowIndex => $rowChannels): ?>
-                                <div class="tv-marquee-row tv-marquee-row-<?= e((string) ($rowIndex + 1)); ?>">
-                                    <div class="tv-track">
-                                        <?php foreach (array_merge($rowChannels, $rowChannels, $rowChannels) as $channel): ?>
-                                            <?php $name = (string) $channel['name']; ?>
-                                            <article class="tv-card" data-channel-card data-channel-name="<?= e($name); ?>">
-                                                <span class="tv-card-logo"><?= e(mb_strtoupper(mb_substr($name, 0, 2))); ?></span>
-                                                <div>
-                                                    <strong><?= e($name); ?></strong>
-                                                    <small><?= e($tvSection[$lang]['package_label']); ?>: <?= e((string) $channel['package']); ?></small>
-                                                </div>
-                                            </article>
-                                        <?php endforeach; ?>
-                                    </div>
+                            <div class="tv-marquee-row tv-marquee-row-<?= (int) $rowIndex + 1; ?>">
+                                <div class="tv-track">
+                                    <?php foreach (array_merge($rowChannels, $rowChannels, $rowChannels) as $channel): ?>
+                                        <?php $name = (string) ($channel['name'] ?? ''); if ($name === '') continue; ?>
+                                        <article class="tv-chip">
+                                            <span class="tv-chip-logo"><?= e(mb_strtoupper(mb_substr($name, 0, 2))); ?></span>
+                                            <span class="tv-chip-copy"><strong><?= e($name); ?></strong><small><?= e((string) ($channel['package'] ?? 'Standart')); ?></small></span>
+                                        </article>
+                                    <?php endforeach; ?>
                                 </div>
+                            </div>
                             <?php endforeach; ?>
                         </div>
                     </div>
-
                     <aside class="tv-search-panel">
-                        <div class="tv-toolbar">
-                            <div class="form-row">
-                                <label for="channelSearch"><?= e($tvSection[$lang]['search_label']); ?></label>
-                                <input id="channelSearch" type="search" placeholder="<?= e($tvSection[$lang]['search_placeholder']); ?>" data-channel-search>
-                            </div>
-                            <p class="tv-source-note"><?= e($tvSection[$lang]['source_note']); ?></p>
-                        </div>
-
-                        <div class="tv-results-list">
+                        <label class="tv-search-label" for="channelSearch"><?= e($tvSection[$lang]['search_label'] ?? $tvSection['az']['search_label']); ?></label>
+                        <input id="channelSearch" type="search" placeholder="<?= e($tvSection[$lang]['search_placeholder'] ?? $tvSection['az']['search_placeholder']); ?>" data-channel-search>
+                        <p class="tv-source-note"><span id="tv-count"><?= count($tvChannels); ?></span> kanal · <?= e($tvSection[$lang]['source_note'] ?? $tvSection['az']['source_note']); ?></p>
+                        <div class="tv-results-list" id="tv-results">
                             <?php foreach ($tvChannels as $channel): ?>
-                                <?php $name = (string) $channel['name']; ?>
-                                <article class="tv-result-card" data-channel-result data-channel-name="<?= e($name); ?>">
+                                <?php $name = (string) ($channel['name'] ?? ''); if ($name === '') continue; ?>
+                                <article class="tv-result-card" data-channel-name="<?= e(mb_strtolower($name)); ?>">
                                     <span class="tv-result-logo"><?= e(mb_strtoupper(mb_substr($name, 0, 2))); ?></span>
-                                    <div class="tv-result-copy">
-                                        <strong><?= e($name); ?></strong>
-                                        <small><?= e($tvSection[$lang]['package_label']); ?>: <?= e((string) $channel['package']); ?></small>
-                                    </div>
+                                    <div class="tv-result-copy"><strong><?= e($name); ?></strong><small><?= e($tvSection[$lang]['package_label'] ?? $tvSection['az']['package_label']); ?>: <?= e((string) ($channel['package'] ?? 'Standart')); ?></small></div>
                                 </article>
                             <?php endforeach; ?>
+                            <p class="tv-empty" id="tv-empty" hidden><?= e($tvSection[$lang]['empty'] ?? $tvSection['az']['empty']); ?></p>
                         </div>
-
-                        <p class="tv-empty" data-channel-empty hidden><?= e($tvSection[$lang]['empty']); ?></p>
                     </aside>
                 </div>
             </div>
         </section>
 
-        <section class="section section-payments" id="payments">
+        <!-- NEWS FEED -->
+        <section class="section" id="news">
             <div class="container">
-                <div class="section-heading left-aligned">
-                    <span class="eyebrow"><?= e($paymentSection[$lang]['eyebrow']); ?></span>
-                    <h2><?= e($paymentSection[$lang]['title']); ?></h2>
-                    <p><?= e($paymentSection[$lang]['subtitle']); ?></p>
+                <div class="section-heading">
+                    <span class="eyebrow"><?= e($copy['news']['eyebrow']); ?></span>
+                    <h2><?= e($copy['news']['title']); ?></h2>
+                    <p><?= e($copy['news']['subtitle']); ?></p>
                 </div>
+                <div class="news-filters">
+                    <button type="button" class="news-filter active" data-news-filter="all"><?= e($T['news_all']); ?></button>
+                    <button type="button" class="news-filter" data-news-filter="network"><?= e($copy['news']['tabs'][0] ?? 'İnternet'); ?></button>
+                    <button type="button" class="news-filter" data-news-filter="systems"><?= e($copy['news']['tabs'][1] ?? 'Sistem'); ?></button>
+                    <button type="button" class="news-filter" data-news-filter="crypto"><?= e($copy['news']['tabs'][2] ?? 'Kripto'); ?></button>
+                </div>
+                <div class="news-grid" id="news-grid">
+                    <?php foreach ($copy['news']['items'] as $item): ?>
+                    <article class="news-card" data-news-cat="<?= e((string) ($item['category'] ?? 'network')); ?>">
+                        <span class="news-cat"><?= e((string) ($item['category_label'] ?? '')); ?></span>
+                        <h3><?= e((string) ($item['title'] ?? '')); ?></h3>
+                        <p><?= e((string) ($item['summary'] ?? '')); ?></p>
+                        <div class="news-meta"><span><?= e((string) ($item['source'] ?? '')); ?></span><span><?= e((string) ($item['date'] ?? '')); ?></span></div>
+                    </article>
+                    <?php endforeach; ?>
+                </div>
+                <?php if (!empty($copy['news']['disclaimer'])): ?><p class="news-disclaimer">* <?= e($copy['news']['disclaimer']); ?></p><?php endif; ?>
+            </div>
+        </section>
 
-                <div class="payment-grid">
-                    <?php foreach ($paymentProviders as $provider): ?>
-                        <article class="payment-card payment-card-<?= e($provider['accent']); ?>">
-                            <div class="payment-card-brand">
-                                <img src="<?= e(app_asset($provider['logo'])); ?>" alt="<?= e($provider['name']); ?>">
-                            </div>
-                            <span class="payment-card-name"><?= e($provider['name']); ?></span>
-                            <div class="payment-card-actions">
-                                <span class="payment-card-note"><?= e(($paymentLinkCopy[$lang]['note'] ?? $paymentLinkCopy['az']['note']) . ': ' . $provider['domain']); ?></span>
-                                <a class="payment-card-link" href="<?= e($provider['href']); ?>" target="_blank" rel="noreferrer"><?= e($paymentLinkCopy[$lang]['cta'] ?? $paymentLinkCopy['az']['cta']); ?></a>
-                            </div>
-                        </article>
+        <!-- PAYMENTS -->
+        <section class="section section-alt" id="payments">
+            <div class="container">
+                <div class="section-heading"><span class="eyebrow"><?= e($sectionLabels['payments'][$lang] ?? $sectionLabels['payments']['az']); ?></span><h2><?= e($T['pay_title']); ?></h2><p><?= e($T['pay_text']); ?></p></div>
+                <div class="pay-grid">
+                    <?php foreach ($paymentProviders as $pp): ?>
+                    <a class="pay-card pay-<?= e((string) ($pp['accent'] ?? 'light')); ?>" href="<?= e($pp['href']); ?>" target="_blank" rel="noopener" title="<?= e($pp['name']); ?>">
+                        <img src="<?= e($pp['logo']); ?>" alt="<?= e($pp['name']); ?>" loading="lazy">
+                        <span class="pay-name"><?= e($pp['name']); ?></span>
+                    </a>
                     <?php endforeach; ?>
                 </div>
             </div>
         </section>
 
-        <section class="section section-accent" id="contact">
-            <div class="container contact-cta">
-                <div>
-                    <span class="eyebrow"><?= e($copy['contact']['eyebrow']); ?></span>
-                    <h2><?= e($copy['contact']['title']); ?></h2>
-                    <p><?= e($copy['contact']['text']); ?></p>
-                </div>
-                <div class="contact-actions">
-                    <a class="button button-primary" href="tel:+994125258811">+994 12 525 88 11</a>
-                    <a class="button button-secondary" href="https://wa.me/994512055566?text=Super%20Optik%20Tech" target="_blank" rel="noreferrer">WhatsApp</a>
+        <!-- CONTACT -->
+        <section class="section" id="contact">
+            <div class="container">
+                <div class="section-heading"><span class="eyebrow"><?= e($copy['nav'][4]); ?></span><h2><?= e($T['con_title']); ?></h2><p><?= e($T['con_text']); ?></p></div>
+                <div class="contact-grid">
+                    <div class="contact-card"><div class="ic"><?= svgi("phone") ?></div><h3><?= e($T['c_phone']); ?></h3><a href="<?= e($supportPhoneHref); ?>"><?= e($supportPhoneDisplay); ?></a></div>
+                    <div class="contact-card"><div class="ic"><?= svgi("mail") ?></div><h3><?= e($T['c_mail']); ?></h3><a href="mailto:info@superoptic.net">info@superoptic.net</a></div>
+                    <div class="contact-card"><div class="ic"><?= svgi("user-shield") ?></div><h3><?= e($T['c_portal']); ?></h3><a href="<?= e($portalLoginUrl . $qs); ?>"><?= e($publicCta[$lang]['portal_label'] ?? $publicCta['az']['portal_label']); ?></a></div>
                 </div>
             </div>
         </section>
     </main>
 
     <footer class="site-footer site-footer-detailed">
-        <div class="container footer-detailed-grid">
+        <div class="container">
             <div class="footer-brand-block">
-                <a href="#home" class="brand brand-footer">
-                    <img src="images/favicon.png" alt="Super Optik Tech logo">
-                    <span class="brand-mark">
-                        <span class="brand-word brand-word-super">Super</span>
-                        <span class="brand-word brand-word-optik">Optik</span>
-                    </span>
-                </a>
-                <p><?= e($copy['footer']); ?></p>
-                <div class="footer-links">
-                    <a href="https://www.instagram.com/superoptiktech/" target="_blank" rel="noreferrer"><i class="fa-brands fa-instagram"></i></a>
-                    <a href="mailto:info@superoptic.net"><i class="fa-solid fa-envelope"></i></a>
-                    <a href="tel:+994125258811"><i class="fa-solid fa-phone"></i></a>
-                    <a href="https://e-complaint.icta.az/" target="_blank" rel="noreferrer">ICT</a>
+                <a href="index.php<?= $qs; ?>" class="brand brand-footer"><img src="images/favicon.png" alt="Super Optik"><span class="brand-mark"><span class="brand-word-super">Super</span> <span class="brand-word-optik">Optik</span></span></a>
+                <p><?= e($PL['footer_text']); ?></p>
+                <div class="footer-socials">
+                    <a href="https://www.instagram.com/superoptiktech/" target="_blank" rel="noreferrer" aria-label="Instagram"><?= svgi('globe',18); ?></a>
+                    <a href="mailto:info@superoptic.net" aria-label="Email"><?= svgi('mail',18); ?></a>
+                    <a href="<?= e($supportPhoneHref); ?>" aria-label="Phone"><?= svgi('phone',18); ?></a>
+                    <a href="https://e-complaint.icta.az/" target="_blank" rel="noreferrer" aria-label="ICT">ICT</a>
                 </div>
             </div>
-
             <div class="footer-column">
-                <strong><?= e($footerLabels[$lang]['about'] ?? $footerLabels['az']['about']); ?></strong>
-                <a href="haqqimizda.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><?= e($footerLabels[$lang]['about'] ?? $footerLabels['az']['about']); ?></a>
-                <a href="haqqimizda.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>#mission"><?= e($footerLabels[$lang]['mission'] ?? $footerLabels['az']['mission']); ?></a>
-                <a href="#contact"><?= e($footerLabels[$lang]['contact'] ?? $footerLabels['az']['contact']); ?></a>
+                <h4><?= e($PL['footer_about']); ?></h4>
+                <a href="haqqimizda.php<?= $qs; ?>"><?= e($PL['about']); ?></a>
+                <a href="haqqimizda.php<?= $qs; ?>#mission"><?= e($PL['mission']); ?></a>
+                <a href="#contact"><?= e($PL['contact']); ?></a>
             </div>
-
             <div class="footer-column">
-                <strong><?= e($footerLabels[$lang]['media'] ?? $footerLabels['az']['media']); ?></strong>
-                <a href="#news"><?= e($copy['news']['eyebrow']); ?></a>
-                <a href="#tvnet"><?= e($sectionLabels['tv'][$lang] ?? $sectionLabels['tv']['az']); ?></a>
-                <a href="https://www.speedtest.net/" target="_blank" rel="noreferrer"><?= e($footerLabels[$lang]['speedtest'] ?? $footerLabels['az']['speedtest']); ?></a>
+                <h4><?= e($PL['footer_media']); ?></h4>
+                <a href="#news"><?= e($PL['news']); ?></a>
+                <a href="#tvnet"><?= e($PL['tv']); ?></a>
+                <a href="https://www.speedtest.net/" target="_blank" rel="noreferrer"><?= e($PL['speedtest']); ?></a>
             </div>
-
             <div class="footer-column">
-                <strong><?= e($footerLabels[$lang]['legal'] ?? $footerLabels['az']['legal']); ?></strong>
-                <a href="gizlilik-siyaseti.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><?= e($footerLabels[$lang]['privacy'] ?? $footerLabels['az']['privacy']); ?></a>
-                <a href="qaydalar-ve-sertler.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><?= e($footerLabels[$lang]['rules'] ?? $footerLabels['az']['rules']); ?></a>
-                <a href="cihazlar.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><?= e($footerLabels[$lang]['devices'] ?? $footerLabels['az']['devices']); ?></a>
-                <a href="keyfiyyet-gostericileri.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><?= e($footerLabels[$lang]['quality'] ?? $footerLabels['az']['quality']); ?></a>
+                <h4><?= e($PL['footer_legal']); ?></h4>
+                <a href="gizlilik-siyaseti.php<?= $qs; ?>"><?= e($PL['privacy']); ?></a>
+                <a href="qaydalar-ve-sertler.php<?= $qs; ?>"><?= e($PL['rules']); ?></a>
+                <a href="cihazlar.php<?= $qs; ?>"><?= e($PL['devices']); ?></a>
+                <a href="keyfiyyet-gostericileri.php<?= $qs; ?>"><?= e($PL['quality']); ?></a>
             </div>
-        </div>
-        <div class="container footer-bottom footer-bottom-detailed">
-            <p><?= e($copyrightLine[$lang] ?? $copyrightLine['az']); ?></p>
+            <div class="footer-bottom-bar"><?= e($PL['copyright']); ?></div>
         </div>
     </footer>
 
-    <a class="whatsapp-float" href="<?= e($supportWhatsappHref); ?>" target="_blank" rel="noreferrer" aria-label="WhatsApp">
-        <i class="fa-brands fa-whatsapp"></i>
-        <span class="whatsapp-float-text">
-            <strong><?= e($publicCta[$lang]['whatsapp_label'] ?? $publicCta['az']['whatsapp_label']); ?></strong>
-            <small><?= e($publicCta[$lang]['whatsapp_note'] ?? $publicCta['az']['whatsapp_note']); ?></small>
-        </span>
-    </a>
-
-    <div class="promo-popup-overlay" id="tariffPopup" hidden>
-        <div class="promo-popup" data-popup-card data-theme="family">
-            <button class="promo-close" type="button" data-popup-close aria-label="Close">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-            <div class="promo-visual-shell">
-                <img
-                    id="popupVisual"
-                    class="promo-visual"
-                    src="<?= e(app_asset('images/promoaile.jfif')); ?>"
-                    alt="<?= e($copy['popup']['title']); ?>"
-                >
-            </div>
-            <div class="promo-meta">
-                <span class="eyebrow"><?= e($copy['popup']['label']); ?></span>
-                <span class="promo-theme-tag" id="popupThemeLabel"><?= e($copy['popup']['offer']); ?></span>
-            </div>
-            <h3 id="popupTitle"><?= e($copy['popup']['title']); ?></h3>
-            <p class="promo-type" id="popupPackageType"><?= e($copy['popup']['text']); ?></p>
-            <div class="promo-metrics">
-                <strong><span id="popupSpeed">100</span> Mb/s</strong>
-                <span><span id="popupPrice">30</span> AZN <small><?= e($copy['tariffs']['per_month']); ?></small></span>
-            </div>
-            <p id="popupText"><?= e($copy['popup']['text']); ?></p>
-            <a href="#connection-form" class="button button-primary" data-popup-action><?= e($copy['tariffs']['order']); ?></a>
-        </div>
-    </div>
-
-    <?php if ($hasRecaptcha): ?>
-        <script src="https://www.google.com/recaptcha/api.js" async defer></script>
-    <?php endif; ?>
-    <script src="<?= e(app_asset('script/translations.js')); ?>"></script>
-    <script src="<?= e(app_asset('script/main.js')); ?>"></script>
+    <?php if ($hasRecaptcha): ?><script src="https://www.google.com/recaptcha/api.js" async defer></script><?php endif; ?>
+    <a class="whatsapp-float" href="https://wa.me/994512055566?text=Super%20Optik%20Tech" target="_blank" rel="noreferrer" aria-label="WhatsApp"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.5 15.3L2 22l4.8-1.5A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .1-1.7-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.7-4.4-3.9-.1-.2-1-1.4-1-2.6s.6-1.8.9-2.1c.2-.2.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 1.9c.1.1.1.3 0 .5l-.3.5-.4.4c-.1.1-.3.3-.1.5.1.3.6 1 1.3 1.6.9.8 1.6 1 1.9 1.2.2.1.4.1.5-.1l.6-.8c.2-.2.3-.2.6-.1l1.8.9c.3.1.4.2.5.3.1.2.1.7-.1 1.3z"/></svg></a>
+    <script src="<?= e(app_asset('script/fiber-bg.js')); ?>" defer></script>
+    <script>
+    (function(){
+      var RM=matchMedia('(prefers-reduced-motion: reduce)').matches, fine=matchMedia('(hover:hover) and (pointer:fine)').matches;
+      // Loading ekranı (logonu göstərib açılır)
+      var ldr=document.getElementById('fiber-loader');
+      if(ldr){window.addEventListener('load',function(){setTimeout(function(){ldr.classList.add('done');},RM?0:900);});
+        setTimeout(function(){ldr.classList.add('done');},2600);}
+      // Custom cursor (enerji nöqtəsi + halqa)
+      if(fine&&!RM){var dot=document.querySelector('.cursor-dot'),ring=document.querySelector('.cursor-ring'),rx=0,ry=0,x=0,y=0;
+        window.addEventListener('mousemove',function(e){x=e.clientX;y=e.clientY;if(dot){dot.style.left=x+'px';dot.style.top=y+'px';}});
+        (function loop(){rx+=(x-rx)*0.18;ry+=(y-ry)*0.18;if(ring){ring.style.left=rx+'px';ring.style.top=ry+'px';}requestAnimationFrame(loop);})();
+        document.addEventListener('mouseover',function(e){if(ring)ring.classList.toggle('is-hover',!!e.target.closest('a,button,.plan,.tv-chip,.pay-card,input,select'));});}
+      // Stat sayğacları + scroll-reveal (IntersectionObserver)
+      if('IntersectionObserver' in window){
+        var io=new IntersectionObserver(function(es){es.forEach(function(en){ if(!en.isIntersecting)return;var el=en.target;
+          if(el.hasAttribute('data-stats')){[].slice.call(el.querySelectorAll('.stat-num')).forEach(function(n){
+            var to=parseFloat(n.getAttribute('data-count')),suf=n.getAttribute('data-suffix')||'',dec=(to%1!==0),t0=performance.now(),D=RM?0:1400;
+            (function tick(t){var p=Math.min(1,(t-t0)/(D||1)),v=to*(1-Math.pow(1-p,3));n.textContent=(dec?v.toFixed(2):Math.round(v).toLocaleString('en-US'))+suf;if(p<1)requestAnimationFrame(tick);})(t0);});}
+          if(el.hasAttribute('data-spd'))el.classList.add('on');
+          if(el.hasAttribute('data-signal'))el.classList.add('on');
+          io.unobserve(el);});},{threshold:.35});
+        [].slice.call(document.querySelectorAll('[data-stats],[data-spd],[data-signal]')).forEach(function(el){io.observe(el);});
+      } else {[].slice.call(document.querySelectorAll('[data-spd],[data-signal]')).forEach(function(el){el.classList.add('on');});}
+      // Mobile nav (aç/bağla + linkə basanda bağlan + kənara basanda bağlan)
+      var t=document.querySelector('[data-mobile-nav-toggle]'),n=document.querySelector('[data-mobile-nav]');
+      if(t&&n){
+        t.addEventListener('click',function(e){e.stopPropagation();n.classList.toggle('is-open');});
+        n.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){n.classList.remove('is-open');});});
+        document.addEventListener('click',function(e){if(n.classList.contains('is-open')&&!n.contains(e.target)&&!t.contains(e.target)){n.classList.remove('is-open');}});
+      }
+      // Language dropdown
+      var ld=document.querySelector('[data-lang-dropdown]'),lt=document.querySelector('[data-lang-toggle]');
+      if(ld&&lt){lt.addEventListener('click',function(e){e.stopPropagation();ld.classList.toggle('open');});
+        document.addEventListener('click',function(){ld.classList.remove('open');});}
+      // TV channel search (right-side results list)
+      var tvS=document.getElementById('channelSearch'),tvR=document.getElementById('tv-results'),tvC=document.getElementById('tv-count'),tvE=document.getElementById('tv-empty');
+      if(tvS&&tvR){var cards=[].slice.call(tvR.querySelectorAll('.tv-result-card'));
+        tvS.addEventListener('input',function(){var q=tvS.value.trim().toLowerCase(),n=0;
+          cards.forEach(function(c){var ok=c.getAttribute('data-channel-name').indexOf(q)>-1;c.style.display=ok?'':'none';if(ok)n++;});
+          if(tvC)tvC.textContent=n; if(tvE)tvE.hidden=n>0;});}
+      // Flash mesajı: URL-dən status-u təmizlə (təzələmə təkrar göstərməsin) + avto-gizlət
+      var flashEl=document.querySelector("[data-flash-notice]");
+      if(flashEl){
+        try{var u=new URL(window.location.href);if(u.searchParams.has("status")){u.searchParams.delete("status");history.replaceState(null,"",u.pathname+(u.search?u.search:"")+u.hash);}}catch(e){}
+        setTimeout(function(){flashEl.style.transition="opacity .5s,transform .5s";flashEl.style.opacity="0";flashEl.style.transform="translateY(-8px)";setTimeout(function(){flashEl.style.display="none";},500);},6000);
+      }
+      // Theme toggle (dark/light)
+      var tt=document.querySelector("[data-theme-toggle]");
+      if(tt)tt.addEventListener("click",function(){var cur=document.documentElement.getAttribute("data-theme")==="light"?"dark":"light";document.documentElement.setAttribute("data-theme",cur);try{localStorage.setItem("so-theme",cur);}catch(e){}});
+      // Tariff carousel nav
+      var track=document.getElementById("tariff-track");
+      if(track){document.querySelectorAll("[data-tc]").forEach(function(b){b.addEventListener("click",function(){var card=track.querySelector(".tariff-row");var step=card?card.offsetWidth+16:280;track.scrollBy({left:b.getAttribute("data-tc")==="next"?step*2:-step*2,behavior:"smooth"});});});}
+      // Tariff filter
+      var tfB=[].slice.call(document.querySelectorAll("[data-tf]")),tfR=[].slice.call(document.querySelectorAll(".tariff-row"));
+      tfB.forEach(function(b){b.addEventListener("click",function(){tfB.forEach(function(x){x.classList.remove("active");});b.classList.add("active");var f=b.getAttribute("data-tf");tfR.forEach(function(r){r.style.display=(f==="all"||r.getAttribute("data-aud")===f)?"":"none";});});});
+      // News category filter
+      var nf=[].slice.call(document.querySelectorAll('[data-news-filter]')),nc=[].slice.call(document.querySelectorAll('[data-news-cat]'));
+      nf.forEach(function(b){b.addEventListener('click',function(){nf.forEach(function(x){x.classList.remove('active');});b.classList.add('active');
+        var f=b.getAttribute('data-news-filter');nc.forEach(function(c){c.style.display=(f==='all'||c.getAttribute('data-news-cat')===f)?'':'none';});});});
+      // Live speed flicker
+      var s=document.getElementById('live-speed');
+      if(s&&!matchMedia('(prefers-reduced-motion: reduce)').matches)setInterval(function(){s.textContent=930+Math.floor(Math.random()*18);},900);
+      // Coverage network map
+      var nm=document.getElementById('net-map');
+      if(nm&&nm.getContext&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+        var c=nm.getContext('2d'),DPR=Math.min(2,devicePixelRatio||1),w,h,nodes=[];
+        for(var i=0;i<13;i++)nodes.push({x:Math.random(),y:Math.random(),r:1.4+Math.random()*2.6});
+        function draw(t){var r=nm.getBoundingClientRect();w=nm.width=r.width*DPR;h=nm.height=r.height*DPR;c.clearRect(0,0,w,h);
+          for(var i=0;i<nodes.length;i++)for(var j=i+1;j<nodes.length;j++){var a=nodes[i],b=nodes[j],d=Math.hypot(a.x-b.x,a.y-b.y);
+            if(d<0.36){c.strokeStyle='rgba(46,230,224,'+(0.24*(1-d/0.36))+')';c.lineWidth=DPR;c.beginPath();c.moveTo(a.x*w,a.y*h);c.lineTo(b.x*w,b.y*h);c.stroke();}}
+          for(var k=0;k<nodes.length;k++){var nd=nodes[k],px=nd.x*w,py=nd.y*h,g=c.createRadialGradient(px,py,0,px,py,nd.r*4*DPR);
+            g.addColorStop(0,'#2ee6e0');g.addColorStop(1,'transparent');c.fillStyle=g;c.beginPath();c.arc(px,py,nd.r*4*DPR,0,6.28);c.fill();
+            c.fillStyle='#c9f7f3';c.beginPath();c.arc(px,py,nd.r*DPR,0,6.28);c.fill();
+            nd.x+=Math.sin(t/2400+nd.y*9)*0.00035;nd.y+=Math.cos(t/2600+nd.x*9)*0.00035;}
+          requestAnimationFrame(draw);}
+        requestAnimationFrame(draw);
+      }
+    })();
+    </script>
 </body>
 </html>
