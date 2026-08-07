@@ -683,6 +683,9 @@ function app_bonus_update_period_status(PDO $db, int $periodId, string $nextStat
     if ($nextStatus === 'approved' && !app_bonus_actor_can_manage_rules($actor)) {
         return ['ok' => false, 'error' => 'super_admin_required'];
     }
+    if ($nextStatus === 'approved' && (int) ($period['created_by_account_id'] ?? 0) === (int) ($actor['id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'creator_cannot_approve'];
+    }
     if ($nextStatus === 'paid' && !app_bonus_actor_can_calculate($actor)) {
         return ['ok' => false, 'error' => 'forbidden'];
     }
@@ -920,9 +923,12 @@ function app_bonus_save_adjustment(PDO $db, array $input, array $actor): array
     if ($periodId <= 0 || $employeeId <= 0 || $amount <= 0 || $reason === '') {
         return ['ok' => false, 'error' => 'invalid_adjustment'];
     }
-    $status = app_bonus_actor_can_manage_rules($actor) ? 'approved' : 'pending';
+    // Adjustments always start pending, even for actors who can manage rules --
+    // approval must happen via app_bonus_update_adjustment_status() by a
+    // DIFFERENT actor (maker-checker; see docs/34 finance audit, vision doc 19.2).
+    $status = 'pending';
     $statement = $db->prepare('INSERT INTO employee_bonus_adjustments (period_id, employee_id, adjustment_type, amount, reason, status, created_by_account_id, approved_by_account_id, approved_at) VALUES (:period_id, :employee_id, :adjustment_type, :amount, :reason, :status, :actor_id, :approved_by, :approved_at)');
-    $statement->execute(['period_id' => $periodId, 'employee_id' => $employeeId, 'adjustment_type' => $type, 'amount' => $amount, 'reason' => $reason, 'status' => $status, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null, 'approved_by' => $status === 'approved' ? ((int) ($actor['id'] ?? 0) ?: null) : null, 'approved_at' => $status === 'approved' ? date('Y-m-d H:i:s') : null]);
+    $statement->execute(['period_id' => $periodId, 'employee_id' => $employeeId, 'adjustment_type' => $type, 'amount' => $amount, 'reason' => $reason, 'status' => $status, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null, 'approved_by' => null, 'approved_at' => null]);
     $id = (int) $db->lastInsertId();
     app_bonus_record_audit($db, 'bonus_adjustment_saved', 'employee_bonus_adjustment', (string) $id, $actor, 'Bonus adjustment saved', ['period_id' => $periodId, 'employee_id' => $employeeId, 'type' => $type, 'amount' => $amount, 'status' => $status], $reason);
     return ['ok' => true, 'id' => $id, 'status' => $status];
@@ -942,6 +948,9 @@ function app_bonus_update_adjustment_status(PDO $db, int $adjustmentId, string $
     $row = $before->fetch(PDO::FETCH_ASSOC);
     if (!is_array($row)) {
         return ['ok' => false, 'error' => 'adjustment_not_found'];
+    }
+    if ($status === 'approved' && (int) ($row['created_by_account_id'] ?? 0) === (int) ($actor['id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'creator_cannot_approve'];
     }
     $db->prepare('UPDATE employee_bonus_adjustments SET status = :status, approved_by_account_id = :actor_id, approved_at = NOW() WHERE id = :id')->execute(['status' => $status, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null, 'id' => $adjustmentId]);
     $after = $db->prepare('SELECT * FROM employee_bonus_adjustments WHERE id = :id LIMIT 1');

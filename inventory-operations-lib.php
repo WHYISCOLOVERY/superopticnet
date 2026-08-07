@@ -890,6 +890,7 @@ function app_inventory_approve_request(PDO $db, int $id, array $actor): array
         if (!$doc) { $db->rollBack(); return ['ok'=>false,'error'=>'not_found']; }
         if (($doc['document_type'] ?? '') !== 'external_return') { $db->rollBack(); return ['ok'=>false,'error'=>'invalid_document_type']; }
         if (($doc['status'] ?? '') !== 'pending') { $db->rollBack(); return ['ok'=>false,'error'=>in_array($doc['status']??'', ['approved','rejected'], true)?'already_finalized':'not_pending']; }
+        if ((int) ($doc['created_by_account_id'] ?? 0) === (int) ($actor['id'] ?? 0)) { $db->rollBack(); return ['ok'=>false,'error'=>'creator_cannot_approve']; }
 
         $lineStatement = $db->prepare('SELECT * FROM inventory_document_items WHERE document_id=:id ORDER BY line_no');
         $lineStatement->execute(['id'=>$id]);
