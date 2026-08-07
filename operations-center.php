@@ -491,7 +491,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'save_asset_depreciation', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
+    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'save_asset_depreciation', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
         if (!app_verify_csrf($_POST['csrf_token'] ?? null)) {
             $csrfSection = (str_contains($action, 'finance') || in_array($action, ['save_asset_depreciation','import_finance_e_invoice'], true)) ? 'finance' : (str_contains($action, 'hr_') || in_array($action, ['save_attendance_profile','record_attendance_event'], true) ? 'hr' : 'inventory');
             $csrfExtra = $csrfSection === 'finance' ? ['finance_tab' => clean_text((string)($_POST['finance_tab'] ?? 'overview'))] : ($csrfSection === 'hr' ? ['hr_tab' => clean_text((string)($_POST['hr_tab'] ?? 'overview'))] : []);
@@ -1131,15 +1131,66 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'points_delta' => (float) ($_POST['score_points_delta'] ?? 0),
                 'event_date' => clean_text((string) ($_POST['score_event_date'] ?? date('Y-m-d'))),
                 'note_text' => clean_text((string) ($_POST['score_note'] ?? '')),
+                'related_ticket_no' => clean_text((string) ($_POST['score_related_ticket_no'] ?? '')),
             ], $user, $db);
-            $scoreErrorMessage = (string) ($localResult['error'] ?? '') === 'penalty_blocked_by_approved_leave'
-                ? 'Bu tarixde emekdasin tesdiqlenmis mezuniyyeti/xesteliyi var - cerime bu tarixe yazila bilmez.'
-                : ('Sicil bal hadisesi saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'));
+            $scoreErrorMessages = [
+                'penalty_blocked_by_approved_leave' => 'Bu tarixde emekdasin tesdiqlenmis mezuniyyeti/xesteliyi var - cerime bu tarixe yazila bilmez.',
+                'task_missed_requires_ticket_reference' => '"Tapsiriq icra etmeyib" cerimesi ucun elaqeli bilet nomresi (ticket no) daxil edilmelidir.',
+                'related_ticket_not_found' => 'Daxil edilen bilet nomresi tapilmadi.',
+                'task_not_assigned_to_employee' => 'Bu bilet secilen emekdasa tehkim olunmayib - cerime yazila bilmez.',
+                'penalty_blocked_by_mass_incident' => 'Bu tarixde qeyri-adi sayda bilet acilib (kutlevi sebeke incidenti ehtimali) - fardi cerime avtomatik bloklandi.',
+            ];
+            $scoreErrorMessage = $scoreErrorMessages[(string) ($localResult['error'] ?? '')]
+                ?? ('Sicil bal hadisesi saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'));
             spog_operations_flash_redirect([
                 'type' => !empty($localResult['ok']) ? 'success' : 'error',
                 'message' => !empty($localResult['ok'])
                     ? 'Sicil bal hadisesi saxlandi.'
                     : $scoreErrorMessage,
+            ], $lang, $anchor);
+        } elseif ($action === 'file_hr_score_appeal') {
+            $anchor = 'hr';
+            $localResult = app_mgs_hr_score_appeal_file(
+                $db,
+                (int) ($_POST['appeal_score_event_id'] ?? 0),
+                clean_text((string) ($_POST['appeal_reason'] ?? '')),
+                $user
+            );
+            $appealFileErrorMessages = [
+                'permission_denied' => 'Bu hadiseye etiraz etmek ucun icazeniz yoxdur.',
+                'score_event_not_found' => 'Sicil hadisesi tapilmadi.',
+                'appeal_already_pending' => 'Bu hadise ucun artiq gozleyen etiraz var.',
+                'invalid_appeal' => 'Etiraz sebebi bos ola bilmez.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Etiraz qeyde alindi, HR/admin baxacaq.'
+                    : ($appealFileErrorMessages[(string) ($localResult['error'] ?? '')] ?? ('Etiraz saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+            ], $lang, $anchor);
+        } elseif ($action === 'resolve_hr_score_appeal') {
+            $anchor = 'hr';
+            $localResult = app_mgs_hr_score_appeal_resolve(
+                $db,
+                (int) ($_POST['appeal_id'] ?? 0),
+                clean_text((string) ($_POST['appeal_decision'] ?? '')),
+                clean_text((string) ($_POST['appeal_resolution_note'] ?? '')),
+                $user
+            );
+            $appealResolveErrorMessages = [
+                'permission_denied' => 'Etirazlari yalniz admin heli ede biler.',
+                'invalid_decision' => 'Qerar "upheld" ve ya "overturned" olmalidir.',
+                'appeal_not_found' => 'Etiraz tapilmadi.',
+                'appeal_already_resolved' => 'Bu etiraz artiq helli olunub.',
+                'appellant_cannot_review_own_appeal' => 'Etiraz eden sexs oz etirazini heli ede bilmez - basqa admin baxmalidir.',
+                'original_score_event_missing' => 'Elaqeli sicil hadisesi tapilmadi.',
+                'reversal_failed' => 'Geri qaytarma yazisi yaradila bilmedi.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? ('Etiraz helli olundu: ' . ((string) ($localResult['status'] ?? '')))
+                    : ($appealResolveErrorMessages[(string) ($localResult['error'] ?? '')] ?? ('Etiraz helli olunmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
             ], $lang, $anchor);
         } elseif ($action === 'create_hr_payroll_record') {
             $anchor = $hrPayrollAnchor;
@@ -2974,6 +3025,9 @@ $legacyModuleMap = app_stage3_filter_workspace_cards($legacyModuleMap, $user, $d
                         <div class="portal-form-row portal-grid-slim">
                             <input type="date" name="score_event_date" value="<?= e(date('Y-m-d')); ?>">
                             <input type="text" name="score_note" placeholder="Sebeb/qeyd">
+                        </div>
+                        <div class="portal-form-row portal-grid-slim">
+                            <input type="text" name="score_related_ticket_no" placeholder="Elaqeli bilet no (yalniz 'Tapsiriq icra etmeyib' ucun mecburidir)">
                         </div>
                         <button class="portal-primary-btn" type="submit">Sicil hadisesini saxla</button>
                     </form>

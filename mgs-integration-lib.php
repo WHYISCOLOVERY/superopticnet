@@ -6,6 +6,7 @@ require_once __DIR__ . '/audit-log-lib.php';
 require_once __DIR__ . '/communication-provider.php';
 require_once __DIR__ . '/noc-authorization-lib.php';
 require_once __DIR__ . '/device-credential-vault-lib.php';
+require_once __DIR__ . '/business-rules-lib.php';
 
 function app_mgs_mask(string $value): string
 {
@@ -1914,6 +1915,46 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
         }
     }
 
+    // Fairness rule (vision §9.3): "isciye verilmeyen tapsiriq onun aleyhine
+    // hesablanmir" -- a task_missed penalty must reference a real ticket that
+    // was actually assigned to this employee, not just typed in against them.
+    if ($eventType === 'penalty' && $reasonCode === 'task_missed' && empty($input['override_unassigned_task'])) {
+        $relatedTicketNo = mb_substr(clean_text((string) ($input['related_ticket_no'] ?? $input['source_id'] ?? '')), 0, 32);
+        if ($relatedTicketNo === '') {
+            return ['ok' => false, 'error' => 'task_missed_requires_ticket_reference'];
+        }
+        $ticketCheck = $db->prepare('SELECT id, assigned_technician_account_id FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+        $ticketCheck->execute(['ticket_no' => $relatedTicketNo]);
+        $ticketRow = $ticketCheck->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($ticketRow)) {
+            return ['ok' => false, 'error' => 'related_ticket_not_found'];
+        }
+        if ((int) ($ticketRow['assigned_technician_account_id'] ?? 0) !== $employeeId) {
+            return ['ok' => false, 'error' => 'task_not_assigned_to_employee'];
+        }
+        $input['source_type'] = $input['source_type'] ?? 'ticket';
+        $input['source_id'] = $relatedTicketNo;
+
+        // Fairness rule (vision §9.3): "kutlevi sebeke incident-i texnikin
+        // sexsi nasazligi sayilmir" -- if an unusual number of tickets opened
+        // company-wide the same day, treat it as a likely mass incident and
+        // refuse the individual penalty rather than silently accept it.
+        $massThreshold = (int) app_business_rule_get($db, 'hr_mass_incident_daily_ticket_threshold', 30);
+        if ($massThreshold > 0 && empty($input['override_mass_incident'])) {
+            $ticketSurge = $db->prepare('SELECT COUNT(*) FROM portal_tickets WHERE DATE(opened_at) = :event_date');
+            $ticketSurge->execute(['event_date' => $eventDate]);
+            $ticketCountThatDay = (int) $ticketSurge->fetchColumn();
+            if ($ticketCountThatDay >= $massThreshold) {
+                return [
+                    'ok' => false,
+                    'error' => 'penalty_blocked_by_mass_incident',
+                    'ticket_count' => $ticketCountThatDay,
+                    'threshold' => $massThreshold,
+                ];
+            }
+        }
+    }
+
     $record = [
         'employee_account_id' => $employeeId,
         'employee_name' => clean_text((string)($employee['full_name']??$employee['login']??'')),
@@ -1964,6 +2005,192 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
     }
 
     return ['ok' => true, 'id' => $id, 'record' => $record];
+}
+
+// Fairness rule (vision §9.3): "iscinin KPI-ye etiraz mexanizmi olur" -- an
+// employee (or HR on their behalf) can dispute a score event; an admin who is
+// not the appellant reviews it and, if overturned, the effect is reversed via
+// a new compensating hr_score_events entry (never edited/deleted in place).
+function app_mgs_hr_score_appeal_file(PDO $db, int $scoreEventId, string $reason, array $actor): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    $reason = mb_substr(clean_text($reason), 0, 500);
+    if ($scoreEventId <= 0 || $reason === '') {
+        return ['ok' => false, 'error' => 'invalid_appeal'];
+    }
+    $eventStatement = $db->prepare('SELECT id, employee_account_id, employee_name FROM hr_score_events WHERE id = :id LIMIT 1');
+    $eventStatement->execute(['id' => $scoreEventId]);
+    $eventRow = $eventStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($eventRow)) {
+        return ['ok' => false, 'error' => 'score_event_not_found'];
+    }
+    $employeeId = (int) $eventRow['employee_account_id'];
+    $actorId = (int) ($actor['id'] ?? 0);
+    $isSelf = $actorId > 0 && $actorId === $employeeId;
+    if (!$isSelf && !app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    $existing = $db->prepare("SELECT id FROM hr_score_appeals WHERE score_event_id = :score_event_id AND status = 'pending' LIMIT 1");
+    $existing->execute(['score_event_id' => $scoreEventId]);
+    if ((int) ($existing->fetchColumn() ?: 0) > 0) {
+        return ['ok' => false, 'error' => 'appeal_already_pending'];
+    }
+    try {
+        $db->beginTransaction();
+        $insert = $db->prepare(
+            'INSERT INTO hr_score_appeals (score_event_id, employee_account_id, appeal_reason, status, created_by_account_id, created_by_name)
+             VALUES (:score_event_id, :employee_account_id, :appeal_reason, "pending", :actor_id, :actor_name)'
+        );
+        $insert->execute([
+            'score_event_id' => $scoreEventId,
+            'employee_account_id' => $employeeId,
+            'appeal_reason' => $reason,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'employee')),
+        ]);
+        $id = (int) $db->lastInsertId();
+        app_mgs_hr_write_audit($db, 'hr_score_appeal', $employeeId, $actor, 'HR score appeal filed for event ' . $scoreEventId, ['id' => $id, 'score_event_id' => $scoreEventId], $reason, [], ['id' => $id, 'status' => 'pending'], 'score');
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'appeal_file_failed', 'message' => $exception->getMessage()];
+    }
+    return ['ok' => true, 'id' => $id];
+}
+
+function app_mgs_hr_score_appeal_resolve(PDO $db, int $appealId, string $decision, string $resolutionNote, array $actor): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['upheld', 'overturned'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 500);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    // NOTE: app_mgs_record_hr_score_event() manages its own top-level
+    // transaction, so it cannot be called while one is already open on $db --
+    // this function therefore does its read/validate and reversal-record
+    // steps OUTSIDE a transaction, then performs the actual status write as a
+    // single atomic UPDATE ... WHERE status = 'pending' (a compare-and-swap
+    // that fails safely if another reviewer already resolved the appeal).
+    $appealStatement = $db->prepare('SELECT * FROM hr_score_appeals WHERE id = :id LIMIT 1');
+    $appealStatement->execute(['id' => $appealId]);
+    $appeal = $appealStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($appeal)) {
+        return ['ok' => false, 'error' => 'appeal_not_found'];
+    }
+    if ((string) $appeal['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'appeal_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) $appeal['employee_account_id']) {
+        return ['ok' => false, 'error' => 'appellant_cannot_review_own_appeal'];
+    }
+
+    try {
+        $reversalId = null;
+        if ($decision === 'overturned') {
+            $eventStatement = $db->prepare('SELECT * FROM hr_score_events WHERE id = :id LIMIT 1');
+            $eventStatement->execute(['id' => (int) $appeal['score_event_id']]);
+            $scoreEvent = $eventStatement->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($scoreEvent)) {
+                return ['ok' => false, 'error' => 'original_score_event_missing'];
+            }
+            $originalPoints = (float) $scoreEvent['points_delta'];
+            $reversal = app_mgs_record_hr_score_event([
+                'employee_account_id' => (int) $scoreEvent['employee_account_id'],
+                'reason_code' => 'appeal_overturned',
+                'event_type' => $originalPoints < 0 ? 'reward' : 'penalty',
+                'points_delta' => abs($originalPoints),
+                'title' => 'Etiraz neticesinde geri qaytarildi',
+                'reason' => 'Appeal #' . $appealId . ' overturned: ' . $resolutionNote,
+                'note' => $resolutionNote,
+                'source_type' => 'hr_score_appeal',
+                'source_id' => (string) $appealId,
+                'idempotency_key' => 'appeal-reversal:' . $appealId,
+            ], $actor, $db);
+            if (empty($reversal['ok'])) {
+                return ['ok' => false, 'error' => 'reversal_failed', 'detail' => (string) ($reversal['error'] ?? '')];
+            }
+            $reversalId = (int) ($reversal['id'] ?? 0) ?: null;
+        }
+
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE hr_score_appeals SET status = :status, reviewed_by_account_id = :actor_id, reviewed_by_name = :actor_name,
+                resolution_note = :resolution_note, reversal_score_event_id = :reversal_id, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'reversal_id' => $reversalId,
+            'id' => $appealId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'appeal_already_resolved'];
+        }
+        app_mgs_hr_write_audit($db, 'hr_score_appeal', (int) $appeal['employee_account_id'], $actor, 'HR score appeal ' . $decision . ': #' . $appealId, ['id' => $appealId, 'decision' => $decision, 'reversal_score_event_id' => $reversalId], $resolutionNote, $appeal, ['id' => $appealId, 'status' => $decision], 'score');
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'appeal_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'status' => $decision, 'reversal_score_event_id' => $reversalId];
+}
+
+function app_mgs_hr_score_appeals(PDO $db, array $filters = []): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $where = [];
+    $params = [];
+    if (!empty($filters['status'])) {
+        $where[] = 'a.status = :status';
+        $params['status'] = (string) $filters['status'];
+    }
+    if (!empty($filters['employee_account_id'])) {
+        $where[] = 'a.employee_account_id = :employee_account_id';
+        $params['employee_account_id'] = (int) $filters['employee_account_id'];
+    }
+    $sql = 'SELECT a.*, e.employee_name AS score_event_title, e.points_delta AS score_event_points, e.reason_code AS score_event_reason_code
+            FROM hr_score_appeals a
+            LEFT JOIN hr_score_events e ON e.id = a.score_event_id'
+        . ($where !== [] ? ' WHERE ' . implode(' AND ', $where) : '')
+        . ' ORDER BY a.created_at DESC LIMIT 200';
+    $statement = $db->prepare($sql);
+    $statement->execute($params);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_mgs_hr_score_recent_events(PDO $db, int $limit = 25): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $limit = max(1, min(100, $limit));
+    $statement = $db->prepare(
+        "SELECT e.*, (SELECT COUNT(*) FROM hr_score_appeals a WHERE a.score_event_id = e.id AND a.status = 'pending') AS has_pending_appeal
+         FROM hr_score_events e
+         ORDER BY e.id DESC LIMIT {$limit}"
+    );
+    $statement->execute();
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
 function app_mgs_hr_score_summary(int $employeeId, ?string $periodStart = null, ?string $periodEnd = null, ?PDO $db = null): array

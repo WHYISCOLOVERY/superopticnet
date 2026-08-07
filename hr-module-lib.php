@@ -410,6 +410,9 @@ function app_hr_build_context(PDO $db, array $user, array $query): array
         $context['data']['page'] = app_hr_score_page($db, $query);
         $context['data']['employees'] = $employeeSelector();
         $context['data']['reasons'] = app_mgs_hr_score_reason_defaults();
+        $context['data']['recent_events'] = app_mgs_hr_score_recent_events($db, 25);
+        $context['data']['pending_appeals'] = app_mgs_hr_score_appeals($db, ['status' => 'pending']);
+        $context['data']['can_manage_appeals'] = app_portal_is_admin($user);
     } elseif ($tab === 'payroll') {
         $context['data']['page'] = app_hr_payroll_page($db, $query);
         $context['data']['employees'] = $employeeSelector();
