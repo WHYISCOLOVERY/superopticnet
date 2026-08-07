@@ -673,6 +673,7 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
     }
 
     $context['data']['can_write'] = app_finance_actor_can_write($user);
+    $context['data']['can_confirm_writeoff'] = app_portal_is_admin($user);
 
     return $context;
 }

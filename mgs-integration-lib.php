@@ -2857,7 +2857,11 @@ function app_mgs_save_inventory_depreciation(array $input, array $actor = [], ?P
         'net_book_value' => (float) $preview['net_book_value'],
         'writeoff_threshold' => (float) $preview['writeoff_threshold'],
         'writeoff_allowed' => (int) $preview['writeoff_allowed'],
-        'writeoff_status' => (string) $preview['writeoff_status'],
+        // Maker-checker (vision 19.2 "asset silinmesi"): the same actor who
+        // enters the depreciation numbers can never immediately finalize a
+        // writeoff -- an eligible writeoff request lands as pending_writeoff
+        // and needs a different actor to call app_mgs_confirm_inventory_writeoff().
+        'writeoff_status' => (string) $preview['writeoff_status'] === 'written_off' ? 'pending_writeoff' : (string) $preview['writeoff_status'],
         'note' => clean_text((string) ($input['note'] ?? $input['note_text'] ?? '')),
         'calculation_json' => app_db_json_encode(['input' => $input, 'preview' => $preview]),
         'created_by_account_id' => (int) ($actor['id'] ?? 0) ?: null,
@@ -2878,17 +2882,6 @@ function app_mgs_save_inventory_depreciation(array $input, array $actor = [], ?P
         );
         $statement->execute($record);
         $recordId = (int) $db->lastInsertId();
-
-        if ($assetId > 0 && $record['writeoff_status'] === 'written_off') {
-            $assetUpdate = $db->prepare(
-                'UPDATE inventory_assets
-                    SET lifecycle_status = "written_off",
-                        condition_status = "written_off",
-                        updated_at = NOW()
-                  WHERE id = :id'
-            );
-            $assetUpdate->execute(['id' => $assetId]);
-        }
     } catch (Throwable $exception) {
         return ['ok' => false, 'error' => 'depreciation_save_failed', 'message' => $exception->getMessage()];
     }
@@ -2904,6 +2897,79 @@ function app_mgs_save_inventory_depreciation(array $input, array $actor = [], ?P
     ]);
 
     return ['ok' => true, 'id' => $recordId, 'record' => $record, 'preview' => $preview];
+}
+
+// Maker-checker confirm step (vision 19.2 "asset silinmesi"): a DIFFERENT
+// admin than the one who entered the depreciation numbers must confirm a
+// pending_writeoff before the asset is actually marked written_off.
+function app_mgs_confirm_inventory_writeoff(PDO $db, int $depreciationId, array $actor): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    try {
+        $db->beginTransaction();
+        $statement = $db->prepare('SELECT * FROM finance_asset_depreciations WHERE id = :id FOR UPDATE');
+        $statement->execute(['id' => $depreciationId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'depreciation_record_not_found'];
+        }
+        if ((string) $row['writeoff_status'] !== 'pending_writeoff') {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'not_pending_writeoff'];
+        }
+        if ($actorId > 0 && $actorId === (int) $row['created_by_account_id']) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'creator_cannot_confirm'];
+        }
+
+        $db->prepare(
+            "UPDATE finance_asset_depreciations
+                SET writeoff_status = 'written_off', confirmed_by_account_id = :actor_id,
+                    confirmed_by_name = :actor_name, confirmed_at = NOW()
+              WHERE id = :id"
+        )->execute([
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'id' => $depreciationId,
+        ]);
+
+        $assetId = (int) ($row['asset_id'] ?? 0);
+        if ($assetId > 0) {
+            $db->prepare(
+                'UPDATE inventory_assets
+                    SET lifecycle_status = "written_off",
+                        condition_status = "written_off",
+                        updated_at = NOW()
+                  WHERE id = :id'
+            )->execute(['id' => $assetId]);
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'writeoff_confirm_failed', 'message' => $exception->getMessage()];
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'finance_asset_writeoff_confirmed',
+        'entity_type' => 'finance',
+        'entity_id' => (string) $depreciationId,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => 'Asset writeoff confirmed: ' . (string) ($row['asset_label'] ?? ''),
+        'payload' => ['id' => $depreciationId, 'asset_id' => $row['asset_id'] ?? null],
+    ]);
+
+    return ['ok' => true, 'id' => $depreciationId];
 }
 
 function app_mgs_finance_depreciation_rows(?PDO $db = null, int $limit = 20): array

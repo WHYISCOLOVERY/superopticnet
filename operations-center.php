@@ -491,7 +491,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'save_asset_depreciation', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
+    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
         if (!app_verify_csrf($_POST['csrf_token'] ?? null)) {
             $csrfSection = (str_contains($action, 'finance') || in_array($action, ['save_asset_depreciation','import_finance_e_invoice'], true)) ? 'finance' : (str_contains($action, 'hr_') || in_array($action, ['save_attendance_profile','record_attendance_event'], true) ? 'hr' : 'inventory');
             $csrfExtra = $csrfSection === 'finance' ? ['finance_tab' => clean_text((string)($_POST['finance_tab'] ?? 'overview'))] : ($csrfSection === 'hr' ? ['hr_tab' => clean_text((string)($_POST['hr_tab'] ?? 'overview'))] : []);
@@ -1007,11 +1007,31 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'request_writeoff' => isset($_POST['request_writeoff']) ? 1 : 0,
                 'note_text' => clean_text((string) ($_POST['depreciation_note'] ?? '')),
             ], $user, $db);
+            $depreciationErrorMessages = [];
+            $depreciationSuccessMessage = 'Asset amortizasiya hesabi saxlandi.';
+            if ((string) ($localResult['record']['writeoff_status'] ?? '') === 'pending_writeoff') {
+                $depreciationSuccessMessage = 'Asset writeoff-a namzeddir - tesdiq ucun BASQA admin gozlenilir (ozunuz tesdiqleye bilmezsiniz).';
+            }
             spog_operations_flash_redirect([
                 'type' => !empty($localResult['ok']) ? 'success' : 'error',
                 'message' => !empty($localResult['ok'])
-                    ? 'Asset amortizasiya/writeoff hesabi saxlandi.'
+                    ? $depreciationSuccessMessage
                     : ('Asset amortizasiya saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur')),
+            ], $lang, $anchor);
+        } elseif ($action === 'confirm_asset_writeoff') {
+            $anchor = 'finance';
+            $localResult = app_mgs_confirm_inventory_writeoff($db, (int) ($_POST['depreciation_id'] ?? 0), $user);
+            $writeoffConfirmErrorMessages = [
+                'permission_denied' => 'Writeoff tesdiqini yalniz admin ede biler.',
+                'depreciation_record_not_found' => 'Amortizasiya qeydi tapilmadi.',
+                'not_pending_writeoff' => 'Bu qeyd tesdiq gozleyen writeoff statusunda deyil.',
+                'creator_cannot_confirm' => 'Hesabi daxil eden sexs oz writeoff-unu tesdiqleye bilmez - basqa admin lazimdir.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Asset writeoff tesdiqlendi.'
+                    : ($writeoffConfirmErrorMessages[(string) ($localResult['error'] ?? '')] ?? ('Writeoff tesdiqlenmedi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
             ], $lang, $anchor);
         } elseif ($action === 'create_finance_debt_record') {
             $anchor = 'finance';
