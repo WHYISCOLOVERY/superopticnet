@@ -1132,11 +1132,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'event_date' => clean_text((string) ($_POST['score_event_date'] ?? date('Y-m-d'))),
                 'note_text' => clean_text((string) ($_POST['score_note'] ?? '')),
             ], $user, $db);
+            $scoreErrorMessage = (string) ($localResult['error'] ?? '') === 'penalty_blocked_by_approved_leave'
+                ? 'Bu tarixde emekdasin tesdiqlenmis mezuniyyeti/xesteliyi var - cerime bu tarixe yazila bilmez.'
+                : ('Sicil bal hadisesi saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'));
             spog_operations_flash_redirect([
                 'type' => !empty($localResult['ok']) ? 'success' : 'error',
                 'message' => !empty($localResult['ok'])
                     ? 'Sicil bal hadisesi saxlandi.'
-                    : ('Sicil bal hadisesi saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur')),
+                    : $scoreErrorMessage,
             ], $lang, $anchor);
         } elseif ($action === 'create_hr_payroll_record') {
             $anchor = $hrPayrollAnchor;

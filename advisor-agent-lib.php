@@ -27,6 +27,8 @@ declare(strict_types=1);
  *    for any cross-module or high-risk proposal.
  */
 
+require_once __DIR__ . '/business-rules-lib.php';
+
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/agent-workspace-lib.php';
 require_once __DIR__ . '/finance-module-lib.php';
@@ -487,7 +489,7 @@ function app_advisor_techops_briefing(PDO $db): array
 function app_advisor_marketing_briefing(PDO $db): array
 {
     $proposals = [];
-    $inactiveThresholdDays = 45;
+    $inactiveThresholdDays = (int) app_business_rule_get($db, 'churn_inactive_threshold_days', 45);
     $count = app_advisor_read_model_long_inactive_customer_count($db, $inactiveThresholdDays);
     if ($count === null) {
         $proposals[] = app_advisor_build_proposal(

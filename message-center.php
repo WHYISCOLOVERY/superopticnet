@@ -986,6 +986,9 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                 <?php endif; ?>
                 <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="history" href="<?= e($messageHref('history')); ?>"><i class="fa-solid fa-clock-rotate-left"></i> Tarixce</a>
                 <a class="portal-ghost-btn portal-inline-link" href="crm.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-ticket"></i> CRM ve ticketler</a>
+                <?php if (app_portal_can_access_module($user, 'whatsapp_monitor')): ?>
+                    <a class="portal-ghost-btn portal-inline-link" href="whatsapp-monitor.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-brands fa-whatsapp"></i> WhatsApp Monitorinq</a>
+                <?php endif; ?>
                 <?php if (app_portal_is_admin($user)): ?>
                     <a class="portal-ghost-btn portal-inline-link" data-message-nav data-module-section="settings" href="<?= e($smsProviderSettingsHref); ?>"><i class="fa-solid fa-sliders"></i> Kanal ayarlari</a>
                     <a class="portal-ghost-btn portal-inline-link" href="mgs-integration.php?view=bots<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-brands fa-telegram"></i> Telegram botlari</a>

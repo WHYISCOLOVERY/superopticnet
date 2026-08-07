@@ -480,11 +480,12 @@ superoptic_secret_write_service_files() {
         DB_PASS RADIUS_DB_PASS RADIUS_ROUTER_SECRET RADIUS_SSH_PASSWORD RADIUS_TEST_PASSWORD \
         RADIUS_SQL_PASSWORD RADIUS_SHARED_SECRET
     superoptic_secret_write_scoped_file modem \
-        DB_PASS TELEGRAM_MODEM_SEARCH_BOT_TOKEN TELEGRAM_TOKEN TELEGRAM_BOT_TOKEN SNMP_COMMUNITY
+        DB_PASS TELEGRAM_MODEM_SEARCH_BOT_TOKEN TELEGRAM_TOKEN TELEGRAM_BOT_TOKEN SNMP_COMMUNITY MGS_SECRETS_MASTER_KEY
     superoptic_secret_write_scoped_file optimizer DB_PASS RADIUS_DB_PASS CLICKHOUSE_PASSWORD
     superoptic_secret_write_scoped_file security DB_PASS CLICKHOUSE_PASSWORD TELEGRAM_DIAGNOSTICS_BOT_TOKEN
-    superoptic_secret_write_scoped_file network DB_PASS SNMP_COMMUNITY TELEGRAM_NETWORK_BOT_TOKEN
+    superoptic_secret_write_scoped_file network DB_PASS SNMP_COMMUNITY TELEGRAM_NETWORK_BOT_TOKEN MGS_SECRETS_MASTER_KEY
     superoptic_secret_write_scoped_file finance DB_PASS TELEGRAM_FINANCE_BOT_TOKEN
+    superoptic_secret_write_scoped_file whatsapp DB_PASS TELEGRAM_TOKEN
     superoptic_secret_log "Root-only scoped service environments updated; values were not displayed"
 }
 

@@ -299,8 +299,11 @@ function app_inventory_inspection_page(PDO $db, array $query): array
     $where .= app_inventory_search_filter($query, ['n.inspection_status', 'n.inspected_by', 'n.notes', 'a.asset_code', 'a.serial_number', 'r.return_ticket_no'], $params);
     $from = ' FROM inventory_asset_inspections n
               LEFT JOIN inventory_assets a ON a.id = n.asset_id
-              LEFT JOIN inventory_asset_returns r ON r.id = n.return_id' . $where;
-    return app_inventory_query_page($db, 'SELECT COUNT(*)' . $from, 'SELECT n.*, a.asset_code, a.serial_number, a.mac_address, r.return_ticket_no, r.customer_code' . $from . ' ORDER BY n.inspected_at DESC, n.id DESC', $params, $query);
+              LEFT JOIN inventory_asset_returns r ON r.id = n.return_id
+              LEFT JOIN inventory_asset_repairs rep ON rep.id = (
+                  SELECT id FROM inventory_asset_repairs WHERE inspection_id = n.id ORDER BY id DESC LIMIT 1
+              )' . $where;
+    return app_inventory_query_page($db, 'SELECT COUNT(*)' . $from, 'SELECT n.*, a.asset_code, a.serial_number, a.mac_address, r.return_ticket_no, r.customer_code, r.return_status, rep.id AS repair_id, rep.repair_status' . $from . ' ORDER BY n.inspected_at DESC, n.id DESC', $params, $query);
 }
 
 function app_inventory_rma_page(PDO $db, array $query): array

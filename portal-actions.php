@@ -5,6 +5,7 @@ require __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/portal-security-lib.php';
 require_once __DIR__ . '/hr-position-service.php';
+require_once __DIR__ . '/communication-consent-lib.php';
 
 app_session_boot();
 $user = app_portal_current_user();
@@ -125,6 +126,21 @@ if ($action === 'update_phone' && $user['role'] === 'customer') {
     $phone = clean_text($_POST['phone'] ?? '');
     $success = app_portal_update_customer_phone($user, $phone);
     header('Location: ' . portal_redirect_url('portal.php', $success ? 'portal_phone_updated' : 'portal_phone_failed'));
+    exit;
+}
+
+if ($action === 'update_marketing_consent' && $user['role'] === 'customer') {
+    $db = app_db();
+    $account = $db instanceof PDO ? app_db_account_by_id((int) ($user['id'] ?? 0)) : null;
+    $phone = is_array($account) ? (string) ($account['phone'] ?? '') : '';
+    $wantsMarketing = !empty($_POST['marketing_consent']);
+    $success = false;
+    if ($db instanceof PDO && $phone !== '') {
+        $success = $wantsMarketing
+            ? app_communication_opt_in($db, $phone, 'sms')
+            : app_communication_opt_out($db, $phone, 'sms', 'customer_portal', $user, 'Musteri portaldan bildirisleri bagladi');
+    }
+    header('Location: ' . portal_redirect_url('portal.php', $success ? 'portal_consent_updated' : 'portal_consent_failed') . '#customer-messages');
     exit;
 }
 

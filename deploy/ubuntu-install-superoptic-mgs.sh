@@ -996,7 +996,7 @@ write_systemd_units() {
     log "Writing systemd service/timer units"
     run install -d -m 0770 -o www-data -g www-data "${BACKUP_ROOT}/mgs" "${UPDATES_ROOT}"
     local service_user
-    for service_user in node billing communication pg365 radius modem optimizer security network finance; do
+    for service_user in node billing communication pg365 radius modem optimizer security network finance whatsapp; do
         if [[ "${service_user}" == "node" ]]; then
             ensure_node_runtime_user
         elif [[ "${DRY_RUN}" == "1" ]]; then
@@ -1270,6 +1270,31 @@ Group=www-data
 ExecStart=/usr/bin/php ${WEB_ROOT}/tools/process-finance-daily-report.php --apply --period=daily
 CONF
 
+    run tee /etc/systemd/system/superoptic-whatsapp-heartbeat-watch.service >/dev/null <<CONF
+[Unit]
+Description=SuperOptic WhatsApp bridge heartbeat watchdog (alerts on a dead session, does not restart the bridge)
+
+[Service]
+Type=oneshot
+EnvironmentFile=$(dirname "${SECRET_ENV_FILE}")/services/whatsapp.env
+User=superoptic-whatsapp
+Group=www-data
+ExecStart=/usr/bin/php ${WEB_ROOT}/tools/watch-whatsapp-heartbeat.php --apply
+CONF
+
+    run tee /etc/systemd/system/superoptic-whatsapp-heartbeat-watch.timer >/dev/null <<'CONF'
+[Unit]
+Description=Run SuperOptic WhatsApp heartbeat watchdog every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Unit=superoptic-whatsapp-heartbeat-watch.service
+
+[Install]
+WantedBy=timers.target
+CONF
+
     run tee /etc/systemd/system/superoptic-finance-daily-report.timer >/dev/null <<'CONF'
 [Unit]
 Description=Run SuperOptic finance daily report once a day at day-end
@@ -1295,6 +1320,7 @@ CONF
         superoptic-network-olt-rules.service
         superoptic-ont-telemetry-sync.service
         superoptic-finance-daily-report.service
+        superoptic-whatsapp-heartbeat-watch.service
     )
     if [[ "${SKIP_MGS_NPM_INSTALL}" != "1" && -n "${SOURCE_MGS_ROOT}" ]]; then
         hardened_services=(superoptic-mgs-node.service "${hardened_services[@]}")
@@ -1341,6 +1367,7 @@ CONF
     run systemctl enable --now superoptic-network-olt-rules.timer
     run systemctl enable --now superoptic-ont-telemetry-sync.timer
     run systemctl enable --now superoptic-finance-daily-report.timer
+    run systemctl enable --now superoptic-whatsapp-heartbeat-watch.timer
 }
 
 verify_install() {

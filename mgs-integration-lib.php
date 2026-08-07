@@ -5,6 +5,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/audit-log-lib.php';
 require_once __DIR__ . '/communication-provider.php';
 require_once __DIR__ . '/noc-authorization-lib.php';
+require_once __DIR__ . '/device-credential-vault-lib.php';
 
 function app_mgs_mask(string $value): string
 {
@@ -1886,6 +1887,33 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
     }
 
     $eventDate = app_mgs_hr_date_value($input['event_date'] ?? null) ?? date('Y-m-d');
+
+    // Fairness rule (docs vision §9.3): a penalty must never land on a day the
+    // employee was on approved leave/sick time. Rewards and resets are not
+    // blocked -- only a negative points_delta on a day already covered by an
+    // approved/paid hr_leave_requests row is refused. This does not touch
+    // existing leave/payroll data; it only gates the score-event write.
+    if ($eventType === 'penalty' && empty($input['override_leave_conflict'])) {
+        $leaveConflict = $db->prepare(
+            "SELECT id, leave_type FROM hr_leave_requests
+              WHERE employee_account_id = :employee_id
+                AND status IN ('approved', 'paid')
+                AND start_date IS NOT NULL AND end_date IS NOT NULL
+                AND :event_date BETWEEN start_date AND end_date
+              LIMIT 1"
+        );
+        $leaveConflict->execute(['employee_id' => $employeeId, 'event_date' => $eventDate]);
+        $conflictRow = $leaveConflict->fetch(PDO::FETCH_ASSOC);
+        if (is_array($conflictRow)) {
+            return [
+                'ok' => false,
+                'error' => 'penalty_blocked_by_approved_leave',
+                'leave_request_id' => (int) $conflictRow['id'],
+                'leave_type' => (string) $conflictRow['leave_type'],
+            ];
+        }
+    }
+
     $record = [
         'employee_account_id' => $employeeId,
         'employee_name' => clean_text((string)($employee['full_name']??$employee['login']??'')),
@@ -7828,6 +7856,32 @@ function app_mgs_device_access_profile(
     $profile['port'] = max(1, (int) ($profile['port'] ?? 161));
     $profile['trap_port'] = max(1, (int) ($profile['trap_port'] ?? 162));
 
+    // Encrypted vault takes precedence over the plaintext override columns
+    // above. A device saved before the vault existed (or written while
+    // MGS_SECRETS_MASTER_KEY was unavailable to the writer) simply has no
+    // vault row yet, so the plaintext value already merged in stands as the
+    // fallback -- this must never hard-fail a live device probe.
+    if ($deviceKey !== '') {
+        $vaultDb = $db instanceof PDO ? $db : app_db();
+        if ($vaultDb instanceof PDO) {
+            $vaultFields = [
+                'ssh_password' => 'ssh_password',
+                'read_community' => 'snmp_read_community',
+                'write_community' => 'snmp_write_community',
+            ];
+            foreach ($vaultFields as $target => $credentialType) {
+                try {
+                    $vaultValue = app_device_credential_reveal($vaultDb, $deviceKey, $credentialType);
+                } catch (Throwable) {
+                    $vaultValue = null;
+                }
+                if ($vaultValue !== null && $vaultValue !== '') {
+                    $profile[$target] = $vaultValue;
+                }
+            }
+        }
+    }
+
     return $profile;
 }
 
@@ -7858,18 +7912,54 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
     }
 
     $existing = app_mgs_device_access_override_by_key($deviceKey, $db, $actor, 'update_device_access') ?? [];
-    $sshPassword = trim((string) ($payload['ssh_password'] ?? ''));
-    if ($sshPassword === '' && !empty($existing['ssh_password'])) {
-        $sshPassword = (string) $existing['ssh_password'];
+    // "Effective current value" for carry-forward must check the vault first --
+    // once a secret has been migrated there, the plaintext column is blanked
+    // (see below), so falling back to $existing alone would silently wipe an
+    // unsubmitted field on the next save.
+    $effectiveSecret = static function (string $payloadKey, string $credentialType) use ($payload, $existing, $db, $deviceKey): string {
+        $submitted = trim((string) ($payload[$payloadKey] ?? ''));
+        if ($submitted !== '') {
+            return $submitted;
+        }
+        try {
+            $vaultValue = app_device_credential_reveal($db, $deviceKey, $credentialType);
+        } catch (Throwable) {
+            $vaultValue = null;
+        }
+        if ($vaultValue !== null && $vaultValue !== '') {
+            return $vaultValue;
+        }
+        return (string) ($existing[$payloadKey] ?? '');
+    };
+    $sshPassword = $effectiveSecret('ssh_password', 'ssh_password');
+    $snmpReadCommunity = clean_text((string) ($payload['snmp_read_community'] ?? '')) ?: $effectiveSecret('snmp_read_community', 'snmp_read_community');
+    $snmpWriteCommunity = clean_text((string) ($payload['snmp_write_community'] ?? '')) ?: $effectiveSecret('snmp_write_community', 'snmp_write_community');
+
+    // Vault-first: if the master key is configured, encrypt these three
+    // fields and never let the plaintext write below carry a real value for
+    // them. If the key isn't available yet in this environment (deploy not
+    // rolled out here), fall back to the previous plaintext behavior rather
+    // than breaking device-credential updates entirely during the transition.
+    $vaultUsed = app_device_credential_vault_key_available();
+    if ($vaultUsed) {
+        foreach ([
+            'ssh_password' => $sshPassword,
+            'snmp_read_community' => $snmpReadCommunity,
+            'snmp_write_community' => $snmpWriteCommunity,
+        ] as $credentialType => $secretValue) {
+            if ($secretValue !== '') {
+                app_device_credential_store($db, $deviceKey, $credentialType, $secretValue);
+            }
+        }
     }
 
     $row = [
         'device_key' => $deviceKey,
         'ssh_username' => clean_text((string) ($payload['ssh_username'] ?? ($existing['ssh_username'] ?? ''))),
-        'ssh_password' => $sshPassword,
+        'ssh_password' => $vaultUsed ? '' : $sshPassword,
         'ssh_port' => max(1, (int) ($payload['ssh_port'] ?? ($existing['ssh_port'] ?? 22))),
-        'snmp_read_community' => clean_text((string) ($payload['snmp_read_community'] ?? ($existing['snmp_read_community'] ?? ''))),
-        'snmp_write_community' => clean_text((string) ($payload['snmp_write_community'] ?? ($existing['snmp_write_community'] ?? ''))),
+        'snmp_read_community' => $vaultUsed ? '' : $snmpReadCommunity,
+        'snmp_write_community' => $vaultUsed ? '' : $snmpWriteCommunity,
         'snmp_port' => max(1, (int) ($payload['snmp_port'] ?? ($existing['snmp_port'] ?? 161))),
         'trap_server' => clean_text((string) ($payload['trap_server'] ?? ($existing['trap_server'] ?? ''))),
         'trap_port' => max(1, (int) ($payload['trap_port'] ?? ($existing['trap_port'] ?? 162))),
@@ -7917,10 +8007,11 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
             'device_key' => $deviceKey,
             'ssh_username' => $effective['ssh_username'] ?? '',
             'ssh_port' => $effective['ssh_port'] ?? 22,
-            'snmp_read_community' => $effective['read_community'] ?? '',
+            'snmp_read_community_set' => (string) ($effective['read_community'] ?? '') !== '',
             'snmp_port' => $effective['port'] ?? 161,
             'trap_server' => $effective['trap_server'] ?? '',
             'trap_port' => $effective['trap_port'] ?? 162,
+            'vault_used' => $vaultUsed,
         ],
     ]);
 
@@ -7929,6 +8020,7 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
         'device_key' => $deviceKey,
         'device_name' => (string) ($device['device_name'] ?? $deviceKey),
         'profile' => $effective,
+        'vault_used' => $vaultUsed,
     ];
 }
 

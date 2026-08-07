@@ -945,6 +945,8 @@ function app_flash_message(): ?array
         'portal_phone_failed' => ['type' => 'error', 'message' => 'Nomreni yenilemek olmadi. Format ve billing endpointini yoxlayin.'],
         'portal_ticket_created' => ['type' => 'success', 'message' => 'Yeni muraciet yaradildi.'],
         'portal_ticket_failed' => ['type' => 'error', 'message' => 'Muraciet yaradilmadi. Zehmet olmasa yeniden cehd edin.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Bildiris tercihiniz yenilendi.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Tercihiniz saxlanmadi. Zehmet olmasa yeniden cehd edin.'],
         'auth_required' => ['type' => 'error', 'message' => 'Davam etmek ucun portala daxil olun.'],
         'logged_out' => ['type' => 'success', 'message' => 'Portal sessiyasi baglandi.'],
         'portal_bridge_unavailable' => ['type' => 'error', 'message' => 'Kechid konfiqurasiyasi hazir deyil. OLT token ayarlari ve ya giris URL-i doldurulmalidir.'],

@@ -7,6 +7,9 @@ require_once __DIR__ . '/finance-bonus-lib.php';
 require_once __DIR__ . '/reporting-period-lib.php';
 // Payroll/tax was moved from HR to Finance; reuse the HR payroll data loaders.
 require_once __DIR__ . '/hr-module-lib.php';
+// Revenue-for-period must match Billing's own dashboard exactly; reuse its
+// canonical sum instead of keeping a second copy of the same query here.
+require_once __DIR__ . '/billing-module-lib.php';
 // Finance views call app_ui_status()/app_ui_term(); ensure available on both the
 // full-page and AJAX-partial render paths.
 require_once __DIR__ . '/ui-language-lib.php';
@@ -553,10 +556,7 @@ function app_finance_overview_kpis(PDO $db, array $query): array
         }
     };
 
-    $income = $scalar(
-        'SELECT COALESCE(SUM(amount),0) FROM billing_payments WHERE created_at >= :start_at AND created_at < :end_at',
-        $params
-    );
+    $income = app_billing_period_revenue_total($db, (string) $params['start_at'], (string) $params['end_at']);
     $income += app_finance_manual_income_total($db, $dates['start_date'], $dates['end_date']);
     $expenses = $scalar(
         'SELECT COALESCE(SUM(amount),0) FROM finance_entries

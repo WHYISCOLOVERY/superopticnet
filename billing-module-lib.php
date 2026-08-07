@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/reporting-period-lib.php';
 require_once __DIR__ . '/stage1-feature-lib.php';
+require_once __DIR__ . '/business-rules-lib.php';
 
 require_once __DIR__ . '/billing-customer-identity-lib.php';
 
@@ -90,6 +91,40 @@ function app_billing_operational_customer_sql(string $alias = 'a'): string
 function app_billing_operational_payment_sql(string $alias = 'p'): string
 {
     return $alias . '.id > 0';
+}
+
+/**
+ * Canonical "revenue in [startAt, endAt)" for billing_payments. This is the
+ * one place that sums payments for a period — Billing's own dashboard,
+ * Finance's income line and Analytics' snapshot all call this instead of
+ * each keeping an independent copy of the same SUM(amount) query, so a
+ * future change to the operational payment guard (or any other filter)
+ * can't silently diverge between pages that are supposed to agree.
+ */
+function app_billing_period_revenue_total(PDO $db, string $startAt, string $endAt): float
+{
+    return app_billing_scalar(
+        $db,
+        'SELECT COALESCE(SUM(p.amount),0) FROM billing_payments p WHERE '
+            . app_billing_operational_payment_sql('p')
+            . ' AND p.created_at >= :start_at AND p.created_at < :end_at',
+        ['start_at' => $startAt, 'end_at' => $endAt]
+    );
+}
+
+/**
+ * Canonical "how many active customers right now" count (all-time, not
+ * period-bound). Same reasoning as app_billing_period_revenue_total(): one
+ * definition instead of several copy-pasted literals that must be kept in
+ * sync by hand.
+ */
+function app_billing_active_customer_count(PDO $db): float
+{
+    return app_billing_scalar(
+        $db,
+        'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND a.is_active = 1 AND '
+            . app_billing_operational_customer_sql('a')
+    );
 }
 
 function app_billing_debt_sql(string $alias = 'a'): string
@@ -307,7 +342,7 @@ function app_billing_statistics_context(PDO $db, array $query): array
     return $dates + [
         'kpis' => [
             ['label' => 'Dovr odenisi', 'value' => array_sum(array_column($payments, 'value')), 'kind' => 'money'],
-            ['label' => 'Aktiv musteri', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND a.is_active = 1 AND ' . $customerGuard), 'kind' => 'count'],
+            ['label' => 'Aktiv musteri', 'value' => app_billing_active_customer_count($db), 'kind' => 'count'],
             ['label' => 'Aktiv xidmet', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE s.status = "active" AND ' . $customerGuard), 'kind' => 'count'],
             ['label' => 'Aktiv paket', 'value' => app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_tariffs WHERE status = "active"'), 'kind' => 'count'],
         ],
@@ -348,19 +383,20 @@ function app_billing_overview_context(PDO $db, array $query): array
     return app_billing_cache_remember($cacheKey, 45, static function () use ($db, $customerGuard, $paymentGuard, $debt): array {
         $recent = [];
         $alerts = [];
+        $riskyWindowDays = max(1, (int) app_business_rule_get($db, 'billing_risky_service_window_days', 7));
         try {
             $recentStatement = $db->query('SELECT STRAIGHT_JOIN p.id, p.subscriber_code, p.amount, p.payment_method, p.transaction_id, p.created_at, a.full_name FROM billing_payments p INNER JOIN portal_accounts a ON a.id = p.account_id WHERE ' . $paymentGuard . ' AND ' . $customerGuard . ' ORDER BY p.created_at DESC, p.id DESC LIMIT 5');
             $recent = $recentStatement !== false ? ($recentStatement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-            $alertStatement = $db->query('SELECT a.id, a.subscriber_code, a.full_name, ' . $debt . ' AS debt_amount, MAX(s.expires_at) AS expires_at, MAX(s.status) AS service_status FROM portal_accounts a LEFT JOIN billing_radius_services s ON s.account_id = a.id WHERE a.role = "customer" AND ' . $customerGuard . ' GROUP BY a.id HAVING debt_amount > 0 OR expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY) ORDER BY debt_amount DESC, expires_at LIMIT 5');
+            $alertStatement = $db->query('SELECT a.id, a.subscriber_code, a.full_name, ' . $debt . ' AS debt_amount, MAX(s.expires_at) AS expires_at, MAX(s.status) AS service_status FROM portal_accounts a LEFT JOIN billing_radius_services s ON s.account_id = a.id WHERE a.role = "customer" AND ' . $customerGuard . ' GROUP BY a.id HAVING debt_amount > 0 OR expires_at <= DATE_ADD(NOW(), INTERVAL ' . $riskyWindowDays . ' DAY) ORDER BY debt_amount DESC, expires_at LIMIT 5');
             $alerts = $alertStatement !== false ? ($alertStatement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
         } catch (Throwable) {
             $recent = [];
             $alerts = [];
         }
         $totalCustomers = app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard);
-        $activeCustomers = app_billing_scalar($db, 'SELECT COUNT(*) FROM portal_accounts a WHERE a.role = "customer" AND a.is_active = 1 AND ' . $customerGuard);
+        $activeCustomers = app_billing_active_customer_count($db);
         $activeServices = app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE s.status = "active" AND ' . $customerGuard);
-        $riskyServices = app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE (s.status IN ("expired","suspended","disabled") OR s.expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)) AND ' . $customerGuard);
+        $riskyServices = app_billing_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services s INNER JOIN portal_accounts a ON a.id = s.account_id WHERE (s.status IN ("expired","suspended","disabled") OR s.expires_at <= DATE_ADD(NOW(), INTERVAL ' . $riskyWindowDays . ' DAY)) AND ' . $customerGuard);
         $todayPayment = app_billing_scalar($db, 'SELECT COALESCE(SUM(p.amount),0) FROM billing_payments p WHERE p.created_at >= CURDATE() AND p.created_at < CURDATE() + INTERVAL 1 DAY AND ' . $paymentGuard);
         $customerDebt = app_billing_scalar($db, 'SELECT COALESCE(SUM(' . $debt . '),0) FROM portal_accounts a WHERE a.role = "customer" AND ' . $customerGuard);
 

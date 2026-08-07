@@ -14,11 +14,14 @@ $monitorLink = static fn (string $key): array => [
 <section class="portal-card portal-reveal whatsapp-monitor-module" data-whatsapp-monitor-module data-monitor-view="<?= e($monitorView); ?>">
     <div class="portal-card-head wa-monitor-head">
         <div>
-            <div class="wa-breadcrumb"><span>Portal</span><i class="fa-solid fa-chevron-right"></i><span>CRM</span><i class="fa-solid fa-chevron-right"></i><strong><?= e($monitorTitle); ?></strong></div>
+            <div class="wa-breadcrumb"><span>Portal</span><i class="fa-solid fa-chevron-right"></i><span>Mesaj Mərkəzi</span><i class="fa-solid fa-chevron-right"></i><strong><?= e($monitorTitle); ?></strong></div>
             <h2><?= e($monitorTitle); ?></h2>
             <small>Şirkət nömrələri və cihazları üçün razılıqlı, auditli və icazəyə əsaslanan monitorinq.</small>
         </div>
         <div class="portal-badge-list">
+            <?php if (isset($user) && is_array($user) && app_portal_can_access_module($user, 'messaging')): ?>
+                <a class="portal-ghost-btn portal-inline-link" href="message-center.php<?= $monitorLang !== 'az' ? '?lang=' . rawurlencode($monitorLang) : ''; ?>"><i class="fa-solid fa-paper-plane"></i> Mesaj Mərkəzi</a>
+            <?php endif; ?>
             <a class="portal-ghost-btn portal-inline-link" href="portal.php"><i class="fa-solid fa-arrow-left"></i> Əsas portal</a>
         </div>
     </div>

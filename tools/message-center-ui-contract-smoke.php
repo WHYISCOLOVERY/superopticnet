@@ -29,6 +29,8 @@ $expect(str_contains($page, "app_asset('script/message-center.js')"), 'message_j
 $expect(str_contains($page, 'data-whatsapp-provider-panel'), 'whatsapp_provider_panel_missing');
 $expect(str_contains($page, 'data-whatsapp-provider-refresh'), 'whatsapp_provider_refresh_missing');
 $expect(str_contains($page, 'api/provider/whatsapp-status.php'), 'whatsapp_provider_status_endpoint_missing');
+$expect(str_contains($page, "app_portal_can_access_module(\$user, 'whatsapp_monitor')"), 'whatsapp_monitor_cross_link_guard_missing');
+$expect(str_contains($page, 'href="whatsapp-monitor.php'), 'whatsapp_monitor_cross_link_missing');
 
 foreach ([
     'send_single',

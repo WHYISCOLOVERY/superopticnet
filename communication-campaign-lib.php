@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/customer-intelligence-lib.php';
+require_once __DIR__ . '/communication-consent-lib.php';
 
 function app_communication_campaign_ensure_schema(PDO $db): bool
 {
@@ -331,7 +332,11 @@ function app_communication_campaign_queue_account(PDO $db, array $campaign, arra
     }
     $body = mb_substr(app_message_render_body($body, $account), 0, 1000);
     $channel = app_message_channel_for_account($account, 'sms');
-    if ($body === '' || trim((string) ($channel['destination'] ?? '')) === '') {
+    $destination = trim((string) ($channel['destination'] ?? ''));
+    if ($body === '' || $destination === '') {
+        return 0;
+    }
+    if (app_communication_is_opted_out($db, $destination, 'sms')) {
         return 0;
     }
 

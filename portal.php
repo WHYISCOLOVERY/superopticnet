@@ -4,6 +4,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/design-system-lib.php';
+require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/communication-consent-lib.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -311,6 +313,17 @@ $customerOnts = $isCustomer && is_array($snapshot['ont_profiles'] ?? null)
 $customerMessages = $isCustomer && is_array($snapshot['messages'] ?? null)
     ? array_values(array_filter($snapshot['messages'], 'is_array'))
     : [];
+$customerMarketingOptedOut = false;
+if ($isCustomer && app_db_available()) {
+    $consentDb = app_db();
+    if ($consentDb instanceof PDO) {
+        $consentAccount = app_db_account_by_id((int) ($user['id'] ?? 0));
+        $customerPhoneForConsent = is_array($consentAccount) ? (string) ($consentAccount['phone'] ?? '') : '';
+        if ($customerPhoneForConsent !== '') {
+            $customerMarketingOptedOut = app_communication_is_opted_out($consentDb, $customerPhoneForConsent, 'sms');
+        }
+    }
+}
 $customerServiceState = 'unknown';
 if ($customerServices !== []) {
     $firstServiceStatus = strtolower((string) ($customerServices[0]['status'] ?? ''));
@@ -336,6 +349,8 @@ $flashMap = [
         'technician_ticket_closed' => ['type' => 'success', 'message' => 'Bilet ugurla baglandi.'],
         'technician_ticket_failed' => ['type' => 'error', 'message' => 'Bilet baglanmadi. Linki ve qeydi yoxlayin.'],
         'module_forbidden' => ['type' => 'error', 'message' => 'Bu modul sizin emekdas rolunuz ucun aciq deyil.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Bildiris tercihiniz yenilendi.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Terciheiniz saxlanmadi. Zehmet olmasa yeniden cehd edin.'],
     ],
     'en' => [
         'portal_phone_updated' => ['type' => 'success', 'message' => 'Phone number updated successfully. If billing is active, the change will appear there as well.'],
@@ -353,6 +368,8 @@ $flashMap = [
         'technician_ticket_closed' => ['type' => 'success', 'message' => 'Ticket closed successfully.'],
         'technician_ticket_failed' => ['type' => 'error', 'message' => 'Ticket could not be closed.'],
         'module_forbidden' => ['type' => 'error', 'message' => 'This module is not available for your employee role.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Your notification preference was updated.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Preference could not be saved. Please try again.'],
     ],
     'ru' => [
         'portal_phone_updated' => ['type' => 'success', 'message' => 'Номер успешно обновлен. Если billing активен, изменение появится и там.'],
@@ -369,6 +386,8 @@ $flashMap = [
         'operator_ticket_failed' => ['type' => 'error', 'message' => 'Не удалось создать билет.'],
         'technician_ticket_closed' => ['type' => 'success', 'message' => 'Билет закрыт.'],
         'technician_ticket_failed' => ['type' => 'error', 'message' => 'Не удалось закрыть билет.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Ваши настройки уведомлений обновлены.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Не удалось сохранить настройки. Попробуйте еще раз.'],
     ],
 ];
 
@@ -624,29 +643,37 @@ if (isset($flashMap[$lang][$status])) {
 
                 <article class="portal-card">
                     <div class="portal-card-head">
-                        <h2>ONT / modem melumatlari</h2>
-                        <small>Musteri ucun SN, MAC ve modem temperaturu.</small>
+                        <h2>Sebeke</h2>
+                        <small>Modeminizin qosulma veziyyeti. Texniki detallar (seriya, MAC ve s.) yalniz destek xidmetine gorunur.</small>
                     </div>
                     <div class="portal-table-wrap">
                         <table class="portal-table">
                             <thead>
-                                <tr><th>Modem</th><th>SN / MAC</th><th>Modem temperaturu</th><th>Status</th></tr>
+                                <tr><th>Modem</th><th>Veziyyet</th><th>Son yenilenme</th></tr>
                             </thead>
                             <tbody>
                                 <?php if ($customerOnts === []): ?>
-                                    <tr><td colspan="4">ONT/modem melumati tapilmadi.</td></tr>
+                                    <tr><td colspan="3">Modem melumati tapilmadi.</td></tr>
                                 <?php endif; ?>
-                                <?php foreach ($customerOnts as $ont): ?>
+                                <?php foreach ($customerOnts as $ont):
+                                    $ontStatusRaw = strtolower(trim((string) ($ont['status'] ?? '')));
+                                    $ontIsOnline = in_array($ontStatusRaw, ['online', 'active', 'up', 'run', 'working', 'used_working'], true);
+                                    $ontIsOffline = in_array($ontStatusRaw, ['offline', 'down', 'disabled', 'lost'], true);
+                                    $ontStatusLabel = $ontIsOnline ? 'Onlayn' : ($ontIsOffline ? 'Oflayn' : 'Namelum');
+                                    $ontStatusToneClass = $ontIsOnline ? ' portal-pill-success' : ($ontIsOffline ? ' portal-pill-danger' : '');
+                                ?>
                                     <tr>
                                         <td>ONT / modem</td>
-                                        <td><?= e((string) ($ont['serial'] ?? '-')); ?><br><small><?= e((string) ($ont['mac'] ?? '-')); ?></small></td>
-                                        <td><?= e((string) ($ont['temperature'] ?? '-')); ?> C</td>
-                                        <td><span class="portal-pill"><?= e((string) ($ont['status'] ?? '-')); ?></span></td>
+                                        <td><span class="portal-pill<?= e($ontStatusToneClass); ?>"><?= e($ontStatusLabel); ?></span></td>
+                                        <td><?= e((string) ($ont['optical_synced_at'] ?? '-')); ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
                     </div>
+                    <?php if ($customerOnts !== [] && !array_filter($customerOnts, static fn (array $o): bool => in_array(strtolower(trim((string) ($o['status'] ?? ''))), ['online', 'active', 'up', 'run', 'working', 'used_working'], true))): ?>
+                        <small>Sebeke ile bagli problem oldugunu dusunursunuzse, <a href="#customer-support">destek bolmesinden</a> muraciet aca bilersiniz.</small>
+                    <?php endif; ?>
                 </article>
             </section>
 
@@ -729,6 +756,17 @@ if (isset($flashMap[$lang][$status])) {
                         </tbody>
                     </table>
                 </div>
+                <?php if ($customerPhoneForConsent !== ''): ?>
+                <form method="post" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="portal-stacked-form portal-section-gap">
+                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="action" value="update_marketing_consent">
+                    <div class="portal-form-row">
+                        <label><input type="checkbox" name="marketing_consent" value="1" <?= $customerMarketingOptedOut ? '' : 'checked'; ?>> Kampaniya ve teklif SMS-lerini qebul etmek isteyirem</label>
+                    </div>
+                    <small>Odenis, xidmet ve bilet bildirisleri bu ayardan asili olmayaraq gonderilir.</small>
+                    <button class="portal-ghost-btn" type="submit">Yadda saxla</button>
+                </form>
+                <?php endif; ?>
             </section>
 
             <section class="portal-card portal-reveal" id="customer-tickets">

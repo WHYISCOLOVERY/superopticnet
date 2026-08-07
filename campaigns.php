@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/billing-ui.php';
+require_once __DIR__ . '/business-rules-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee(true);
@@ -67,9 +68,10 @@ function campaign_accounts(string $scope, string $area = '', int $limit = 200): 
             OR svc.service_expires_at < DATE_SUB(NOW(), INTERVAL 60 DAY)
         )';
     } elseif ($scope === 'expiring_1d') {
+        $expiringSoonDays = max(1, (int) app_business_rule_get($db, 'campaign_expiring_soon_days', 2));
         $where[] = 'svc.service_expires_at IS NOT NULL';
         $where[] = 'svc.service_expires_at >= NOW()';
-        $where[] = 'svc.service_expires_at < DATE_ADD(NOW(), INTERVAL 2 DAY)';
+        $where[] = 'svc.service_expires_at < DATE_ADD(NOW(), INTERVAL ' . $expiringSoonDays . ' DAY)';
     } elseif ($scope === 'area' && trim($area) !== '') {
         $where[] = 'a.area = :area';
         $params['area'] = trim($area);
@@ -117,6 +119,7 @@ function campaign_scope_stats(): array
         return ['active' => 0, 'expiring_1d' => 0, 'overdue_60d' => 0, 'inactive_30d' => 0, 'risk_high' => 0];
     }
 
+    $expiringSoonDays = max(1, (int) app_business_rule_get($db, 'campaign_expiring_soon_days', 2));
     $stats = [
         'active' => (int) $db->query(
             'SELECT COUNT(*)
@@ -135,7 +138,7 @@ function campaign_scope_stats(): array
              ) svc ON svc.account_id = a.id
              WHERE a.role = "customer"
                AND svc.service_expires_at >= NOW()
-               AND svc.service_expires_at < DATE_ADD(NOW(), INTERVAL 2 DAY)'
+               AND svc.service_expires_at < DATE_ADD(NOW(), INTERVAL ' . $expiringSoonDays . ' DAY)'
         )->fetchColumn(),
         'overdue_60d' => (int) $db->query(
             'SELECT COUNT(*)
