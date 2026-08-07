@@ -320,6 +320,17 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
             unset($record['actor_id'],$record['actor_name']);$record['id']=$id;$statement->execute($record);$auditType='finance_entry_updated';
             $afterStatement=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$afterStatement->execute(['id'=>$id]);$after=$afterStatement->fetch(PDO::FETCH_ASSOC)?:[];
         } else {
+            // Maker-checker (vision 19.2 "boyuk xerc"): a single actor could
+            // otherwise post any-size expense straight into the books. An
+            // expense at/above the configurable threshold lands as
+            // pending_approval instead and is excluded from every
+            // status="posted" total/report until a DIFFERENT admin approves
+            // it via app_finance_approve_expense_entry().
+            $largeExpenseThreshold = (float) app_business_rule_get($db, 'finance_large_expense_threshold_amount', 1000);
+            $record['status'] = ($type === 'expense' && $largeExpenseThreshold > 0 && $amount >= $largeExpenseThreshold)
+                ? 'pending_approval'
+                : 'posted';
+
             if (app_finance_stage1_schema_ready($db)
                 && app_stage1_feature_enabled($db, 'stage1_finance_ledger')) {
                 $idempotencyKey = mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191);
@@ -340,9 +351,9 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
                     'category' => $record['category'],
                     'payment_source' => $record['payment_source'],
                 ]);
-                $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,source_type,employee_account_id,idempotency_key,correlation_id,payload_json,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,"manual",:employee_account_id,:idempotency_key,:correlation_id,:payload_json,:actor_id,:actor_name)');
+                $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,status,source_type,employee_account_id,idempotency_key,correlation_id,payload_json,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,:status,"manual",:employee_account_id,:idempotency_key,:correlation_id,:payload_json,:actor_id,:actor_name)');
             } else {
-                $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,:actor_id,:actor_name)');
+                $statement=$db->prepare('INSERT INTO finance_entries (entry_type,title,category,amount,currency,transaction_date,branch_id,counterparty_id,payment_source,reference_no,note,status,created_by_account_id,created_by_name) VALUES (:entry_type,:title,:category,:amount,:currency,:transaction_date,:branch_id,:counterparty_id,:payment_source,:reference_no,:note,:status,:actor_id,:actor_name)');
             }
             $statement->execute($record);$id=(int)$db->lastInsertId();$auditType='finance_entry_created';
             $existing=null;$afterStatement=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$afterStatement->execute(['id'=>$id]);$after=$afterStatement->fetch(PDO::FETCH_ASSOC)?:[];
@@ -377,6 +388,43 @@ function app_finance_void_entry(PDO $db, int $id, array $actor, string $reason =
         if(($row['status']??'')!=='void'){$db->prepare('UPDATE finance_entries SET status="void" WHERE id=:id')->execute(['id'=>$id]);$after=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$after->execute(['id'=>$id]);app_finance_record_audit($db,'finance_entry_voided',(string)$id,$actor,'Finance entry voided: '.(string)$row['title'],['entryType'=>(string)($row['entry_type']??''),'amount'=>(float)($row['amount']??0),'currency'=>(string)($row['currency']??'AZN')],$reason,$row,$after->fetch(PDO::FETCH_ASSOC)?:[],'entry');}
         $db->commit();return['ok'=>true,'id'=>$id];
     } catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'entry_void_failed'];}
+}
+
+// Maker-checker confirm step (vision 19.2 "boyuk xerc"): a DIFFERENT admin
+// than the one who entered the expense must approve it before it posts and
+// starts counting in any total/report.
+function app_finance_approve_expense_entry(PDO $db, int $id, array $actor): array
+{
+    if (!app_portal_is_admin($actor)) return ['ok'=>false,'error'=>'permission_denied'];
+    app_finance_ensure_operational_schema($db);
+    if ($id <= 0) return ['ok'=>false,'error'=>'invalid_entry'];
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    try {
+        $db->beginTransaction();
+        $lock = $db->prepare('SELECT * FROM finance_entries WHERE id=:id FOR UPDATE');
+        $lock->execute(['id' => $id]);
+        $row = $lock->fetch(PDO::FETCH_ASSOC);
+        if (!$row) { $db->rollBack(); return ['ok'=>false,'error'=>'entry_not_found']; }
+        if ((string) ($row['status'] ?? '') !== 'pending_approval') { $db->rollBack(); return ['ok'=>false,'error'=>'not_pending_approval']; }
+        if ($actorId > 0 && $actorId === (int) ($row['created_by_account_id'] ?? 0)) { $db->rollBack(); return ['ok'=>false,'error'=>'creator_cannot_approve']; }
+
+        $db->prepare(
+            'UPDATE finance_entries SET status="posted", approved_by_account_id=:actor_id, approved_by_name=:actor_name, approved_at=NOW() WHERE id=:id'
+        )->execute([
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'id' => $id,
+        ]);
+        $after = $db->prepare('SELECT * FROM finance_entries WHERE id=:id');
+        $after->execute(['id' => $id]);
+        app_finance_record_audit($db, 'finance_entry_approved', (string) $id, $actor, 'Large expense approved: ' . (string) ($row['title'] ?? ''), ['entryType' => (string) ($row['entry_type'] ?? ''), 'amount' => (float) ($row['amount'] ?? 0), 'currency' => (string) ($row['currency'] ?? 'AZN')], '', $row, $after->fetch(PDO::FETCH_ASSOC) ?: [], 'entry');
+        $db->commit();
+        return ['ok' => true, 'id' => $id];
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        return ['ok' => false, 'error' => 'entry_approve_failed'];
+    }
 }
 
 function app_finance_manual_income_total(PDO $db, string $startDate, string $endDate, string $currency = 'AZN'): float

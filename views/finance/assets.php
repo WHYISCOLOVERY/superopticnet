@@ -6,7 +6,7 @@ $assetRows = (array) ($pageData['rows'] ?? []);
 $assetView = (string) ($pageData['view'] ?? 'depreciation');
 $depreciationAssets = (array) ($financeContext['data']['assets'] ?? []);
 $stockItems = (array) ($financeContext['data']['stock_items'] ?? []);
-$canConfirmWriteoff = !empty($financeContext['data']['can_confirm_writeoff']);
+$canConfirmWriteoff = !empty($financeContext['data']['can_confirm_maker_checker']);
 ?>
 <div data-finance-assets data-finance-asset-depreciation>
     <div class="portal-card-head">
