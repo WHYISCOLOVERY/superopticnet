@@ -7,6 +7,7 @@ require_once __DIR__ . '/copilot-widget.php';
 require_once __DIR__ . '/ui-language-lib.php';
 require_once __DIR__ . '/design-system-lib.php';
 require_once __DIR__ . '/hr-position-service.php';
+require_once __DIR__ . '/admin-privilege-lib.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -28,6 +29,9 @@ $statusMap = [
     'account_forbidden' => ['type' => 'error', 'message' => 'Bu rol deyisikliyine icazeniz yoxdur.'],
     'protected_account' => ['type' => 'error', 'message' => 'Qorunan super admin hesabi adi admin terefinden deyisdirile bilmez.'],
     'account_reason_required' => ['type' => 'error', 'message' => 'Rol, status ve ya silme emeliyyati ucun sebeb mutleq yazilmalidir.'],
+    'privilege_escalation_pending' => ['type' => 'success', 'message' => 'Bu deyisiklik icaze yukselisi sayilir (admin/reaktivasiya/yeni modul). Basqa bir admin tesdiqleyene qeder tetbiq olunmayacaq.'],
+    'privilege_escalation_resolved' => ['type' => 'success', 'message' => 'Icaze yukselisi sorgusu helli olundu.'],
+    'privilege_escalation_failed' => ['type' => 'error', 'message' => 'Icaze yukselisi sorgusu helli olunmadi.'],
     'staff_password_reset' => ['type' => 'success', 'message' => 'Emekdas ucun muveqqeti sifre yaradildi. Sifre asagida yalniz bir defe gosterilir.'],
     'staff_password_reset_failed' => ['type' => 'error', 'message' => 'Emekdas sifresi reset edilmedi. Icazeni ve hesabi yoxlayin.'],
     'staff_password_reason_required' => ['type' => 'error', 'message' => 'Emekdas sifresini reset etmek ucun sebeb mutleq yazilmalidir.'],
@@ -61,6 +65,11 @@ $accounts = app_db_accounts([
     'role' => 'employee',
     'account_type' => $_GET['type_filter'] ?? '',
 ]);
+$pendingPrivilegeEscalations = [];
+$appDbForEscalations = app_db();
+if ($appDbForEscalations instanceof PDO) {
+    $pendingPrivilegeEscalations = app_admin_privilege_change_requests($appDbForEscalations, 'pending');
+}
 if ($accounts === [] && !app_db_available()) {
     $mockData = app_mock_portal_data();
     $mockAccounts = [];
@@ -652,6 +661,40 @@ unset($queryBase['page']);
                 </form>
                 </div>
             </div>
+
+            <?php if ($pendingPrivilegeEscalations !== []): ?>
+            <article class="portal-card admin-users-filter-card">
+                <div class="portal-card-head">
+                    <h2>Gozleyen icaze yukselisleri</h2>
+                    <small>Rol/status deyisikliyi vizyon 19.2-ye gore basqa admin terefinden tesdiqlenmelidir.</small>
+                </div>
+                <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Hedef</th><th>Onceki</th><th>Teklif</th><th>Sebeb</th><th>Sorgu eden</th><th>Qerar</th></tr></thead><tbody>
+                <?php foreach ($pendingPrivilegeEscalations as $escalation): ?>
+                    <?php
+                    $prev = app_mgs_json_decode_array($escalation['previous_privileges_json'] ?? []);
+                    $prop = app_mgs_json_decode_array($escalation['proposed_privileges_json'] ?? []);
+                    ?>
+                    <tr>
+                        <td data-label="Hedef"><?= e((string) ($escalation['target_login'] ?? '-')); ?></td>
+                        <td data-label="Onceki"><?= e((string) ($prev['account_type'] ?? '-') . ' / ' . ($prev['employee_role'] ?? '-') . ' / aktiv=' . ($prev['is_active'] ?? '-')); ?></td>
+                        <td data-label="Teklif"><?= e((string) ($prop['account_type'] ?? '-') . ' / ' . ($prop['employee_role'] ?? '-') . ' / aktiv=' . ($prop['is_active'] ?? '-')); ?></td>
+                        <td data-label="Sebeb"><?= e((string) ($escalation['reason'] ?? '-')); ?></td>
+                        <td data-label="Sorgu eden"><?= e((string) ($escalation['requested_by_name'] ?? '-')); ?></td>
+                        <td data-label="Qerar">
+                            <form class="portal-inline-form" method="post" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                <input type="hidden" name="action" value="resolve_privilege_escalation">
+                                <input type="hidden" name="request_id" value="<?= e((string) ($escalation['id'] ?? 0)); ?>">
+                                <input type="text" name="resolution_note" placeholder="Qeyd" style="width:140px">
+                                <select name="decision"><option value="approved">Tesdiqle</option><option value="rejected">Redd et</option></select>
+                                <button class="portal-ghost-btn" type="submit">Qerar ver</button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody></table></div>
+            </article>
+            <?php endif; ?>
 
             <article class="portal-card admin-users-filter-card">
                 <div class="portal-card-head">

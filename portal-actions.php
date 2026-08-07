@@ -6,6 +6,7 @@ require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/portal-security-lib.php';
 require_once __DIR__ . '/hr-position-service.php';
 require_once __DIR__ . '/communication-consent-lib.php';
+require_once __DIR__ . '/admin-privilege-lib.php';
 
 app_session_boot();
 $user = app_portal_current_user();
@@ -348,7 +349,7 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
         header('Location: ' . portal_redirect_url('admin-users.php', 'staff_password_policy_failed'));
         exit;
     }
-    $saved = app_db_upsert_account([
+    $upsertPayload = [
         'id' => $accountId,
         'login' => $_POST['login'] ?? '',
         'password' => $submittedPassword,
@@ -371,7 +372,24 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
         'responsible_areas' => $_POST['responsible_areas'] ?? [],
         'payload' => $accountPayload,
         'is_active' => isset($_POST['is_active']) ? 1 : 0,
-    ]);
+    ];
+
+    // Maker-checker (vision 19.2 "rol dəyişikliyi"): an ESCALATING privilege
+    // change on an EXISTING account (granting admin tier, reactivating a
+    // disabled account, or adding module access it did not already have) is
+    // staged for a different admin to approve rather than applied here.
+    // De-escalating changes (removing admin rights, deactivating, removing
+    // modules) still apply immediately -- that is the safe direction.
+    if ($privilegeChanged && app_admin_privilege_change_is_escalation($previousPrivileges, $newPrivileges)) {
+        $escalationDb = app_db();
+        if ($escalationDb instanceof PDO) {
+            app_admin_privilege_change_request_create($escalationDb, $upsertPayload, $previousPrivileges, $newPrivileges, $privilegeReason, $user);
+        }
+        header('Location: ' . portal_redirect_url('admin-users.php', 'privilege_escalation_pending'));
+        exit;
+    }
+
+    $saved = app_db_upsert_account($upsertPayload);
 
     if ($saved !== null && $employeeOnly) {
         $salaryMode = clean_text((string) ($_POST['employee_salary_mode'] ?? 'gross'));
@@ -429,6 +447,21 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
     }
 
     header('Location: ' . portal_redirect_url('admin-users.php', $saved !== null ? 'account_saved' : 'account_failed'));
+    exit;
+}
+
+if ($action === 'resolve_privilege_escalation' && $user['role'] === 'employee' && app_portal_is_admin($user)) {
+    $escalationDb = app_db();
+    $result = $escalationDb instanceof PDO
+        ? app_admin_privilege_change_request_resolve(
+            $escalationDb,
+            (int) ($_POST['request_id'] ?? 0),
+            clean_text((string) ($_POST['decision'] ?? '')),
+            clean_text((string) ($_POST['resolution_note'] ?? '')),
+            $user
+        )
+        : ['ok' => false, 'error' => 'db_unavailable'];
+    header('Location: ' . portal_redirect_url('admin-users.php', !empty($result['ok']) ? 'privilege_escalation_resolved' : 'privilege_escalation_failed'));
     exit;
 }
 
