@@ -6584,6 +6584,40 @@ function app_mgs_probe_ssh_auth(
     ];
 }
 
+/**
+ * "Ogren" / CLI-discovery vendor registry. Each entry is a live-SSH probe
+ * (walks the device's real CLI menus/help text) plus a derive step that
+ * turns the raw discovery into a proposed command map -- see
+ * app_mgs_hsgq_cli_discovery_probe() / app_mgs_hsgq_derived_command_map_from_discovery()
+ * for the reference implementation this was extracted from.
+ *
+ * To onboard a NEW vendor's "ogren" button: write a
+ * `tools/<vendor>-cli-discovery.py` helper that logs in over SSH and walks
+ * that vendor's own menu/help conventions (the walking logic is inherently
+ * vendor-specific -- there is no generic CLI menu format to auto-detect),
+ * add an `app_mgs_<vendor>_cli_discovery_probe()` wrapper following the HSGQ
+ * one's signature, an `app_mgs_<vendor>_derived_command_map_from_discovery()`,
+ * then add one entry below. Nothing else in the dispatch path needs to
+ * change. The derived command map is always a PROPOSAL for a human to
+ * review before it is trusted for config_change/vlan_push/ont_control --
+ * never auto-apply it.
+ */
+function app_mgs_cli_discovery_handler_registry(): array
+{
+    return [
+        'HSGQ' => [
+            'probe' => 'app_mgs_hsgq_cli_discovery_probe',
+            'derive' => 'app_mgs_hsgq_derived_command_map_from_discovery',
+            'source_label' => 'live_hsgq_cli_discovery',
+        ],
+    ];
+}
+
+function app_mgs_cli_discovery_supported_vendors(): array
+{
+    return array_keys(app_mgs_cli_discovery_handler_registry());
+}
+
 function app_mgs_hsgq_cli_discovery_probe(
     string $ip,
     string $username,
@@ -10984,11 +11018,14 @@ function app_mgs_backup_payload_for_device(
     }
 
     if ($backupType === 'cli_discovery_snapshot') {
-        if (strtoupper((string) ($device['vendor'] ?? '')) !== 'HSGQ') {
+        $vendorKey = strtoupper(trim((string) ($device['vendor'] ?? '')));
+        $handler = app_mgs_cli_discovery_handler_registry()[$vendorKey] ?? null;
+        if ($handler === null) {
             return [
                 'ok' => false,
                 'reason' => 'cli_discovery_not_supported',
                 'backup_type' => $backupType,
+                'supported_vendors' => app_mgs_cli_discovery_supported_vendors(),
             ];
         }
 
@@ -11003,7 +11040,8 @@ function app_mgs_backup_payload_for_device(
             ];
         }
 
-        $discovery = app_mgs_hsgq_cli_discovery_probe(
+        $probeFn = $handler['probe'];
+        $discovery = $probeFn(
             (string) ($device['ip_address'] ?? ''),
             $sshUsername,
             $sshPassword,
@@ -11017,12 +11055,13 @@ function app_mgs_backup_payload_for_device(
         if (empty($discovery['ok'])) {
             return [
                 'ok' => false,
-                'reason' => (string) ($discovery['error'] ?? 'hsgq_cli_discovery_failed'),
+                'reason' => (string) ($discovery['error'] ?? ($vendorKey . '_cli_discovery_failed')),
                 'backup_type' => $backupType,
             ];
         }
 
-        $learnedCommandMap = app_mgs_hsgq_derived_command_map_from_discovery($discovery);
+        $deriveFn = $handler['derive'];
+        $learnedCommandMap = $deriveFn($discovery);
 
         $payload = [
             'backup_type' => $backupType,
@@ -11044,7 +11083,7 @@ function app_mgs_backup_payload_for_device(
             ],
             'derived_command_map' => $learnedCommandMap,
             'metadata' => [
-                'source' => 'live_hsgq_cli_discovery',
+                'source' => (string) $handler['source_label'],
                 'real_device_command_executed' => true,
                 'generated_at' => date(DATE_ATOM),
                 'ssh_username' => $sshUsername,

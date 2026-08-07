@@ -167,11 +167,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
         } else {
             $deviceActionResult = app_mgs_store_device_backup($device, 'cli_discovery_snapshot', true, $user, $db);
+            $cliDiscoveryErrorMessage = 'CLI discovery xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown');
+            if ((string) ($deviceActionResult['reason'] ?? '') === 'cli_discovery_not_supported') {
+                $supportedVendors = implode(', ', (array) ($deviceActionResult['supported_vendors'] ?? []));
+                $cliDiscoveryErrorMessage = 'Bu vendor ucun "ogren" (CLI discovery) helelik yoxdur. Hazirda deste olunanlar: ' . ($supportedVendors !== '' ? $supportedVendors : '-') . '. Yeni vendor elave etmek ucun app_mgs_cli_discovery_handler_registry()-e bir qeyd elave edin.';
+            }
             $flash = [
                 'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
                 'message' => !empty($deviceActionResult['ok'])
                     ? ((string) ($device['device_name'] ?? $deviceKey)) . ': CLI discovery ' . (string) ($deviceActionResult['mode'] ?? 'done')
-                    : 'CLI discovery xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
+                    : $cliDiscoveryErrorMessage,
             ];
         }
     } elseif ($action === 'set_device_monitoring_mode') {
