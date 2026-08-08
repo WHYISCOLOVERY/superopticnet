@@ -3331,6 +3331,160 @@ function app_mgs_record_finance_debt_payment(int $debtId, array $input, array $a
     ];
 }
 
+// Maker-checker (vision 19.2 "borc silinməsi" -- this feature did not exist
+// before). Forgiving/writing off a debt is never applied in the same call
+// that requests it: it always stages into finance_debt_writeoff_requests,
+// and only a DIFFERENT admin approving it actually reduces amount_open (via
+// the same finance_debt_payments ledger app_mgs_record_finance_debt_payment
+// uses, tagged payment_method="writeoff" so it is never mistaken for cash
+// received).
+function app_mgs_request_finance_debt_writeoff(PDO $db, int $debtId, float $amount, string $reason, array $actor = []): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    $debtStatement = $db->prepare('SELECT * FROM finance_debt_ledger WHERE id = :id LIMIT 1');
+    $debtStatement->execute(['id' => $debtId]);
+    $debt = $debtStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($debt)) {
+        return ['ok' => false, 'error' => 'debt_not_found'];
+    }
+    if (in_array((string) ($debt['status'] ?? ''), ['closed', 'void'], true)) {
+        return ['ok' => false, 'error' => 'debt_not_open'];
+    }
+    $openBalance = app_mgs_finance_money($debt['amount_open'] ?? 0);
+    $requestedAmount = $amount > 0 ? app_mgs_finance_money(min($amount, $openBalance)) : $openBalance;
+    if ($requestedAmount <= 0) {
+        return ['ok' => false, 'error' => 'debt_balance_empty'];
+    }
+
+    $insert = $db->prepare(
+        'INSERT INTO finance_debt_writeoff_requests (debt_id, requested_amount, reason, status, requested_by_account_id, requested_by_name)
+         VALUES (:debt_id, :requested_amount, :reason, "pending", :actor_id, :actor_name)'
+    );
+    $insert->execute([
+        'debt_id' => $debtId,
+        'requested_amount' => $requestedAmount,
+        'reason' => $reason,
+        'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+        'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'finance')),
+    ]);
+    $id = (int) $db->lastInsertId();
+
+    app_mgs_record_operation_action([
+        'action_type' => 'finance_debt_writeoff_requested',
+        'entity_type' => 'finance',
+        'entity_id' => (string) ($debt['document_no'] ?? ('debt:' . $debtId)),
+        'status' => 'pending',
+        'actor' => $actor,
+        'summary' => 'Debt writeoff requested: ' . (string) ($debt['counterparty_name'] ?? '-') . ' ' . $requestedAmount,
+        'payload' => ['id' => $id, 'debt_id' => $debtId, 'amount' => $requestedAmount, 'reason' => $reason],
+    ]);
+
+    return ['ok' => true, 'id' => $id, 'requested_amount' => $requestedAmount];
+}
+
+function app_mgs_finance_debt_writeoff_requests(PDO $db, string $status = 'pending'): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $statement = $db->prepare(
+        'SELECT r.*, d.counterparty_name, d.ledger_type, d.amount_open, d.currency, d.document_no
+           FROM finance_debt_writeoff_requests r
+           LEFT JOIN finance_debt_ledger d ON d.id = r.debt_id
+          WHERE r.status = :status
+          ORDER BY r.created_at DESC LIMIT 100'
+    );
+    $statement->execute(['status' => $status]);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_mgs_resolve_finance_debt_writeoff(PDO $db, int $requestId, string $decision, string $resolutionNote, array $actor): array
+{
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['approved', 'rejected'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 255);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    $requestStatement = $db->prepare('SELECT * FROM finance_debt_writeoff_requests WHERE id = :id LIMIT 1');
+    $requestStatement->execute(['id' => $requestId]);
+    $request = $requestStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($request)) {
+        return ['ok' => false, 'error' => 'request_not_found'];
+    }
+    if ((string) $request['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'request_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) ($request['requested_by_account_id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'requester_cannot_approve_own_request'];
+    }
+
+    $paymentId = null;
+    if ($decision === 'approved') {
+        $applied = app_mgs_record_finance_debt_payment((int) $request['debt_id'], [
+            'payment_amount' => (float) $request['requested_amount'],
+            'payment_method' => 'writeoff',
+            'reference_no' => 'WRITEOFF-REQ-' . $requestId,
+            'note' => 'Debt writeoff approved: ' . $resolutionNote,
+        ], $actor, $db);
+        if (empty($applied['ok'])) {
+            return ['ok' => false, 'error' => 'writeoff_apply_failed', 'detail' => (string) ($applied['error'] ?? '')];
+        }
+        $paymentId = (int) ($applied['id'] ?? 0) ?: null;
+    }
+
+    try {
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE finance_debt_writeoff_requests SET status = :status, reviewed_by_account_id = :actor_id,
+                reviewed_by_name = :actor_name, resolution_note = :resolution_note, debt_payment_id = :payment_id, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'payment_id' => $paymentId,
+            'id' => $requestId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'request_already_resolved'];
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'request_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'finance_debt_writeoff_' . $decision,
+        'entity_type' => 'finance',
+        'entity_id' => 'debt:' . (string) $request['debt_id'],
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => 'Debt writeoff request #' . $requestId . ' ' . $decision,
+        'payload' => ['id' => $requestId, 'decision' => $decision, 'debt_payment_id' => $paymentId],
+    ]);
+
+    return ['ok' => true, 'status' => $decision, 'debt_payment_id' => $paymentId];
+}
+
 function app_mgs_finance_debt_payment_rows(?PDO $db = null, int $limit = 20): array
 {
     $db = $db instanceof PDO ? $db : app_db();

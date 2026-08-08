@@ -639,6 +639,7 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         $context['data']['page'] = app_finance_debt_page($db, $query);
         $context['data']['open_debts'] = app_mgs_finance_debt_rows($db, 'all', 50);
         $context['data']['payments'] = app_finance_debt_payment_page($db, ['page' => 1, 'limit' => 8]);
+        $context['data']['pending_debt_writeoffs'] = app_mgs_finance_debt_writeoff_requests($db, 'pending');
     } elseif ($tab === 'assets') {
         $context['data']['page'] = app_finance_asset_page($db, $query);
         $context['data']['assets'] = app_mgs_finance_printable_inventory_rows($db, 50);

@@ -491,7 +491,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'approve_finance_expense', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
+    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'approve_finance_expense', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'request_finance_debt_writeoff', 'resolve_finance_debt_writeoff', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
         if (!app_verify_csrf($_POST['csrf_token'] ?? null)) {
             $csrfSection = (str_contains($action, 'finance') || in_array($action, ['save_asset_depreciation','import_finance_e_invoice'], true)) ? 'finance' : (str_contains($action, 'hr_') || in_array($action, ['save_attendance_profile','record_attendance_event'], true) ? 'hr' : 'inventory');
             $csrfExtra = $csrfSection === 'finance' ? ['finance_tab' => clean_text((string)($_POST['finance_tab'] ?? 'overview'))] : ($csrfSection === 'hr' ? ['hr_tab' => clean_text((string)($_POST['hr_tab'] ?? 'overview'))] : []);
@@ -1092,6 +1092,49 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'message' => !empty($localResult['ok'])
                     ? 'Borc odenisi yazildi.'
                     : ('Borc odenisi yazilmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur')),
+            ], $lang, $anchor);
+        } elseif ($action === 'request_finance_debt_writeoff') {
+            $anchor = 'finance';
+            $localResult = app_mgs_request_finance_debt_writeoff(
+                $db,
+                max(0, (int) ($_POST['debt_id'] ?? 0)),
+                max(0, (float) ($_POST['writeoff_amount'] ?? 0)),
+                clean_text((string) ($_POST['writeoff_reason'] ?? '')),
+                $user
+            );
+            $writeoffRequestErrorMessages = [
+                'reason_required' => 'Borc silinmesi ucun sebeb mutleq yazilmalidir.',
+                'debt_not_found' => 'Borc qeydi tapilmadi.',
+                'debt_not_open' => 'Bu borc artiq baglidir ve ya legv edilib.',
+                'debt_balance_empty' => 'Bu borcun aciq balansi yoxdur.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? 'Borc silinmesi sorgusu qeyde alindi - BASQA admin tesdiqleyene qeder borc acig qalir.'
+                    : ($writeoffRequestErrorMessages[(string) ($localResult['error'] ?? '')] ?? ('Borc silinmesi sorgusu saxlanmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+            ], $lang, $anchor);
+        } elseif ($action === 'resolve_finance_debt_writeoff') {
+            $anchor = 'finance';
+            $localResult = app_mgs_resolve_finance_debt_writeoff(
+                $db,
+                max(0, (int) ($_POST['writeoff_request_id'] ?? 0)),
+                clean_text((string) ($_POST['writeoff_decision'] ?? '')),
+                clean_text((string) ($_POST['writeoff_resolution_note'] ?? '')),
+                $user
+            );
+            $writeoffResolveErrorMessages = [
+                'permission_denied' => 'Borc silinmesini yalniz admin heli ede biler.',
+                'invalid_decision' => 'Qerar "approved" ve ya "rejected" olmalidir.',
+                'request_not_found' => 'Sorgu tapilmadi.',
+                'request_already_resolved' => 'Bu sorgu artiq helli olunub.',
+                'requester_cannot_approve_own_request' => 'Sorgu eden sexs oz sorgusunu tesdiqleye bilmez - basqa admin lazimdir.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => !empty($localResult['ok']) ? 'success' : 'error',
+                'message' => !empty($localResult['ok'])
+                    ? ('Borc silinmesi sorgusu helli olundu: ' . ((string) ($localResult['status'] ?? '')))
+                    : ($writeoffResolveErrorMessages[(string) ($localResult['error'] ?? '')] ?? ('Borc silinmesi sorgusu helli olunmadi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
             ], $lang, $anchor);
         } elseif ($action === 'import_finance_e_invoice') {
             $anchor = 'finance';
