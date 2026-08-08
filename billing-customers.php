@@ -439,6 +439,41 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     : $errorMessage,
             ];
         }
+    } elseif ($db instanceof PDO && clean_text((string) ($_POST['action'] ?? '')) === 'request_bulk_customer_deactivation') {
+        $bulkIds = array_filter(array_map('intval', preg_split('/[\s,]+/', (string) ($_POST['bulk_account_ids'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: []));
+        $bulkResult = app_billing_request_bulk_deactivation($db, $bulkIds, clean_text((string) ($_POST['bulk_reason'] ?? '')), $user);
+        $bulkErrorMessages = [
+            'reason_required' => 'Kutlevi deaktivlesme ucun sebeb mutleq yazilmalidir.',
+            'no_accounts_selected' => 'Ən azı bir hesab ID daxil edilmelidir.',
+            'no_valid_customer_accounts' => 'Daxil edilen ID-lerden hec biri aktiv musteri hesabina uygun gelmir.',
+            'too_many_accounts' => 'Bir sorguda maksimum ' . APP_BILLING_BULK_DEACTIVATION_MAX_ACCOUNTS . ' hesab ola biler.',
+        ];
+        $flash = [
+            'type' => !empty($bulkResult['ok']) ? 'success' : 'error',
+            'message' => !empty($bulkResult['ok'])
+                ? (int) ($bulkResult['account_count'] ?? 0) . ' hesab ucun kutlevi deaktivlesme sorgusu qeyde alindi - BASQA admin tesdiqleyene qeder hec biri deyismeyecek.'
+                : ($bulkErrorMessages[(string) ($bulkResult['error'] ?? '')] ?? ('Kutlevi deaktivlesme sorgusu saxlanmadi: ' . ((string) ($bulkResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+        ];
+    } elseif ($db instanceof PDO && clean_text((string) ($_POST['action'] ?? '')) === 'resolve_bulk_customer_deactivation') {
+        $bulkResolve = app_billing_resolve_bulk_deactivation(
+            $db,
+            (int) ($_POST['bulk_request_id'] ?? 0),
+            clean_text((string) ($_POST['bulk_decision'] ?? '')),
+            clean_text((string) ($_POST['bulk_resolution_note'] ?? '')),
+            $user
+        );
+        $bulkResolveErrorMessages = [
+            'permission_denied' => 'Kutlevi deaktivlesmeni yalniz admin heli ede biler.',
+            'request_not_found' => 'Sorgu tapilmadi.',
+            'request_already_resolved' => 'Bu sorgu artiq helli olunub.',
+            'requester_cannot_approve_own_request' => 'Sorgu eden sexs oz sorgusunu tesdiqleye bilmez - basqa admin lazimdir.',
+        ];
+        $flash = [
+            'type' => !empty($bulkResolve['ok']) ? 'success' : 'error',
+            'message' => !empty($bulkResolve['ok'])
+                ? ('Kutlevi deaktivlesme sorgusu helli olundu: ' . (int) ($bulkResolve['result']['deactivated'] ?? 0) . ' hesab deaktiv edildi.')
+                : ($bulkResolveErrorMessages[(string) ($bulkResolve['error'] ?? '')] ?? ('Sorgu helli olunmadi: ' . ((string) ($bulkResolve['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+        ];
     }
 }
 
@@ -952,6 +987,52 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
                 <span><?= e($flash['message']); ?></span>
             </div>
+        <?php endif; ?>
+
+        <?php
+        $canConfirmBulkDeactivation = app_portal_is_admin($user);
+        $pendingBulkDeactivations = $db instanceof PDO ? app_billing_bulk_deactivation_requests($db, 'pending') : [];
+        ?>
+        <?php if ($pendingBulkDeactivations !== []): ?>
+        <article class="portal-card portal-reveal">
+            <div class="portal-card-head"><div><strong>Gozleyen kutlevi deaktivlesme sorgulari</strong><small>Vizyon 19.2: basqa admin tesdiqleyene qeder heç bir hesab deyismir.</small></div></div>
+            <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Hesab sayi</th><th>Sebeb</th><th>Sorgu eden</th><th>Tarix</th><th>Qerar</th></tr></thead><tbody>
+            <?php foreach ($pendingBulkDeactivations as $bulkRequest): ?>
+                <tr>
+                    <td data-label="Hesab sayi"><?= e((string) ($bulkRequest['account_count'] ?? 0)); ?></td>
+                    <td data-label="Sebeb"><?= e((string) ($bulkRequest['reason'] ?? '-')); ?></td>
+                    <td data-label="Sorgu eden"><?= e((string) ($bulkRequest['requested_by_name'] ?? '-')); ?></td>
+                    <td data-label="Tarix"><?= e((string) ($bulkRequest['created_at'] ?? '-')); ?></td>
+                    <td data-label="Qerar">
+                        <?php if ($canConfirmBulkDeactivation): ?>
+                        <form class="portal-inline-form" method="post">
+                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                            <input type="hidden" name="action" value="resolve_bulk_customer_deactivation">
+                            <input type="hidden" name="bulk_request_id" value="<?= e((string) ($bulkRequest['id'] ?? 0)); ?>">
+                            <input type="text" name="bulk_resolution_note" placeholder="Qeyd" style="width:140px">
+                            <select name="bulk_decision"><option value="approved">Tesdiqle</option><option value="rejected">Redd et</option></select>
+                            <button class="portal-ghost-btn" type="submit">Qerar ver</button>
+                        </form>
+                        <?php else: ?>
+                        <small>Admin tesdiqi gozleyir</small>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody></table></div>
+        </article>
+        <?php endif; ?>
+        <?php if (app_portal_is_admin($user)): ?>
+        <article class="portal-card portal-reveal">
+            <div class="portal-card-head"><div><strong>Kutlevi deaktivlesme sorgusu</strong><small>Hesab ID-lerini vergul ve ya yeni setirle ayirin. Sorgu deryal tetbiq olunmur - basqa admin tesdiqlemelidir.</small></div></div>
+            <form class="portal-stacked-form" method="post">
+                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                <input type="hidden" name="action" value="request_bulk_customer_deactivation">
+                <div class="portal-form-row"><textarea name="bulk_account_ids" placeholder="Hesab ID-leri (mes: 1024, 1031, 1077)" required></textarea></div>
+                <div class="portal-form-row"><textarea name="bulk_reason" placeholder="Sebeb (mecburidir)" required></textarea></div>
+                <button class="portal-primary-btn" type="submit">Sorgu gonder</button>
+            </form>
+        </article>
         <?php endif; ?>
 
         <?php

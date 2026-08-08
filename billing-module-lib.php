@@ -501,3 +501,177 @@ function app_billing_build_context(PDO $db, array $user, string $section, array 
     }
     return $context;
 }
+
+// Maker-checker (vision 19.2 "kutlevi musteri deaktivlesmesi" -- this feature
+// did not exist before). Deactivating one customer at a time already goes
+// through the full billing-customer-edit identity/RADIUS pipeline; a BULK
+// deactivation is staged here instead and only touches accounts + RADIUS
+// once a DIFFERENT admin approves it.
+const APP_BILLING_BULK_DEACTIVATION_MAX_ACCOUNTS = 200;
+
+function app_billing_request_bulk_deactivation(PDO $db, array $accountIds, string $reason, array $actor): array
+{
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    $accountIds = array_values(array_unique(array_filter(array_map('intval', $accountIds), static fn (int $id): bool => $id > 0)));
+    if ($accountIds === []) {
+        return ['ok' => false, 'error' => 'no_accounts_selected'];
+    }
+    if (count($accountIds) > APP_BILLING_BULK_DEACTIVATION_MAX_ACCOUNTS) {
+        return ['ok' => false, 'error' => 'too_many_accounts', 'max' => APP_BILLING_BULK_DEACTIVATION_MAX_ACCOUNTS];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
+    $verify = $db->prepare("SELECT id FROM portal_accounts WHERE role = 'customer' AND id IN ({$placeholders})");
+    $verify->execute($accountIds);
+    $validIds = array_map('intval', $verify->fetchAll(PDO::FETCH_COLUMN));
+    if ($validIds === []) {
+        return ['ok' => false, 'error' => 'no_valid_customer_accounts'];
+    }
+
+    $insert = $db->prepare(
+        'INSERT INTO billing_bulk_deactivation_requests (account_ids_json, account_count, reason, status, requested_by_account_id, requested_by_name)
+         VALUES (:account_ids_json, :account_count, :reason, "pending", :actor_id, :actor_name)'
+    );
+    $insert->execute([
+        'account_ids_json' => app_db_json_encode($validIds),
+        'account_count' => count($validIds),
+        'reason' => $reason,
+        'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+        'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+    ]);
+    $id = (int) $db->lastInsertId();
+
+    if (function_exists('app_audit_record')) {
+        app_audit_ensure_schema($db);
+        try {
+            $db->beginTransaction();
+            app_audit_record($db, [
+                'module_key' => 'billing',
+                'operation_class' => 'customer_edit',
+                'action_type' => 'bulk_customer_deactivation_requested',
+                'entity_type' => 'bulk_request',
+                'entity_id' => (string) $id,
+                'status' => 'pending',
+                'actor_account_id' => (int) ($actor['id'] ?? 0),
+                'actor_name' => (string) ($actor['full_name'] ?? $actor['login'] ?? 'admin'),
+                'summary' => 'Bulk deactivation requested for ' . count($validIds) . ' account(s)',
+                'reason' => $reason,
+                'payload' => ['account_ids' => $validIds],
+                'sensitivity' => 'critical',
+            ]);
+            $db->commit();
+        } catch (Throwable) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+        }
+    }
+
+    return ['ok' => true, 'id' => $id, 'account_count' => count($validIds)];
+}
+
+function app_billing_bulk_deactivation_requests(PDO $db, string $status = 'pending'): array
+{
+    $statement = $db->prepare('SELECT * FROM billing_bulk_deactivation_requests WHERE status = :status ORDER BY created_at DESC LIMIT 50');
+    $statement->execute(['status' => $status]);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_billing_apply_single_deactivation(PDO $db, int $accountId): bool
+{
+    $account = app_db_account_by_id($accountId);
+    if (!is_array($account) || (string) ($account['role'] ?? '') !== 'customer') {
+        return false;
+    }
+    $db->prepare("UPDATE portal_accounts SET status = 'Deaktiv', is_active = 0 WHERE id = :id")->execute(['id' => $accountId]);
+    $updated = app_db_account_by_id($accountId);
+    return is_array($updated) && app_billing_sync_radius_account($updated, null, $db);
+}
+
+function app_billing_resolve_bulk_deactivation(PDO $db, int $requestId, string $decision, string $resolutionNote, array $actor): array
+{
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['approved', 'rejected'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 255);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    $requestStatement = $db->prepare('SELECT * FROM billing_bulk_deactivation_requests WHERE id = :id LIMIT 1');
+    $requestStatement->execute(['id' => $requestId]);
+    $request = $requestStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($request)) {
+        return ['ok' => false, 'error' => 'request_not_found'];
+    }
+    if ((string) $request['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'request_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) ($request['requested_by_account_id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'requester_cannot_approve_own_request'];
+    }
+
+    $result = ['deactivated' => 0, 'failed' => 0];
+    if ($decision === 'approved') {
+        $accountIds = app_mgs_json_decode_array($request['account_ids_json'] ?? []);
+        foreach ($accountIds as $accountId) {
+            if (app_billing_apply_single_deactivation($db, (int) $accountId)) {
+                $result['deactivated']++;
+            } else {
+                $result['failed']++;
+            }
+        }
+    }
+
+    if (function_exists('app_audit_ensure_schema')) {
+        app_audit_ensure_schema($db);
+    }
+    try {
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE billing_bulk_deactivation_requests SET status = :status, reviewed_by_account_id = :actor_id,
+                reviewed_by_name = :actor_name, resolution_note = :resolution_note, result_json = :result_json, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'result_json' => app_db_json_encode($result),
+            'id' => $requestId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'request_already_resolved'];
+        }
+        if (function_exists('app_audit_record')) {
+            app_audit_record($db, [
+                'module_key' => 'billing',
+                'operation_class' => 'customer_edit',
+                'action_type' => 'bulk_customer_deactivation_' . $decision,
+                'entity_type' => 'bulk_request',
+                'entity_id' => (string) $requestId,
+                'status' => 'executed',
+                'actor_account_id' => $actorId,
+                'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+                'summary' => 'Bulk deactivation request #' . $requestId . ' ' . $decision,
+                'reason' => $resolutionNote,
+                'payload' => $result,
+                'sensitivity' => 'critical',
+            ]);
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'request_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'status' => $decision, 'result' => $result];
+}
