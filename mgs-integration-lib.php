@@ -7345,6 +7345,31 @@ function app_mgs_execute_device_command_plan(array $device, array $commands, arr
         ];
     }
 
+    // Maker-checker (vision 19.2 "router konfiqurasiyası"): gate on the
+    // caller's own allow_dangerous signal, not just the dangerous-keyword
+    // list above -- constructive config-push commands (VLAN create/bind,
+    // ONT provisioning) don't contain words like "delete"/"shutdown" but are
+    // exactly the kind of live-device write the vision doc worries about.
+    // Every caller that sets allow_dangerous=true is already asserting "this
+    // is a real device apply"; that intent alone is what stages here. Only
+    // app_mgs_resolve_device_command_request() (a DIFFERENT admin) can let it
+    // reach app_mgs_hsgq_exec_commands() below. Plain read commands never set
+    // allow_dangerous and are completely unaffected. The post-approval
+    // execution path sets _post_approval_execution to skip this gate exactly
+    // once, for the request it was created to run.
+    if ($allowDangerous && empty($options['_post_approval_execution'])) {
+        return app_mgs_stage_device_command_request(
+            $db,
+            $device,
+            $commands,
+            $dangerousHits,
+            (string) ($options['reason'] ?? ''),
+            $actor,
+            (string) ($options['action_type'] ?? 'device_command_apply'),
+            $authorizationAction
+        );
+    }
+
     $run = app_mgs_hsgq_exec_commands(
         (string) ($device['ip_address'] ?? ''),
         $sshUsername,
@@ -7387,6 +7412,143 @@ function app_mgs_execute_device_command_plan(array $device, array $commands, arr
         'final_prompt' => (string) ($run['final_prompt'] ?? ''),
         'raw' => $run,
     ];
+}
+
+function app_mgs_stage_device_command_request(
+    PDO $db,
+    array $device,
+    array $commands,
+    array $dangerousTokens,
+    string $reason,
+    array $actor,
+    string $actionType,
+    string $authorizationAction
+): array {
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'reason' => 'reason_required'];
+    }
+    $deviceKey = (string) ($device['device_key'] ?? '');
+    $insert = $db->prepare(
+        'INSERT INTO mgs_device_command_requests (
+            device_key, device_name, device_ip, commands_json, dangerous_tokens_json,
+            action_type, authorization_action, reason, status, requested_by_account_id, requested_by_name
+         ) VALUES (
+            :device_key, :device_name, :device_ip, :commands_json, :dangerous_tokens_json,
+            :action_type, :authorization_action, :reason, "pending", :actor_id, :actor_name
+         )'
+    );
+    $insert->execute([
+        'device_key' => $deviceKey,
+        'device_name' => (string) ($device['device_name'] ?? ''),
+        'device_ip' => (string) ($device['ip_address'] ?? ''),
+        'commands_json' => app_db_json_encode($commands),
+        'dangerous_tokens_json' => app_db_json_encode($dangerousTokens),
+        'action_type' => $actionType,
+        'authorization_action' => $authorizationAction,
+        'reason' => $reason,
+        'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+        'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+    ]);
+    $id = (int) $db->lastInsertId();
+
+    app_mgs_record_operation_action([
+        'action_type' => $actionType . '_requested',
+        'entity_type' => 'device_learning',
+        'entity_id' => $deviceKey,
+        'status' => 'pending',
+        'actor' => $actor,
+        'summary' => 'Dangerous device command staged for approval: ' . (string) ($device['device_name'] ?? $deviceKey),
+        'payload' => ['id' => $id, 'device_key' => $deviceKey, 'commands' => $commands, 'dangerous_tokens' => $dangerousTokens, 'reason' => $reason],
+    ]);
+
+    return [
+        'ok' => false,
+        'reason' => 'dangerous_command_staged_for_approval',
+        'request_id' => $id,
+        'dangerous_tokens' => $dangerousTokens,
+    ];
+}
+
+function app_mgs_device_command_requests(PDO $db, string $status = 'pending'): array
+{
+    $statement = $db->prepare('SELECT * FROM mgs_device_command_requests WHERE status = :status ORDER BY created_at DESC LIMIT 50');
+    $statement->execute(['status' => $status]);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_mgs_resolve_device_command_request(PDO $db, int $requestId, string $decision, string $resolutionNote, array $actor, ?PDO $deviceDb = null): array
+{
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['approved', 'rejected'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 255);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    $requestStatement = $db->prepare('SELECT * FROM mgs_device_command_requests WHERE id = :id LIMIT 1');
+    $requestStatement->execute(['id' => $requestId]);
+    $request = $requestStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($request)) {
+        return ['ok' => false, 'error' => 'request_not_found'];
+    }
+    if ((string) $request['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'request_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) ($request['requested_by_account_id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'requester_cannot_approve_own_request'];
+    }
+
+    $execResult = null;
+    if ($decision === 'approved') {
+        $deviceDb = $deviceDb instanceof PDO ? $deviceDb : $db;
+        $device = app_mgs_device_learning_profile_by_key((string) $request['device_key'], $deviceDb, $actor);
+        if (!is_array($device)) {
+            return ['ok' => false, 'error' => 'device_not_found'];
+        }
+        $commands = app_mgs_json_decode_array($request['commands_json'] ?? []);
+        $execResult = app_mgs_execute_device_command_plan($device, $commands, $actor, $deviceDb, [
+            'allow_dangerous' => true,
+            'action_type' => (string) $request['action_type'],
+            'authorization_action' => (string) $request['authorization_action'],
+            'reason' => (string) $request['reason'],
+            '_post_approval_execution' => true,
+        ]);
+        if (empty($execResult['ok'])) {
+            return ['ok' => false, 'error' => 'device_command_execution_failed', 'detail' => (string) ($execResult['reason'] ?? '')];
+        }
+    }
+
+    try {
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE mgs_device_command_requests SET status = :status, reviewed_by_account_id = :actor_id,
+                reviewed_by_name = :actor_name, resolution_note = :resolution_note, result_json = :result_json, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'result_json' => $execResult !== null ? app_db_json_encode($execResult) : null,
+            'id' => $requestId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'request_already_resolved'];
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'request_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'status' => $decision, 'exec_result' => $execResult];
 }
 
 function app_mgs_hsgq_ont_control_plan(

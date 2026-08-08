@@ -304,15 +304,45 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                         'allow_dangerous' => $allowDangerous,
                         'action_type' => 'device_manual_cli_command',
                         'timeout_ms' => 12000,
+                        'reason' => clean_text((string) ($_POST['command_reason'] ?? '')),
                     ]
                 );
-                $flash = [
-                    'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
-                    'message' => !empty($deviceActionResult['ok'])
-                        ? ((string) ($device['device_name'] ?? $deviceKey)) . ': real SSH command icra olundu, audit yazildi.'
-                        : ((string) ($device['device_name'] ?? $deviceKey)) . ': command xetasi - ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
-                ];
+                if (!empty($deviceActionResult['ok'])) {
+                    $flash = ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': real SSH command icra olundu, audit yazildi.'];
+                } elseif ((string) ($deviceActionResult['reason'] ?? '') === 'dangerous_command_staged_for_approval') {
+                    $flash = ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': write emr sorgusu qeyde alindi (#' . (int) ($deviceActionResult['request_id'] ?? 0) . ') - BASQA admin tesdiqleyene qeder icra olunmayacaq.'];
+                } elseif ((string) ($deviceActionResult['reason'] ?? '') === 'reason_required') {
+                    $flash = ['type' => 'error', 'message' => 'Write emrleri ucun sebeb sahesi mecburidir.'];
+                } else {
+                    $flash = ['type' => 'error', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': command xetasi - ' . (string) ($deviceActionResult['reason'] ?? 'unknown')];
+                }
             }
+        }
+    } elseif ($action === 'resolve_device_command_request') {
+        if (!app_portal_is_admin($user)) {
+            $flash = ['type' => 'error', 'message' => 'Sorgunu yalniz admin heli ede biler.'];
+        } else {
+            $resolveResult = app_mgs_resolve_device_command_request(
+                $db,
+                (int) ($_POST['request_id'] ?? 0),
+                clean_text((string) ($_POST['decision'] ?? '')),
+                clean_text((string) ($_POST['resolution_note'] ?? '')),
+                $user
+            );
+            $resolveErrorMessages = [
+                'invalid_decision' => 'Qerar "approved" ve ya "rejected" olmalidir.',
+                'request_not_found' => 'Sorgu tapilmadi.',
+                'request_already_resolved' => 'Bu sorgu artiq helli olunub.',
+                'requester_cannot_approve_own_request' => 'Sorgu eden sexs oz sorgusunu tesdiqleye bilmez - basqa admin lazimdir.',
+                'device_not_found' => 'Cihaz profili tapilmadi.',
+                'device_command_execution_failed' => 'Tesdiqlendi, amma real icra ugursuz oldu (sorgu hele pending qalir, yeniden cehd edile biler).',
+            ];
+            $flash = [
+                'type' => !empty($resolveResult['ok']) ? 'success' : 'error',
+                'message' => !empty($resolveResult['ok'])
+                    ? ('Cihaz emri sorgusu helli olundu: ' . (string) ($resolveResult['status'] ?? ''))
+                    : ($resolveErrorMessages[(string) ($resolveResult['error'] ?? '')] ?? ('Sorgu helli olunmadi: ' . ((string) ($resolveResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+            ];
         }
     }
 }
@@ -1243,6 +1273,34 @@ if ($needsDeviceRows) {
             </div>
         <?php endif; ?>
 
+        <?php $pendingDeviceCommands = app_portal_is_admin($user) ? app_mgs_device_command_requests($db, 'pending') : []; ?>
+        <?php if ($pendingDeviceCommands !== []): ?>
+        <section class="portal-card portal-reveal">
+            <div class="portal-card-head"><div><strong>Gozleyen cihaz emri sorgulari</strong><small>Vizyon 19.2: write emrleri BASQA admin tesdiqleyene qeder cihaza gonderilmir.</small></div></div>
+            <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Cihaz</th><th>Emrler</th><th>Sebeb</th><th>Sorgu eden</th><th>Qerar</th></tr></thead><tbody>
+            <?php foreach ($pendingDeviceCommands as $cmdRequest): ?>
+                <?php $cmdList = app_mgs_json_decode_array($cmdRequest['commands_json'] ?? []); ?>
+                <tr>
+                    <td data-label="Cihaz"><?= e((string) ($cmdRequest['device_name'] ?? $cmdRequest['device_key'] ?? '-')); ?></td>
+                    <td data-label="Emrler"><code><?= e(implode(' | ', array_map('strval', $cmdList))); ?></code></td>
+                    <td data-label="Sebeb"><?= e((string) ($cmdRequest['reason'] ?? '-')); ?></td>
+                    <td data-label="Sorgu eden"><?= e((string) ($cmdRequest['requested_by_name'] ?? '-')); ?></td>
+                    <td data-label="Qerar">
+                        <form class="portal-inline-form" method="post">
+                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                            <input type="hidden" name="action" value="resolve_device_command_request">
+                            <input type="hidden" name="request_id" value="<?= e((string) ($cmdRequest['id'] ?? 0)); ?>">
+                            <input type="text" name="resolution_note" placeholder="Qeyd" style="width:140px">
+                            <select name="decision"><option value="approved">Tesdiqle ve icra et</option><option value="rejected">Redd et</option></select>
+                            <button class="portal-ghost-btn" type="submit">Qerar ver</button>
+                        </form>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody></table></div>
+        </section>
+        <?php endif; ?>
+
         <section class="mgs-command-hero noc-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">NOC native panel</span>
@@ -1689,10 +1747,12 @@ if ($needsDeviceRows) {
                                         <strong>Real CLI command</strong>
                                         <small>Bu emrler SSH ile cihazda icra olunur ve audit yazilir. VLAN 550 bu komputerde yoxdursa internal cihazlar management_path_down qaytaracaq.</small>
                                         <textarea name="commands" placeholder="show version&#10;show interfaces status"></textarea>
+                                        <input type="text" name="command_reason" placeholder="Sebeb (yalniz write emrleri ucun mecburidir)">
                                         <div class="noc-command-console-actions">
                                             <label><input type="checkbox" name="allow_dangerous" value="1"> shutdown/delete/restart kimi write emrlerine icaze ver</label>
                                             <button class="portal-primary-btn" type="submit">Real command icra et</button>
                                         </div>
+                                        <small>Write (dangerous) emrleri deryal icra olunmur - BASQA admin tesdiqleyene qeder sorgu kimi qalir (vizyon 19.2).</small>
                                     </form>
                                     <?php
                                     $commandMapLines = [];

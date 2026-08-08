@@ -214,7 +214,7 @@ function network_def_device_for_hop(array $hop, ?PDO $db = null): ?array
     return null;
 }
 
-function network_def_apply_definition(array $definition, array $hops, array $actor, PDO $db, bool $allowDangerous): array
+function network_def_apply_definition(array $definition, array $hops, array $actor, PDO $db, bool $allowDangerous, string $applyReason = ''): array
 {
     $preview = network_def_dry_run_payload($definition, $hops);
     $results = [];
@@ -241,6 +241,7 @@ function network_def_apply_definition(array $definition, array $hops, array $act
                 'allow_dangerous' => $allowDangerous,
                 'action_type' => 'mpls_vlan_apply',
                 'timeout_ms' => 15000,
+                'reason' => $applyReason,
             ]
         );
         if (empty($result['ok'])) {
@@ -435,12 +436,15 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } elseif ($action === 'apply_definition') {
         $id = (int) ($_POST['definition_id'] ?? 0);
         $allowDangerous = isset($_POST['allow_dangerous']);
+        $applyReason = clean_text((string) ($_POST['apply_reason'] ?? ''));
         if (!app_portal_is_admin($user)) {
             $flash = ['type' => 'error', 'message' => 'Real cihaz apply ucun admin icazesi lazimdir.'];
         } elseif ($id <= 0) {
             $flash = ['type' => 'error', 'message' => 'Apply ucun VLAN plan ID tapilmadi.'];
         } elseif (!$allowDangerous) {
             $flash = ['type' => 'error', 'message' => 'Real cihazlara yazmaq ucun risk tesdiqi secilmelidir.'];
+        } elseif ($applyReason === '') {
+            $flash = ['type' => 'error', 'message' => 'Real cihaz apply ucun sebeb yazilmalidir.'];
         } else {
             $statement = $db->prepare(
                 'SELECT d.*, p.name AS pool_name, p.range_start, p.range_end, p.gateway AS pool_gateway
@@ -461,15 +465,17 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 );
                 $hopStatement->execute(['id' => $id]);
                 $hops = $hopStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-                $applyResult = network_def_apply_definition($definition, $hops, $user, $db, true);
+                $applyResult = network_def_apply_definition($definition, $hops, $user, $db, true, $applyReason);
                 $dryRunPreview = $applyResult['preview'] ?? null;
                 $failed = array_values(array_filter((array) ($applyResult['results'] ?? []), static fn (array $row): bool => empty($row['ok'])));
-                $flash = [
-                    'type' => !empty($applyResult['ok']) ? 'success' : 'error',
-                    'message' => !empty($applyResult['ok'])
-                        ? 'Real MPLS/VLAN apply tamamlandi ve audit yazildi.'
-                        : ('Real apply tamamlanmadi: ' . (string) ($failed[0]['reason'] ?? $applyResult['reason'] ?? 'unknown')),
-                ];
+                $stagedCount = count(array_filter($failed, static fn (array $row): bool => (string) ($row['reason'] ?? '') === 'dangerous_command_staged_for_approval'));
+                if (!empty($applyResult['ok'])) {
+                    $flash = ['type' => 'success', 'message' => 'Real MPLS/VLAN apply tamamlandi ve audit yazildi.'];
+                } elseif ($stagedCount > 0 && $stagedCount === count($failed)) {
+                    $flash = ['type' => 'success', 'message' => $stagedCount . ' hop ucun konfiqurasiya sorgusu qeyde alindi - BASQA admin NOC panelinde tesdiqleyene qeder cihazlara yazilmayacaq.'];
+                } else {
+                    $flash = ['type' => 'error', 'message' => 'Real apply tamamlanmadi: ' . (string) ($failed[0]['reason'] ?? $applyResult['reason'] ?? 'unknown')];
+                }
             }
         }
     }
@@ -879,6 +885,7 @@ if ($db instanceof PDO) {
                                         <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                         <input type="hidden" name="action" value="apply_definition">
                                         <input type="hidden" name="definition_id" value="<?= e((string) $definition['id']); ?>">
+                                        <input type="text" name="apply_reason" placeholder="Sebeb (mecburidir)" required style="width:180px">
                                         <label class="portal-inline-check"><input type="checkbox" name="allow_dangerous" value="1" required> real cihaz apply tesdiq</label>
                                         <button class="portal-ghost-btn" type="submit">Real apply et</button>
                                     </form>
