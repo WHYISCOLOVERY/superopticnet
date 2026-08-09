@@ -491,7 +491,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'approve_finance_expense', 'save_finance_budget', 'issue_finance_invoice', 'void_finance_invoice', 'record_finance_cash_reconciliation', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'request_finance_debt_writeoff', 'resolve_finance_debt_writeoff', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
+    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'approve_finance_expense', 'save_finance_budget', 'issue_finance_invoice', 'void_finance_invoice', 'record_finance_cash_reconciliation', 'ask_finance_ai_bot', 'resolve_finance_ai_suggestion', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'request_finance_debt_writeoff', 'resolve_finance_debt_writeoff', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
         if (!app_verify_csrf($_POST['csrf_token'] ?? null)) {
             $csrfSection = (str_contains($action, 'finance') || in_array($action, ['save_asset_depreciation','import_finance_e_invoice'], true)) ? 'finance' : (str_contains($action, 'hr_') || in_array($action, ['save_attendance_profile','record_attendance_event'], true) ? 'hr' : 'inventory');
             $csrfExtra = $csrfSection === 'finance' ? ['finance_tab' => clean_text((string)($_POST['finance_tab'] ?? 'overview'))] : ($csrfSection === 'hr' ? ['hr_tab' => clean_text((string)($_POST['hr_tab'] ?? 'overview'))] : []);
@@ -1132,6 +1132,54 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     ? ('Uzlasdirma qeydi saxlanildi. Ferq: ' . number_format($reconciliationDiscrepancy, 2) . ' AZN')
                     : ('Uzlasdirma qeydi saxlanilmadi: ' . ($reconciliationErrorMessages[$reconciliationErrorKey] ?? $reconciliationErrorKey)),
             ], $lang, $anchor, ['finance_tab' => 'reconciliation']);
+        } elseif ($action === 'ask_finance_ai_bot') {
+            $anchor = 'finance';
+            try {
+                app_finance_ai_bot_answer($db, $user, (string) ($_POST['question'] ?? ''));
+                $aiBotOk = true;
+                $aiBotErrorKey = '';
+            } catch (Throwable $exception) {
+                $aiBotOk = false;
+                $aiBotErrorKey = $exception->getMessage();
+            }
+            $aiBotErrorMessages = [
+                'finance_ai_bot_forbidden' => 'AI komekcisine yalniz maliyye modulu icazesi olan iscilər gire biler.',
+                'question_required' => 'Sual bos ola bilmez.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => $aiBotOk ? 'success' : 'error',
+                'message' => $aiBotOk
+                    ? 'Sual gonderildi, cavab asagida gorunur.'
+                    : ('Sual gonderilmedi: ' . ($aiBotErrorMessages[$aiBotErrorKey] ?? $aiBotErrorKey)),
+            ], $lang, $anchor, ['finance_tab' => 'ai-assistant']);
+        } elseif ($action === 'resolve_finance_ai_suggestion') {
+            $anchor = 'finance';
+            try {
+                app_finance_ai_suggestion_resolve(
+                    $db,
+                    $user,
+                    (int) ($_POST['suggestion_id'] ?? 0),
+                    (string) ($_POST['decision'] ?? ''),
+                    (string) ($_POST['resolution_note'] ?? '')
+                );
+                $aiSuggestionOk = true;
+                $aiSuggestionErrorKey = '';
+            } catch (Throwable $exception) {
+                $aiSuggestionOk = false;
+                $aiSuggestionErrorKey = $exception->getMessage();
+            }
+            $aiSuggestionErrorMessages = [
+                'finance_ai_bot_forbidden' => 'Tekliflere qerar vermek yalniz maliyye/admin iscilere aciqdir.',
+                'invalid_decision' => 'Qerar novu sehvdir.',
+                'suggestion_not_found' => 'Teklif tapilmadi.',
+                'suggestion_already_resolved' => 'Bu teklife artiq qerar verilib.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => $aiSuggestionOk ? 'success' : 'error',
+                'message' => $aiSuggestionOk
+                    ? 'Teklife qerar verildi.'
+                    : ('Qerar saxlanilmadi: ' . ($aiSuggestionErrorMessages[$aiSuggestionErrorKey] ?? $aiSuggestionErrorKey)),
+            ], $lang, $anchor, ['finance_tab' => 'ai-assistant']);
         } elseif ($action === 'save_asset_depreciation') {
             $anchor = 'finance';
             $localResult = app_mgs_save_inventory_depreciation([

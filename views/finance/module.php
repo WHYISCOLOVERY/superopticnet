@@ -27,7 +27,7 @@ $financeTabTitle = (string) ($financeTabs[$financeTab] ?? 'Maliyyə');
         ['label' => 'Maliyyə əməliyyatları', 'icon' => 'fa-wallet', 'links' => [$financeLink('income'), $financeLink('invoices'), $financeLink('payments'), $financeLink('companies'), $financeLink('expenses')]],
         ['label' => 'Kassa, vəsait və bonus', 'icon' => 'fa-building-columns', 'links' => [$financeLink('cash-bank'), $financeLink('reconciliation'), $financeLink('assets'), $financeLink('employee-bonuses')]],
         ['label' => 'Maaş və vergilər', 'icon' => 'fa-money-check-dollar', 'links' => [$financeLink('payroll')]],
-        ['label' => 'Hesabat və statistika', 'icon' => 'fa-chart-line', 'links' => [$financeLink('statistics')]],
+        ['label' => 'Hesabat və statistika', 'icon' => 'fa-chart-line', 'links' => [$financeLink('statistics'), $financeLink('ai-assistant')]],
     ];
     $moduleNavActive = $financeTab;
     $moduleNavAria = 'Maliyyə bölmələri';

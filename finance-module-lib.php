@@ -6,6 +6,7 @@ require_once __DIR__ . '/finance-operations-lib.php';
 require_once __DIR__ . '/finance-budget-lib.php';
 require_once __DIR__ . '/finance-invoice-lib.php';
 require_once __DIR__ . '/finance-reconciliation-lib.php';
+require_once __DIR__ . '/finance-ai-bot-lib.php';
 require_once __DIR__ . '/finance-bonus-lib.php';
 require_once __DIR__ . '/reporting-period-lib.php';
 // Payroll/tax was moved from HR to Finance; reuse the HR payroll data loaders.
@@ -32,6 +33,7 @@ function app_finance_tabs(): array
         'employee-bonuses' => 'Əməkdaş bonusları',
         'payroll' => 'Maaş və vergilər',
         'statistics' => 'Statistika',
+        'ai-assistant' => 'AI köməkçisi',
     ];
 }
 
@@ -731,6 +733,9 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
             'taxable_travel_amount' => max(0, (float) ($query['payroll_taxable_travel_amount'] ?? 0)),
         ], $legalProfile) : [];
         $context['data']['cost_rows'] = function_exists('app_mgs_hr_cost_report_rows') ? app_mgs_hr_cost_report_rows($db, 12) : [];
+    } elseif ($tab === 'ai-assistant') {
+        $context['data']['pending_ai_suggestions'] = app_finance_ai_bot_pending_suggestions($db, 20);
+        $context['data']['recent_ai_conversations'] = app_finance_ai_bot_recent_conversations($db, 10);
     }
 
     $context['data']['can_write'] = app_finance_actor_can_write($user);

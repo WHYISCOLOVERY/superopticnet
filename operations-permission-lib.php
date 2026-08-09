@@ -31,6 +31,7 @@ function app_operations_action_module(string $action): ?string
             'link_finance_counterparty','create_finance_entry','approve_finance_expense',
             'save_finance_budget','issue_finance_invoice','void_finance_invoice',
             'record_finance_cash_reconciliation',
+            'ask_finance_ai_bot','resolve_finance_ai_suggestion',
             'save_asset_depreciation','confirm_asset_writeoff',
             'create_finance_debt_record','record_finance_debt_payment',
             'request_finance_debt_writeoff','resolve_finance_debt_writeoff',
