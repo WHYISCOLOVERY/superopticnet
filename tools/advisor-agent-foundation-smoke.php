@@ -27,8 +27,8 @@ function advisor_check(string $name, bool $condition, array &$passes, array &$fa
  * 1. Roster contract
  * ------------------------------------------------------------------------- */
 $roster = app_advisor_agent_roster();
-advisor_check('roster has exactly 5 advisors', count($roster) === 5, $passes, $failures, implode(',', array_keys($roster)));
-foreach (['ceo', 'finance', 'noc', 'techops', 'marketing'] as $key) {
+advisor_check('roster has exactly 6 advisors', count($roster) === 6, $passes, $failures, implode(',', array_keys($roster)));
+foreach (['ceo', 'finance', 'noc', 'techops', 'marketing', 'crm'] as $key) {
     advisor_check('roster has ' . $key, isset($roster[$key]), $passes, $failures);
     if (isset($roster[$key])) {
         $advisor = $roster[$key];
@@ -69,6 +69,7 @@ advisor_check('finance actor blocked from ceo advisor (cross-module, admin-only 
 advisor_check('noc actor allowed noc advisor', app_advisor_access_allowed('noc', $nocActor), $passes, $failures);
 advisor_check('noc actor blocked from techops advisor (missing inventory+hr)', !app_advisor_access_allowed('techops', $nocActor), $passes, $failures);
 advisor_check('warehouse actor blocked from finance advisor', !app_advisor_access_allowed('finance', $warehouseActor), $passes, $failures);
+advisor_check('finance actor blocked from crm advisor', !app_advisor_access_allowed('crm', $financeActor), $passes, $failures);
 advisor_check('unknown advisor key rejected', !app_advisor_access_allowed('unknown_advisor', $admin), $passes, $failures);
 
 /* ---------------------------------------------------------------------------
@@ -172,7 +173,8 @@ if ($db instanceof PDO && app_audit_ensure_schema($db)) {
  * ------------------------------------------------------------------------- */
 if ($db instanceof PDO) {
     $allForAdmin = app_advisor_all_briefings($db, $admin);
-    advisor_check('admin sees all 5 advisor briefings', count($allForAdmin) === 5, $passes, $failures, implode(',', array_keys($allForAdmin)));
+    advisor_check('admin sees all 6 advisor briefings', count($allForAdmin) === 6, $passes, $failures, implode(',', array_keys($allForAdmin)));
+    advisor_check('admin briefings include crm', isset($allForAdmin['crm']), $passes, $failures);
 
     $allForFinance = app_advisor_all_briefings($db, $financeActor);
     advisor_check('finance actor sees only the finance briefing', array_keys($allForFinance) === ['finance'], $passes, $failures, implode(',', array_keys($allForFinance)));
@@ -219,7 +221,7 @@ if ($db instanceof PDO) {
         }
 
         $okRun = app_advisor_council_run($db, $admin, 'CEO meslehetcisi hesabati');
-        advisor_check('council run resolves accessible advisors and succeeds for an admin actor', !empty($okRun['ok']) && is_array($okRun['advisors'] ?? null) && count($okRun['advisors']) === 5, $passes, $failures, json_encode(array_keys($okRun['advisors'] ?? [])));
+        advisor_check('council run resolves accessible advisors and succeeds for an admin actor', !empty($okRun['ok']) && is_array($okRun['advisors'] ?? null) && count($okRun['advisors']) === 6, $passes, $failures, json_encode(array_keys($okRun['advisors'] ?? [])));
 
         $scopedRun = app_advisor_council_run($db, $financeActor, 'maliyye meslehetcisi hesabati');
         advisor_check('council run resolves only advisor profiles the actor may access', !empty($scopedRun['ok']) && array_keys($scopedRun['advisors'] ?? []) === ['finance'], $passes, $failures, json_encode(array_keys($scopedRun['advisors'] ?? [])));
@@ -232,7 +234,7 @@ if ($db instanceof PDO) {
             if (is_array($audit)) {
                 $payload = json_decode((string) ($audit['payload_json'] ?? ''), true) ?: [];
                 advisor_check('council audit payload carries run id, objective hash, advisor keys, proposal ids, data-status counts (no raw objective/PII fields)', isset($payload['run_id'], $payload['objective_hash'], $payload['advisor_keys'], $payload['proposal_ids'], $payload['data_status_counts']), $passes, $failures, json_encode($payload));
-                advisor_check('council audit stores only a bounded objective category, never the objective excerpt', in_array((string) ($payload['objective_summary'] ?? ''), ['ceo', 'finance', 'noc', 'techops', 'marketing', 'general'], true) && !str_contains((string) ($payload['objective_summary'] ?? ''), 'hesabati'), $passes, $failures, (string) ($payload['objective_summary'] ?? ''));
+                advisor_check('council audit stores only a bounded objective category, never the objective excerpt', in_array((string) ($payload['objective_summary'] ?? ''), ['ceo', 'finance', 'noc', 'techops', 'marketing', 'crm', 'general'], true) && !str_contains((string) ($payload['objective_summary'] ?? ''), 'hesabati'), $passes, $failures, (string) ($payload['objective_summary'] ?? ''));
             }
         }
     } else {

@@ -46,7 +46,7 @@ $routes = (array) ($aiContext['routes'] ?? []);
         return $links;
     };
     $moduleNavGroups = [];
-    $everydayLinks = $aiNavLinksFor(['overview', 'copilot', 'customer-analytics', 'network-analytics', 'finance-analytics', 'risks', 'recommendations', 'work-queue']);
+    $everydayLinks = $aiNavLinksFor(['overview', 'copilot', 'customer-analytics', 'network-analytics', 'finance-analytics', 'risks', 'recommendations', 'team', 'work-queue']);
     if ($everydayLinks !== []) {
         $moduleNavGroups[] = ['label' => 'Gunluk AI aletleri', 'icon' => 'fa-bolt', 'links' => $everydayLinks];
     }

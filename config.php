@@ -1461,6 +1461,7 @@ function app_portal_request_module(string $scriptName, array $query = []): ?stri
         'ai-finance-analytics.php' => 'ai',
         'ai-risks.php' => 'ai',
         'ai-recommendations.php' => 'ai',
+        'ai-team.php' => 'ai',
         'ai-work-queue.php' => 'ai',
         'ai-automations.php' => 'ai',
         'ai-audit.php' => 'ai',

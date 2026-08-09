@@ -5,9 +5,9 @@ declare(strict_types=1);
  * Unified internal agent ecosystem - foundation (governed by Serdar/super-admin).
  *
  * This is a policy/read-only layer on top of the existing Stage 5 agent
- * workspace contract (`agent-workspace-lib.php`). It defines five advisor
- * profiles (CEO, Finance, NOC, Technical operations manager, Marketing) as
- * service identities - not employee login accounts, not passwords - that
+ * workspace contract (`agent-workspace-lib.php`). It defines six advisor
+ * profiles (CEO, Finance, NOC, Technical operations manager, Marketing, CRM)
+ * as service identities - not employee login accounts, not passwords - that
  * read the existing service layer and produce structured proposals.
  *
  * Hard rules enforced here:
@@ -47,7 +47,7 @@ function app_advisor_agent_roster(): array
         'ceo' => [
             'label' => 'CEO məsləhətçisi',
             'mission' => 'Cross-module icra baxışı: gəlir/xərc, şəbəkə sağlamlığı, texniki icra, marketinq riski.',
-            'read_modules' => ['billing', 'finance', 'hr', 'inventory', 'network', 'statistics'],
+            'read_modules' => ['billing', 'finance', 'hr', 'inventory', 'network', 'statistics', 'crm'],
             'cross_module' => true,
         ],
         'finance' => [
@@ -72,6 +72,12 @@ function app_advisor_agent_roster(): array
             'label' => 'Marketinq məsləhətçisi',
             'mission' => 'Uzunmüddətli passiv müştəri seqmentləri və kampaniya təklifləri (təsdiqsiz göndərmə yoxdur).',
             'read_modules' => ['billing', 'messaging'],
+            'cross_module' => false,
+        ],
+        'crm' => [
+            'label' => 'CRM meneceri məsləhətçisi',
+            'mission' => 'Bilet növbəsi, gecikmiş/köhnə biletlər, müştəri cavab gözləmə vəziyyəti.',
+            'read_modules' => ['crm'],
             'cross_module' => false,
         ],
     ];
@@ -346,6 +352,73 @@ function app_advisor_read_model_long_inactive_customer_count(PDO $db, int $inact
     );
 }
 
+function app_advisor_read_model_stale_open_tickets(PDO $db, int $staleDays): ?float
+{
+    return app_advisor_scalar(
+        $db,
+        "SELECT COUNT(*) FROM portal_tickets
+          WHERE status NOT IN ('Baglandi', 'closed', 'resolved')
+            AND created_at < DATE_SUB(NOW(), INTERVAL :stale_days DAY)",
+        ['stale_days' => $staleDays]
+    );
+}
+
+function app_advisor_read_model_dept_blocked_tickets(PDO $db): ?float
+{
+    return app_advisor_scalar(
+        $db,
+        'SELECT COUNT(*) FROM portal_tickets WHERE status = :status',
+        ['status' => defined('APP_TICKET_STATUS_DEPT_BLOCKED') ? APP_TICKET_STATUS_DEPT_BLOCKED : 'Basqa_Sobede_Gozleyir']
+    );
+}
+
+/**
+ * CRM briefing: ticket-queue health. Deliberately does not overlap with the
+ * NOC advisor's "open network/ONT/RADIUS tickets" figure (that's a network-
+ * cause filter; this is an age/dependency filter across ALL ticket types).
+ */
+function app_advisor_crm_briefing(PDO $db): array
+{
+    $proposals = [];
+    $staleDays = 7;
+    $staleCount = app_advisor_read_model_stale_open_tickets($db, $staleDays);
+    $deptBlockedCount = app_advisor_read_model_dept_blocked_tickets($db);
+
+    if ($staleCount === null && $deptBlockedCount === null) {
+        $proposals[] = app_advisor_build_proposal(
+            'crm',
+            'data_unavailable',
+            'Bilet növbəsi datası əlçatan deyil (unverified).',
+            [app_advisor_evidence('portal_tickets', 'Sorğu xətası və ya cədvəl hazır deyil')],
+            'medium',
+            null,
+            'unavailable'
+        );
+        return $proposals;
+    }
+
+    if ($staleCount !== null && $staleCount > 0) {
+        $proposals[] = app_advisor_build_proposal(
+            'crm',
+            'stale_open_tickets',
+            sprintf('%d gündən köhnə, hələ bağlanmamış %d bilet var.', $staleDays, (int) $staleCount),
+            [app_advisor_evidence('portal_tickets', sprintf('status açıq, created_at < indi-%d gün', $staleDays))],
+            $staleCount >= 10 ? 'high' : ($staleCount >= 3 ? 'medium' : 'low')
+        );
+    }
+    if ($deptBlockedCount !== null && $deptBlockedCount > 0) {
+        $proposals[] = app_advisor_build_proposal(
+            'crm',
+            'dept_blocked_tickets',
+            sprintf('%d bilet başqa şöbədən asılı olaraq gözləyir.', (int) $deptBlockedCount),
+            [app_advisor_evidence('portal_tickets', 'status = Basqa_Sobede_Gozleyir')],
+            $deptBlockedCount >= 5 ? 'high' : 'medium'
+        );
+    }
+
+    return $proposals;
+}
+
 function app_advisor_finance_briefing(PDO $db): array
 {
     $proposals = [];
@@ -532,6 +605,7 @@ function app_advisor_ceo_briefing(PDO $db): array
         'noc' => app_advisor_noc_briefing($db),
         'techops' => app_advisor_techops_briefing($db),
         'marketing' => app_advisor_marketing_briefing($db),
+        'crm' => app_advisor_crm_briefing($db),
     ];
 
     $proposals = [];
@@ -584,6 +658,7 @@ function app_advisor_all_briefings(PDO $db, array $actor): array
             'noc' => app_advisor_noc_briefing($db),
             'techops' => app_advisor_techops_briefing($db),
             'marketing' => app_advisor_marketing_briefing($db),
+            'crm' => app_advisor_crm_briefing($db),
             default => [],
         };
         $result[$key] = ['advisor' => $advisor, 'proposals' => $proposals];
@@ -719,6 +794,7 @@ function app_advisor_objective_category(string $objective): string
         'noc' => ['noc', 'sebeke', 'şəbəkə', 'ont', 'olt', 'radius', 'signal', 'siqnal'],
         'techops' => ['texnik', 'bilet', 'ticket', 'anbar', 'stok', 'tapsiriq', 'tapşırıq'],
         'marketing' => ['marketinq', 'marketing', 'kampaniya', 'passiv musteri', 'passiv müştəri'],
+        'crm' => ['crm', 'musteri xidmeti', 'müştəri xidməti', 'bilet novbesi', 'bilet növbəsi'],
         'ceo' => ['ceo', 'direktor', 'rehber', 'rəhbər', 'umumi hesabat', 'ümumi hesabat'],
     ];
     foreach ($categories as $category => $needles) {

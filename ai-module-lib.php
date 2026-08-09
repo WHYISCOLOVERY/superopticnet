@@ -7,6 +7,7 @@ require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/ui-language-lib.php';
 require_once __DIR__ . '/ai-provider-lib.php';
 require_once __DIR__ . '/agent-ops-queue-lib.php';
+require_once __DIR__ . '/ai-team-lib.php';
 
 function app_ai_sections(): array
 {
@@ -18,6 +19,7 @@ function app_ai_sections(): array
         'finance-analytics' => 'Maliyye analitikasi',
         'risks' => 'Riskler',
         'recommendations' => 'Tovsiyeler',
+        'team' => 'AI Komanda',
         'work-queue' => 'Təsdiq Mərkəzi',
         'automations' => 'Avtomatlasdirmalar',
         'audit' => 'AI audit',
@@ -35,6 +37,7 @@ function app_ai_routes(): array
         'finance-analytics' => 'ai-finance-analytics.php',
         'risks' => 'ai-risks.php',
         'recommendations' => 'ai-recommendations.php',
+        'team' => 'ai-team.php',
         'work-queue' => 'ai-work-queue.php',
         'automations' => 'ai-automations.php',
         'audit' => 'ai-audit.php',
@@ -62,7 +65,7 @@ function app_ai_visible_sections(array $user, ?PDO $db = null): array
         return $sections;
     }
 
-    $allowed = ['overview', 'copilot', 'customer-analytics', 'network-analytics', 'risks', 'recommendations', 'work-queue'];
+    $allowed = ['overview', 'copilot', 'customer-analytics', 'network-analytics', 'risks', 'recommendations', 'team', 'work-queue'];
     if (app_portal_can_access_module($user, 'finance')) {
         $allowed[] = 'finance-analytics';
     }
@@ -277,6 +280,22 @@ function app_ai_build_context(PDO $db, array $user, string $section, array $quer
         ];
     } elseif ($section === 'recommendations') {
         $data = ['recommendations' => app_ai_recommendations($db)];
+    } elseif ($section === 'team') {
+        $personas = [];
+        foreach (app_ai_team_roster() as $personaKey => $persona) {
+            if (!app_ai_team_access_allowed($personaKey, $user)) {
+                continue;
+            }
+            $personas[$personaKey] = $persona + [
+                'recent' => app_ai_team_recent_conversations($db, $personaKey, 3),
+            ];
+        }
+        $data = [
+            'personas' => $personas,
+            'pending_tasks' => app_ai_user_is_admin($user) ? app_ai_team_pending_tasks($db, 30) : [],
+            'approved_tasks' => app_ai_user_is_admin($user) ? app_ai_team_approved_tasks($db, 20) : [],
+            'employees' => app_ai_user_is_admin($user) ? app_ai_team_active_employees($db) : [],
+        ];
     } elseif ($section === 'work-queue') {
         // Routed through app_agent_ops_queue_access() (audits the access,
         // fail-closed if the audit write itself fails) and

@@ -891,12 +891,13 @@ function app_agent_ops_queue_source_advisor_proposals(PDO $db, array $actor): ar
         return app_agent_ops_queue_source_error('advisor_proposals', $exception);
     }
 
-    $moduleByAdvisor = ['finance' => 'finance', 'noc' => 'network', 'techops' => 'inventory', 'marketing' => 'messaging'];
+    $moduleByAdvisor = ['finance' => 'finance', 'noc' => 'network', 'techops' => 'inventory', 'marketing' => 'messaging', 'crm' => 'crm'];
     $linkByAdvisor = [
         'finance' => app_agent_ops_queue_link('operations-center.php', ['section' => 'finance']),
         'noc' => app_agent_ops_queue_link('noc-devices.php', ['view' => 'monitor']),
         'techops' => app_agent_ops_queue_link('operations-center.php', ['section' => 'inventory']),
         'marketing' => app_agent_ops_queue_link('message-center.php', ['view' => 'group']),
+        'crm' => app_agent_ops_queue_link('crm.php', []),
     ];
 
     $items = [];
