@@ -136,6 +136,66 @@ function app_ai_team_detect_agenda_intent(string $question): bool
 }
 
 /**
+ * Stages one advisor proposal as a pending_admin_review task -- shared by
+ * both the question-triggered path (app_ai_team_answer()) and the daily-
+ * agenda cron worker (tools/ai-team-daily-agenda.php), so the two can never
+ * develop divergent staging rules.
+ *
+ * Idempotent: advisor-agent-lib.php's proposal ids are already deterministic
+ * per (advisor, proposal_type, evidence content, day) -- app_advisor_build_proposal()
+ * signs them, and its own smoke test asserts the same envelope always yields
+ * the same id on the same day. Reusing that id as ai_team_tasks.proposal_id
+ * means the SAME underlying fact is never staged as a second task, no matter
+ * how many times a question or a cron tick observes it, and regardless of
+ * what happened to the first one (pending/approved/dismissed/completed all
+ * block a restage -- a dismissed item does not reappear the same day).
+ *
+ * Only high/critical risk proposals are staged; low/medium stay visible in
+ * the persona's Q&A/briefing but never become a task by themselves.
+ */
+function app_ai_team_stage_task_from_proposal(PDO $db, string $personaKey, array $proposal, string $stagedBy, ?array $actor = null): ?int
+{
+    if (!in_array((string) ($proposal['risk'] ?? ''), ['high', 'critical'], true)) {
+        return null;
+    }
+    $summary = (string) ($proposal['summary'] ?? '');
+    $proposalId = (string) ($proposal['id'] ?? '');
+    if ($summary === '' || $proposalId === '') {
+        return null;
+    }
+
+    $existing = $db->prepare('SELECT id FROM ai_team_tasks WHERE proposal_id = :proposal_id AND persona_key = :persona_key LIMIT 1');
+    $existing->execute(['proposal_id' => $proposalId, 'persona_key' => $personaKey]);
+    if ($existing->fetchColumn() !== false) {
+        return null;
+    }
+
+    $evidenceLines = [];
+    foreach ((array) ($proposal['evidence'] ?? []) as $evidence) {
+        $evidenceLines[] = (string) ($evidence['source'] ?? '') . ': ' . (string) ($evidence['detail'] ?? '');
+    }
+    $insert = $db->prepare(
+        'INSERT INTO ai_team_tasks
+            (persona_key, proposal_type, proposal_id, title, description, reasoning, risk, status, staged_by, created_by_account_id, created_by_name)
+         VALUES (:persona_key, :proposal_type, :proposal_id, :title, :description, :reasoning, :risk, "pending_admin_review", :staged_by, :actor_id, :actor_name)'
+    );
+    $insert->execute([
+        'persona_key' => $personaKey,
+        'proposal_type' => (string) ($proposal['proposal_type'] ?? ''),
+        'proposal_id' => $proposalId,
+        'title' => mb_substr($summary, 0, 191),
+        'description' => $summary . ("\n\n" . implode("\n", $evidenceLines)),
+        'reasoning' => mb_substr($summary, 0, 255),
+        'risk' => (string) ($proposal['risk'] ?? 'medium'),
+        'staged_by' => in_array($stagedBy, ['question', 'cron'], true) ? $stagedBy : 'question',
+        'actor_id' => $actor !== null ? ((int) ($actor['id'] ?? 0) ?: null) : null,
+        'actor_name' => $actor !== null ? ((string) ($actor['full_name'] ?? $actor['login'] ?? '') ?: null) : 'ai-team-daily-agenda (cron)',
+    ]);
+
+    return (int) $db->lastInsertId();
+}
+
+/**
  * Answers a free-form question for one persona, grounded in that persona's
  * advisor briefing. When the question asks for an agenda/task list, every
  * high/critical-risk item in the CURRENT briefing is drafted as a
@@ -177,33 +237,10 @@ function app_ai_team_answer(PDO $db, array $actor, string $personaKey, string $q
     $stagedTaskIds = [];
     if (app_ai_team_detect_agenda_intent($question)) {
         foreach ((array) $bundle['briefing'] as $proposal) {
-            if (!in_array((string) ($proposal['risk'] ?? ''), ['high', 'critical'], true)) {
-                continue;
+            $stagedId = app_ai_team_stage_task_from_proposal($db, $personaKey, $proposal, 'question', $actor);
+            if ($stagedId !== null) {
+                $stagedTaskIds[] = $stagedId;
             }
-            $summary = (string) ($proposal['summary'] ?? '');
-            if ($summary === '') {
-                continue;
-            }
-            $evidenceLines = [];
-            foreach ((array) ($proposal['evidence'] ?? []) as $evidence) {
-                $evidenceLines[] = (string) ($evidence['source'] ?? '') . ': ' . (string) ($evidence['detail'] ?? '');
-            }
-            $insert = $db->prepare(
-                'INSERT INTO ai_team_tasks
-                    (persona_key, proposal_type, title, description, reasoning, risk, status, created_by_account_id, created_by_name)
-                 VALUES (:persona_key, :proposal_type, :title, :description, :reasoning, :risk, "pending_admin_review", :actor_id, :actor_name)'
-            );
-            $insert->execute([
-                'persona_key' => $personaKey,
-                'proposal_type' => (string) ($proposal['proposal_type'] ?? ''),
-                'title' => mb_substr($summary, 0, 191),
-                'description' => $summary . ("\n\n" . implode("\n", $evidenceLines)),
-                'reasoning' => mb_substr($summary, 0, 255),
-                'risk' => (string) ($proposal['risk'] ?? 'medium'),
-                'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
-                'actor_name' => (string) ($actor['full_name'] ?? $actor['login'] ?? '') ?: null,
-            ]);
-            $stagedTaskIds[] = (int) $db->lastInsertId();
         }
         if ($stagedTaskIds !== []) {
             $answer .= "\n\n[" . count($stagedTaskIds) . ' tapşırıq gündəliyə qeydə alındı (#' . implode(', #', $stagedTaskIds) . "). Təyinat üçün başqa admin təsdiqi lazımdır.]";
@@ -448,6 +485,64 @@ function app_ai_team_recent_conversations(PDO $db, ?string $personaKey = null, i
         $statement->execute();
     }
     return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/**
+ * The "always running" version: for every persona, re-runs its advisor
+ * briefing and stages any high/critical proposal not already staged today
+ * (or ever, while still unresolved from a prior day) -- no LLM call, no
+ * per-actor permission scoping (this is a system job, not a specific human's
+ * request), purely the same deterministic evidence->task rule
+ * app_ai_team_answer() already uses. Intended to be invoked periodically by
+ * tools/ai-team-daily-agenda.php (cron/Task Scheduler), never by a web
+ * request.
+ *
+ * $apply=false (the CLI worker's default) previews what WOULD be staged
+ * without writing anything -- mirrors tools/process-finance-daily-report.php's
+ * own --apply/dry-run convention.
+ */
+function app_ai_team_run_daily_agenda(PDO $db, bool $apply): array
+{
+    app_ai_team_require_schema($db);
+    $results = [];
+    foreach (app_ai_team_roster() as $personaKey => $persona) {
+        $bundle = app_ai_team_context_bundle($personaKey, $db);
+        $stagedTaskIds = [];
+        $wouldStage = [];
+        foreach ((array) $bundle['briefing'] as $proposal) {
+            if (!in_array((string) ($proposal['risk'] ?? ''), ['high', 'critical'], true)) {
+                continue;
+            }
+            if ($apply) {
+                $id = app_ai_team_stage_task_from_proposal($db, $personaKey, $proposal, 'cron');
+                if ($id !== null) {
+                    $stagedTaskIds[] = $id;
+                }
+                continue;
+            }
+            $proposalId = (string) ($proposal['id'] ?? '');
+            if ($proposalId === '') {
+                continue;
+            }
+            $existing = $db->prepare('SELECT id FROM ai_team_tasks WHERE proposal_id = :proposal_id AND persona_key = :persona_key LIMIT 1');
+            $existing->execute(['proposal_id' => $proposalId, 'persona_key' => $personaKey]);
+            if ($existing->fetchColumn() !== false) {
+                continue;
+            }
+            $wouldStage[] = [
+                'proposal_id' => $proposalId,
+                'summary' => (string) ($proposal['summary'] ?? ''),
+                'risk' => (string) ($proposal['risk'] ?? ''),
+            ];
+        }
+        $results[$personaKey] = [
+            'label' => (string) ($persona['label'] ?? $personaKey),
+            'staged_task_ids' => $stagedTaskIds,
+            'would_stage' => $wouldStage,
+        ];
+    }
+
+    return $results;
 }
 
 function app_ai_team_active_employees(PDO $db): array
