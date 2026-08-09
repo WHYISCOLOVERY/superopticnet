@@ -491,7 +491,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'approve_finance_expense', 'save_finance_budget', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'request_finance_debt_writeoff', 'resolve_finance_debt_writeoff', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
+    if (in_array($action, ['create_finance_income', 'void_finance_income', 'save_finance_counterparty', 'link_finance_counterparty', 'calculate_employee_bonus_period', 'change_employee_bonus_period_status', 'save_employee_bonus_setting', 'save_employee_bonus_salary_tier', 'save_employee_bonus_active_day_bracket', 'save_employee_bonus_quality_rule', 'save_customer_bonus_assignment', 'save_employee_bonus_adjustment', 'change_employee_bonus_adjustment_status', 'create_hr_employee', 'update_hr_employee', 'create_inventory_intake', 'create_inventory_branch_transfer', 'update_inventory_item', 'deactivate_inventory_item', 'adjust_inventory_stock', 'create_inventory_handover_local', 'confirm_inventory_handover', 'return_inventory_from_employee', 'receive_inventory_asset_return', 'inspect_inventory_asset_return', 'create_inventory_repair', 'update_inventory_repair_status', 'create_inventory_external_request', 'approve_inventory_request', 'reject_inventory_request', 'create_inventory_category', 'create_inventory_movement', 'create_inventory_handover', 'create_finance_entry', 'approve_finance_expense', 'save_finance_budget', 'issue_finance_invoice', 'void_finance_invoice', 'save_asset_depreciation', 'confirm_asset_writeoff', 'create_finance_debt_record', 'record_finance_debt_payment', 'request_finance_debt_writeoff', 'resolve_finance_debt_writeoff', 'import_finance_e_invoice', 'create_technical_task', 'save_attendance_profile', 'record_attendance_event', 'save_hr_employee_compensation', 'record_hr_score_event', 'file_hr_score_appeal', 'resolve_hr_score_appeal', 'create_hr_payroll_record', 'create_hr_leave_request', 'create_hr_travel_request', 'create_hr_employee_document', 'update_hr_record_status', 'record_hr_finance_expense', 'send_bot_test_message'], true)) {
         if (!app_verify_csrf($_POST['csrf_token'] ?? null)) {
             $csrfSection = (str_contains($action, 'finance') || in_array($action, ['save_asset_depreciation','import_finance_e_invoice'], true)) ? 'finance' : (str_contains($action, 'hr_') || in_array($action, ['save_attendance_profile','record_attendance_event'], true) ? 'hr' : 'inventory');
             $csrfExtra = $csrfSection === 'finance' ? ['finance_tab' => clean_text((string)($_POST['finance_tab'] ?? 'overview'))] : ($csrfSection === 'hr' ? ['hr_tab' => clean_text((string)($_POST['hr_tab'] ?? 'overview'))] : []);
@@ -1045,6 +1045,63 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     ? 'Buget setiri yadda saxlanildi.'
                     : ('Buget setiri yazilmadi: ' . ($budgetSaveErrorMessages[$budgetSaveError] ?? $budgetSaveError)),
             ], $lang, $anchor, ['finance_tab' => 'statistics', 'budget_month' => (string) ($_POST['period_month'] ?? '')]);
+        } elseif ($action === 'issue_finance_invoice') {
+            $anchor = 'finance';
+            try {
+                $invoiceResult = app_finance_invoice_issue($db, $user, [
+                    'source_type' => (string) ($_POST['source_type'] ?? 'manual'),
+                    'source_id' => (int) ($_POST['source_id'] ?? 0),
+                    'counterparty_name' => (string) ($_POST['counterparty_name'] ?? ''),
+                    'subtotal_amount' => (float) ($_POST['subtotal_amount'] ?? 0),
+                    'vat_rate' => (string) ($_POST['vat_rate'] ?? ''),
+                    'issue_date' => (string) ($_POST['issue_date'] ?? ''),
+                    'description' => (string) ($_POST['description'] ?? ''),
+                ]);
+                $invoiceOk = true;
+                $invoiceErrorKey = '';
+                $invoiceNoIssued = (string) ($invoiceResult['invoice_no'] ?? '');
+            } catch (Throwable $exception) {
+                $invoiceOk = false;
+                $invoiceErrorKey = $exception->getMessage();
+            }
+            $invoiceErrorMessages = [
+                'finance_invoice_forbidden' => 'Qaime tertibi yalniz maliyye/admin isci ede biler.',
+                'invalid_source_type' => 'Menbe novu sehvdir.',
+                'source_id_required' => 'Odenis ID daxil edin.',
+                'billing_payment_not_found' => 'Bele odenis tapilmadi.',
+                'billing_payment_already_invoiced' => 'Bu odenis ucun artiq qaime tertib olunub.',
+                'subtotal_amount_must_be_positive' => 'Mebleg musbet olmalidir.',
+                'counterparty_name_required' => 'Qarsi teref adi bos ola bilmez.',
+                'invalid_vat_rate' => 'ƏDV faizi 0-100 arasinda olmalidir.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => $invoiceOk ? 'success' : 'error',
+                'message' => $invoiceOk
+                    ? ('Qaime tertib olundu: ' . $invoiceNoIssued)
+                    : ('Qaime tertib olunmadi: ' . ($invoiceErrorMessages[$invoiceErrorKey] ?? $invoiceErrorKey)),
+            ], $lang, $anchor, ['finance_tab' => 'invoices', 'invoice_view' => 'issued']);
+        } elseif ($action === 'void_finance_invoice') {
+            $anchor = 'finance';
+            try {
+                app_finance_invoice_void($db, $user, (int) ($_POST['invoice_id'] ?? 0), (string) ($_POST['reason'] ?? ''));
+                $invoiceVoidOk = true;
+                $invoiceVoidErrorKey = '';
+            } catch (Throwable $exception) {
+                $invoiceVoidOk = false;
+                $invoiceVoidErrorKey = $exception->getMessage();
+            }
+            $invoiceVoidErrorMessages = [
+                'finance_invoice_forbidden' => 'Qaime legvi yalniz maliyye/admin isci ede biler.',
+                'reason_required' => 'Legv sebebi bos ola bilmez.',
+                'invoice_not_found' => 'Qaime tapilmadi.',
+                'invoice_already_void' => 'Bu qaime artiq legv edilib.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => $invoiceVoidOk ? 'success' : 'error',
+                'message' => $invoiceVoidOk
+                    ? 'Qaime legv edildi.'
+                    : ('Qaime legv olunmadi: ' . ($invoiceVoidErrorMessages[$invoiceVoidErrorKey] ?? $invoiceVoidErrorKey)),
+            ], $lang, $anchor, ['finance_tab' => 'invoices', 'invoice_view' => 'issued']);
         } elseif ($action === 'save_asset_depreciation') {
             $anchor = 'finance';
             $localResult = app_mgs_save_inventory_depreciation([

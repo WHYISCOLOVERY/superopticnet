@@ -6,8 +6,16 @@ require_once dirname(__DIR__, 2) . '/ui-language-lib.php';
 $pageData = (array) ($financeContext['data']['page'] ?? []);
 $invoiceRows = (array) ($pageData['rows'] ?? []);
 $invoiceStatusOptions = app_ui_select_status_options(['imported', 'failed']);
+$invoiceView = (string) ($financeContext['data']['invoice_view'] ?? 'imports');
 ?>
 <div data-finance-invoices data-finance-einvoice-workflow>
+    <div class="portal-tabs-inline">
+        <a class="portal-pill<?= $invoiceView === 'imports' ? ' is-active' : ''; ?>" href="<?= e(app_finance_url('invoices', ['invoice_view' => 'imports'], $financeLang)); ?>">Xarici e-qaime importu</a>
+        <a class="portal-pill<?= $invoiceView === 'issued' ? ' is-active' : ''; ?>" href="<?= e(app_finance_url('invoices', ['invoice_view' => 'issued'], $financeLang)); ?>">Tertib olunmus qaimeler</a>
+    </div>
+    <?php if ($invoiceView === 'issued'): ?>
+        <?php require __DIR__ . '/_invoices-issued.php'; ?>
+    <?php else: ?>
     <div class="portal-card-head">
         <div><strong>Elektron qaimeler</strong><small>Import olunan alis ve satis qaimeleri, borc qaligi ve son tarix.</small></div>
         <div class="portal-badge-list">
@@ -39,4 +47,5 @@ $invoiceStatusOptions = app_ui_select_status_options(['imported', 'failed']);
             </form>
         </section>
     </div>
+    <?php endif; ?>
 </div>

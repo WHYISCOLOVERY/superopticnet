@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/finance-operations-lib.php';
 require_once __DIR__ . '/finance-budget-lib.php';
+require_once __DIR__ . '/finance-invoice-lib.php';
 require_once __DIR__ . '/finance-bonus-lib.php';
 require_once __DIR__ . '/reporting-period-lib.php';
 // Payroll/tax was moved from HR to Finance; reuse the HR payroll data loaders.
@@ -181,6 +182,27 @@ function app_finance_invoice_page(PDO $db, array $query): array
            FROM finance_e_invoice_imports i
            LEFT JOIN finance_debt_ledger d ON d.id = i.debt_id' . $where . '
           ORDER BY i.created_at DESC, i.id DESC',
+        $params,
+        $query
+    );
+}
+
+function app_finance_invoice_generated_page(PDO $db, array $query): array
+{
+    app_finance_invoice_require_schema($db);
+    $where = ' WHERE 1=1';
+    $params = [];
+    $where .= app_finance_search_filter($query, ['invoice_no', 'counterparty_name', 'description'], $params);
+    $status = clean_text((string) ($query['invoice_status'] ?? ''));
+    if ($status !== '' && $status !== 'all') {
+        $where .= ' AND status = :status';
+        $params['status'] = $status;
+    }
+
+    return app_finance_query_page(
+        $db,
+        'SELECT COUNT(*) FROM finance_invoices' . $where,
+        'SELECT * FROM finance_invoices' . $where . ' ORDER BY id DESC',
         $params,
         $query
     );
@@ -613,7 +635,21 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
             'overdue_debts' => app_finance_debt_page($db, ['page' => 1, 'limit' => 5, 'status' => 'open']),
         ];
     } elseif ($tab === 'invoices') {
-        $context['data']['page'] = app_finance_invoice_page($db, $query);
+        $invoiceView = clean_text((string) ($query['invoice_view'] ?? 'imports'));
+        $invoiceView = in_array($invoiceView, ['imports', 'issued'], true) ? $invoiceView : 'imports';
+        $context['data']['invoice_view'] = $invoiceView;
+        if ($invoiceView === 'issued') {
+            $context['data']['page'] = app_finance_invoice_generated_page($db, $query);
+            $context['data']['recent_payments_for_invoice'] = app_finance_query_page(
+                $db,
+                'SELECT COUNT(*) FROM billing_payments',
+                'SELECT id, subscriber_code, amount, created_at FROM billing_payments ORDER BY created_at DESC, id DESC',
+                [],
+                ['page' => 1, 'limit' => 15]
+            )['rows'];
+        } else {
+            $context['data']['page'] = app_finance_invoice_page($db, $query);
+        }
     } elseif ($tab === 'payments') {
         $context['data']['page'] = app_finance_payment_page($db, $query);
     } elseif ($tab === 'income') {
