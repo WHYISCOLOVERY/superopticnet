@@ -28,8 +28,11 @@ function app_operations_action_module(string $action): ?string
         ],
         'finance' => [
             'create_finance_income','void_finance_income','save_finance_counterparty',
-            'link_finance_counterparty','create_finance_entry','save_asset_depreciation',
-            'create_finance_debt_record','record_finance_debt_payment','import_finance_e_invoice',
+            'link_finance_counterparty','create_finance_entry','approve_finance_expense',
+            'save_finance_budget','save_asset_depreciation','confirm_asset_writeoff',
+            'create_finance_debt_record','record_finance_debt_payment',
+            'request_finance_debt_writeoff','resolve_finance_debt_writeoff',
+            'import_finance_e_invoice',
             'calculate_employee_bonus_period','change_employee_bonus_period_status',
             'save_employee_bonus_setting','save_employee_bonus_salary_tier',
             'save_employee_bonus_active_day_bracket','save_employee_bonus_quality_rule',
@@ -39,6 +42,7 @@ function app_operations_action_module(string $action): ?string
         'hr' => [
             'create_hr_employee','update_hr_employee','save_attendance_profile',
             'record_attendance_event','save_hr_employee_compensation','record_hr_score_event',
+            'file_hr_score_appeal','resolve_hr_score_appeal',
             'create_hr_payroll_record','create_hr_leave_request','create_hr_travel_request',
             'create_hr_employee_document','update_hr_record_status','record_hr_finance_expense',
         ],
