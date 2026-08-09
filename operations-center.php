@@ -1017,6 +1017,34 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     ? 'Boyuk xerc tesdiqlendi ve hesabatlara elave olundu.'
                     : ($expenseApproveErrorMessages[(string) ($localResult['error'] ?? '')] ?? ('Xerc tesdiqlenmedi: ' . ((string) ($localResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
             ], $lang, $anchor, ['finance_tab' => 'expenses']);
+        } elseif ($action === 'save_finance_budget') {
+            $anchor = 'finance';
+            try {
+                app_finance_budget_save($db, $user, [
+                    'period_month' => (string) ($_POST['period_month'] ?? ''),
+                    'entry_type' => (string) ($_POST['entry_type'] ?? ''),
+                    'category' => (string) ($_POST['category'] ?? ''),
+                    'budgeted_amount' => (float) ($_POST['budgeted_amount'] ?? 0),
+                    'note' => (string) ($_POST['note'] ?? ''),
+                ]);
+                $budgetSaveOk = true;
+                $budgetSaveError = '';
+            } catch (Throwable $exception) {
+                $budgetSaveOk = false;
+                $budgetSaveError = $exception->getMessage();
+            }
+            $budgetSaveErrorMessages = [
+                'finance_budget_forbidden' => 'Buget setirini yalniz maliyye/admin isci yaza biler.',
+                'invalid_entry_type' => 'Gelir/xerc novu sehvdir.',
+                'category_required' => 'Kateqoriya bos ola bilmez.',
+                'budgeted_amount_must_be_non_negative' => 'Buget mebleg mueyyen ve menfi olmayan olmalidir.',
+            ];
+            spog_operations_flash_redirect([
+                'type' => $budgetSaveOk ? 'success' : 'error',
+                'message' => $budgetSaveOk
+                    ? 'Buget setiri yadda saxlanildi.'
+                    : ('Buget setiri yazilmadi: ' . ($budgetSaveErrorMessages[$budgetSaveError] ?? $budgetSaveError)),
+            ], $lang, $anchor, ['finance_tab' => 'statistics', 'budget_month' => (string) ($_POST['period_month'] ?? '')]);
         } elseif ($action === 'save_asset_depreciation') {
             $anchor = 'finance';
             $localResult = app_mgs_save_inventory_depreciation([

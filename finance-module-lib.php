@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/finance-operations-lib.php';
+require_once __DIR__ . '/finance-budget-lib.php';
 require_once __DIR__ . '/finance-bonus-lib.php';
 require_once __DIR__ . '/reporting-period-lib.php';
 // Payroll/tax was moved from HR to Finance; reuse the HR payroll data loaders.
@@ -654,6 +655,11 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         $context['data']['bonus'] = app_bonus_context($db, $user, $query);
     } elseif ($tab === 'statistics') {
         $context['data']['statistics'] = app_finance_statistics_context($db, $query);
+        if (app_portal_is_admin($user)) {
+            $budgetPeriodMonth = app_finance_budget_normalize_period_month($query['budget_month'] ?? '');
+            $context['data']['budget_vs_actual'] = app_finance_budget_vs_actual($db, $budgetPeriodMonth);
+            $context['data']['cashflow_forecast'] = app_finance_cashflow_forecast($db);
+        }
     } elseif ($tab === 'payroll') {
         // Payroll/tax is a finance responsibility (moved from HR). Reuse the HR
         // payroll data loaders; the finance payroll view mirrors the HR one.
