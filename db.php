@@ -6401,6 +6401,138 @@ function app_message_template_by_code(string $code): ?array
     return is_array($row) ? $row : null;
 }
 
+/**
+ * Create a new template, or edit an existing one by code -- there was no
+ * editor at all before this (docs/38 3.6). Every edit to an existing
+ * template requires a reason and writes a communication_template_history row
+ * (previous title/body/status -> new), and bumps version. Past sends are
+ * unaffected: communication_messages.message_body already freezes the
+ * rendered text at send time, so editing a template never rewrites history.
+ *
+ * @return array{ok:bool,error?:string,id?:int,version?:int}
+ */
+function app_message_template_save(array $input, array $actor): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO) {
+        return ['ok' => false, 'error' => 'db_unavailable'];
+    }
+
+    $code = mb_substr(clean_text((string) ($input['code'] ?? '')), 0, 64);
+    $title = mb_substr(clean_text((string) ($input['title'] ?? '')), 0, 191);
+    $category = mb_substr(clean_text((string) ($input['category'] ?? 'general')), 0, 64) ?: 'general';
+    $channelScope = mb_substr(clean_text((string) ($input['channel_scope'] ?? 'any')), 0, 64) ?: 'any';
+    $body = trim((string) ($input['body'] ?? ''));
+    $status = (string) ($input['status'] ?? 'active') === 'disabled' ? 'disabled' : 'active';
+    $autoTrigger = trim((string) ($input['auto_trigger'] ?? '')) ?: null;
+    if ($code === '' || $title === '' || $body === '') {
+        return ['ok' => false, 'error' => 'invalid_template'];
+    }
+
+    $existingStatement = $db->prepare('SELECT * FROM communication_templates WHERE code = :code LIMIT 1');
+    $existingStatement->execute(['code' => $code]);
+    $existing = $existingStatement->fetch(PDO::FETCH_ASSOC);
+
+    $actorId = (int) ($actor['id'] ?? 0) ?: null;
+    $actorName = clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin'));
+
+    if (!is_array($existing)) {
+        $insert = $db->prepare(
+            'INSERT INTO communication_templates (code, title, category, channel_scope, body, auto_trigger, status, version, updated_by_account_id, updated_by_name)
+             VALUES (:code, :title, :category, :channel_scope, :body, :auto_trigger, :status, 1, :actor_id, :actor_name)'
+        );
+        $insert->execute([
+            'code' => $code, 'title' => $title, 'category' => $category, 'channel_scope' => $channelScope,
+            'body' => $body, 'auto_trigger' => $autoTrigger, 'status' => $status,
+            'actor_id' => $actorId, 'actor_name' => $actorName,
+        ]);
+        return ['ok' => true, 'id' => (int) $db->lastInsertId(), 'version' => 1];
+    }
+
+    $reason = mb_substr(clean_text((string) ($input['reason'] ?? '')), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    if ((string) $existing['title'] === $title && (string) $existing['body'] === $body && (string) $existing['status'] === $status
+        && (string) ($existing['category'] ?? '') === $category && (string) ($existing['channel_scope'] ?? '') === $channelScope
+    ) {
+        return ['ok' => false, 'error' => 'no_changes'];
+    }
+    $newVersion = (int) ($existing['version'] ?? 1) + 1;
+    $templateId = (int) $existing['id'];
+
+    if (function_exists('app_audit_ensure_schema')) {
+        app_audit_ensure_schema($db);
+    }
+
+    try {
+        $db->beginTransaction();
+        $db->prepare(
+            'UPDATE communication_templates
+                SET title = :title, category = :category, channel_scope = :channel_scope, body = :body,
+                    auto_trigger = :auto_trigger, status = :status, version = :version,
+                    updated_by_account_id = :actor_id, updated_by_name = :actor_name
+              WHERE id = :id'
+        )->execute([
+            'title' => $title, 'category' => $category, 'channel_scope' => $channelScope, 'body' => $body,
+            'auto_trigger' => $autoTrigger, 'status' => $status, 'version' => $newVersion,
+            'actor_id' => $actorId, 'actor_name' => $actorName, 'id' => $templateId,
+        ]);
+        $db->prepare(
+            'INSERT INTO communication_template_history (
+                template_id, template_code, version, previous_title, previous_body, previous_status,
+                new_title, new_body, new_status, reason, changed_by_account_id, changed_by_name
+             ) VALUES (
+                :template_id, :template_code, :version, :previous_title, :previous_body, :previous_status,
+                :new_title, :new_body, :new_status, :reason, :actor_id, :actor_name
+             )'
+        )->execute([
+            'template_id' => $templateId, 'template_code' => $code, 'version' => $newVersion,
+            'previous_title' => (string) $existing['title'], 'previous_body' => (string) $existing['body'], 'previous_status' => (string) $existing['status'],
+            'new_title' => $title, 'new_body' => $body, 'new_status' => $status,
+            'reason' => $reason, 'actor_id' => $actorId, 'actor_name' => $actorName,
+        ]);
+        if (function_exists('app_audit_record')) {
+            app_audit_record($db, [
+                'module_key' => 'messaging',
+                'operation_class' => 'template_edit',
+                'action_type' => 'communication_template_edited',
+                'entity_type' => 'communication_template',
+                'entity_id' => $code,
+                'status' => 'executed',
+                'actor_account_id' => $actorId,
+                'actor_name' => $actorName,
+                'summary' => 'Message template edited: ' . $code . ' (v' . $newVersion . ')',
+                'reason' => $reason,
+                'before' => ['title' => $existing['title'], 'body' => $existing['body'], 'status' => $existing['status']],
+                'after' => ['title' => $title, 'body' => $body, 'status' => $status],
+                'sensitivity' => 'normal',
+            ]);
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'template_save_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'id' => $templateId, 'version' => $newVersion];
+}
+
+function app_message_template_history(string $code, int $limit = 20): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || trim($code) === '') {
+        return [];
+    }
+    $statement = $db->prepare('SELECT * FROM communication_template_history WHERE template_code = :code ORDER BY version DESC LIMIT :limit_rows');
+    $statement->bindValue(':code', trim($code));
+    $statement->bindValue(':limit_rows', max(1, min(100, $limit)), PDO::PARAM_INT);
+    $statement->execute();
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
 function app_message_stats(): array
 {
     $db = app_db();

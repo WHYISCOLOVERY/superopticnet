@@ -40,16 +40,21 @@ foreach ([
     'bulk_retry_failed',
     'update_channel_switches',
     'update_whatsapp_guard',
+    'save_message_template',
 ] as $action) {
     $expect(str_contains($page, 'name="action" value="' . $action . '"'), 'action_missing:' . $action);
 }
 
-$expect(substr_count($page, 'name="csrf_token"') === 8, 'csrf_field_count_changed');
+// These two counts scale with the live template count (per-row "Deyisdir"/
+// "Tarixce" <details> + csrf field in each edit form,
+// tools/message-template-editing-smoke.php exercises that flow) so they are
+// a floor, not an exact match, as of the template-editing feature.
+$expect(substr_count($page, 'name="csrf_token"') >= 8, 'csrf_field_count_changed');
 $expect(!str_contains($page, 'name="sms_provider_username"'), 'sms_public_key_input_must_not_exist');
 $expect(!str_contains($page, 'name="sms_provider_password"'), 'sms_private_key_input_must_not_exist');
 $expect(substr_count($page, 'data-message-auto-filter') === 2, 'automatic_filter_hooks_missing');
 $expect(str_contains($page, 'data-message-customer-code='), 'customer_prefill_hook_missing');
-$expect(substr_count($page, '<details class="message-details">') === 4, 'technical_details_count_changed');
+$expect(substr_count($page, '<details class="message-details">') >= 4, 'technical_details_count_changed');
 $expect(!str_contains($page, '<details class="message-details" open'), 'technical_details_open_by_default');
 $expect(substr_count($page, 'data-label=') >= 25, 'mobile_table_labels_missing');
 $expect(str_contains($page, "\$allowedDeliveryStates = ['pending', 'accepted', 'submitted', 'delivered', 'final_failed']"), 'delivery_state_filter_guard_missing');

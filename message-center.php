@@ -604,6 +604,28 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ? 'WhatsApp guard limitleri yenilendi.'
                 : 'WhatsApp guard limitlerinin bir hissesi saxlanmadi.',
         ];
+    } elseif ($action === 'save_message_template' && app_portal_is_admin($user)) {
+        $templateResult = app_message_template_save([
+            'code' => $_POST['template_code'] ?? '',
+            'title' => $_POST['template_title'] ?? '',
+            'category' => $_POST['template_category'] ?? 'general',
+            'channel_scope' => $_POST['template_channel_scope'] ?? 'any',
+            'body' => $_POST['template_body'] ?? '',
+            'auto_trigger' => $_POST['template_auto_trigger'] ?? '',
+            'status' => $_POST['template_status'] ?? 'active',
+            'reason' => $_POST['template_reason'] ?? '',
+        ], $user);
+        $templateErrorMessages = [
+            'invalid_template' => 'Kod, basliq ve metn mecburidir.',
+            'reason_required' => 'Movcud sablonu deyisdirmek ucun sebeb yazilmalidir.',
+            'no_changes' => 'Hec bir sahe deyismeyib.',
+        ];
+        $flash = [
+            'type' => !empty($templateResult['ok']) ? 'success' : 'error',
+            'message' => !empty($templateResult['ok'])
+                ? 'Sablon saxlanildi (versiya ' . (int) ($templateResult['version'] ?? 1) . ').'
+                : ($templateErrorMessages[(string) ($templateResult['error'] ?? '')] ?? ('Sablon saxlanmadi: ' . ((string) ($templateResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+        ];
     }
 }
 
@@ -1507,27 +1529,77 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
         <?php if (in_array($messageView, ['templates', 'history'], true)): ?>
         <section class="message-tab-shell portal-reveal">
             <?php if ($messageView === 'templates'): ?>
+            <?php $templatesForAdmin = app_portal_is_admin($user) ? app_message_templates(false) : $templates; ?>
             <article class="portal-card">
                 <div class="portal-card-head">
                     <h2>Hazir sablonlar</h2>
-                    <small>Billing, modem xeberdarligi, retention ve bayram mesajlari.</small>
+                    <small>Billing, modem xeberdarligi, retention ve bayram mesajlari. Her deyisiklik versiya alir ve tarixceye yazilir.</small>
+                    <?php if (app_portal_is_admin($user)): ?><button class="portal-primary-btn" type="button" data-message-dialog-open="template-create">Yeni sablon</button><?php endif; ?>
                 </div>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
-                        <thead><tr><th>Kod</th><th>Ad</th><th>Kateqoriya</th><th>Metn</th></tr></thead>
+                        <thead><tr><th>Kod</th><th>Ad</th><th>Kateqoriya</th><th>Metn</th><?php if (app_portal_is_admin($user)): ?><th>Status</th><th>Emeliyyat</th><?php endif; ?></tr></thead>
                         <tbody>
-                            <?php foreach ($templates as $template): ?>
+                            <?php foreach ($templatesForAdmin as $template): ?>
                                 <tr>
                                     <td data-label="Kod"><code><?= e((string) $template['code']); ?></code></td>
                                     <td data-label="Ad"><?= e((string) $template['title']); ?></td>
                                     <td data-label="Kateqoriya"><span class="portal-pill"><?= e((string) $template['category']); ?></span></td>
                                     <td class="message-template-body" data-label="Metn"><?= e((string) $template['body']); ?></td>
+                                    <?php if (app_portal_is_admin($user)): ?>
+                                    <td data-label="Status"><span class="portal-pill<?= (string) ($template['status'] ?? '') === 'disabled' ? ' portal-pill-danger' : ' portal-pill-success'; ?>"><?= e((string) ($template['status'] ?? '')); ?> (v<?= e((string) ($template['version'] ?? 1)); ?>)</span></td>
+                                    <td data-label="Emeliyyat">
+                                        <details class="message-details">
+                                            <summary>Deyisdir</summary>
+                                            <form class="portal-stacked-form" method="post">
+                                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                                <input type="hidden" name="action" value="save_message_template">
+                                                <input type="hidden" name="view" value="templates">
+                                                <input type="hidden" name="template_code" value="<?= e((string) $template['code']); ?>">
+                                                <input type="text" name="template_title" value="<?= e((string) $template['title']); ?>" required>
+                                                <input type="text" name="template_category" value="<?= e((string) $template['category']); ?>">
+                                                <input type="text" name="template_channel_scope" value="<?= e((string) ($template['channel_scope'] ?? 'any')); ?>">
+                                                <textarea name="template_body" required><?= e((string) $template['body']); ?></textarea>
+                                                <select name="template_status"><option value="active" <?= (string) ($template['status'] ?? '') === 'active' ? 'selected' : ''; ?>>active</option><option value="disabled" <?= (string) ($template['status'] ?? '') === 'disabled' ? 'selected' : ''; ?>>disabled</option></select>
+                                                <input type="text" name="template_reason" placeholder="Sebeb (mecburidir)" required>
+                                                <button class="portal-primary-btn" type="submit">Sablonu saxla</button>
+                                            </form>
+                                        </details>
+                                        <?php $templateHistoryRows = app_message_template_history((string) $template['code'], 5); ?>
+                                        <?php if ($templateHistoryRows !== []): ?>
+                                        <details class="message-details">
+                                            <summary>Tarixce (<?= e((string) count($templateHistoryRows)); ?>)</summary>
+                                            <?php foreach ($templateHistoryRows as $historyRow): ?>
+                                                <div class="message-history-full-body"><small>v<?= e((string) ($historyRow['version'] ?? '')); ?> - <?= e((string) ($historyRow['changed_by_name'] ?? '-')); ?> - <?= e((string) ($historyRow['changed_at'] ?? '-')); ?> - <?= e((string) ($historyRow['reason'] ?? '-')); ?></small></div>
+                                            <?php endforeach; ?>
+                                        </details>
+                                        <?php endif; ?>
+                                    </td>
+                                    <?php endif; ?>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
             </article>
+            <?php if (app_portal_is_admin($user)): ?>
+            <div class="message-dialog" data-message-dialog="template-create" hidden>
+                <div class="message-dialog-backdrop" data-message-dialog-close></div>
+                <section class="message-dialog-panel" role="dialog" aria-modal="true">
+                    <form class="portal-stacked-form" method="post">
+                        <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                        <input type="hidden" name="action" value="save_message_template">
+                        <input type="hidden" name="view" value="templates">
+                        <input type="text" name="template_code" placeholder="Kod (unikal)" required>
+                        <input type="text" name="template_title" placeholder="Basliq" required>
+                        <input type="text" name="template_category" placeholder="Kateqoriya" value="general">
+                        <input type="text" name="template_channel_scope" placeholder="Kanal (sms/whatsapp/any)" value="any">
+                        <textarea name="template_body" placeholder="Metn" required></textarea>
+                        <button class="portal-primary-btn" type="submit">Yeni sablon yarat</button>
+                    </form>
+                </section>
+            </div>
+            <?php endif; ?>
             <?php endif; ?>
 
             <?php if ($messageView === 'history'): ?>
