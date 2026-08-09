@@ -221,6 +221,23 @@ if ($action === 'create_operator_ticket'
     exit;
 }
 
+if ($action === 'set_ticket_waiting_state'
+    && $user['role'] === 'employee'
+    && app_portal_can_access_module($user, 'crm')) {
+    $ticketNo = clean_text((string) ($_POST['ticket_no'] ?? ''));
+    $waitType = clean_text((string) ($_POST['wait_type'] ?? ''));
+    $waitReason = clean_text((string) ($_POST['wait_reason'] ?? ''));
+    $result = match ($waitType) {
+        'customer' => app_db_set_ticket_awaiting_customer($ticketNo, $user, $waitReason),
+        'department' => app_db_set_ticket_dept_blocked($ticketNo, clean_text((string) ($_POST['wait_department'] ?? '')), $waitReason, $user),
+        'clear_customer' => app_db_clear_ticket_awaiting_customer($ticketNo, $user, $waitReason),
+        'clear_department' => app_db_clear_ticket_dept_blocked($ticketNo, $user, $waitReason),
+        default => ['ok' => false, 'error' => 'invalid_wait_type'],
+    };
+    header('Location: ' . portal_redirect_url('crm.php', !empty($result['ok']) ? 'ticket_wait_state_updated' : 'ticket_wait_state_failed'));
+    exit;
+}
+
 if ($action === 'reset_staff_password' && $user['role'] === 'employee' && app_portal_is_admin($user)) {
     $targetId = (int) ($_POST['account_id'] ?? 0);
     $reason = clean_text((string) ($_POST['reset_reason'] ?? ''));

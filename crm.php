@@ -18,6 +18,8 @@ $statusMap = [
     'operator_ticket_created' => ['type' => 'success', 'message' => 'Bilet CRM panelinde yaradildi.'],
     'operator_ticket_failed' => ['type' => 'error', 'message' => 'Bilet yaradilmadi.'],
     'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu.'],
+    'ticket_wait_state_updated' => ['type' => 'success', 'message' => 'Bilet gozleme statusu yenilendi.'],
+    'ticket_wait_state_failed' => ['type' => 'error', 'message' => 'Bilet gozleme statusu yenilenmedi.'],
 ];
 if (isset($statusMap[$status])) {
     $flash = $statusMap[$status];
@@ -505,6 +507,41 @@ unset($kanbanParams['page'], $tableParams['page']);
                                         <a href="<?= e($operationsUrl); ?>">SPoG</a>
                                         <a href="<?= e($messageUrl); ?>">SMS</a>
                                     </div>
+                                    <?php if ((string) ($ticket['status'] ?? '') !== 'Baglandi'): ?>
+                                    <details class="mgs-ticket-actions is-table">
+                                        <summary>Gozleme</summary>
+                                        <?php if ((string) ($ticket['status'] ?? '') === APP_TICKET_STATUS_AWAITING_CUSTOMER): ?>
+                                            <form method="post" action="portal-actions.php">
+                                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                                <input type="hidden" name="action" value="set_ticket_waiting_state">
+                                                <input type="hidden" name="ticket_no" value="<?= e((string) ($ticket['id'] ?? '')); ?>">
+                                                <input type="hidden" name="wait_type" value="clear_customer">
+                                                <button type="submit">Musteri cavab verdi</button>
+                                            </form>
+                                        <?php elseif ((string) ($ticket['status'] ?? '') === APP_TICKET_STATUS_DEPT_BLOCKED): ?>
+                                            <form method="post" action="portal-actions.php">
+                                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                                <input type="hidden" name="action" value="set_ticket_waiting_state">
+                                                <input type="hidden" name="ticket_no" value="<?= e((string) ($ticket['id'] ?? '')); ?>">
+                                                <input type="hidden" name="wait_type" value="clear_department">
+                                                <button type="submit">Sobe cavab verdi</button>
+                                            </form>
+                                        <?php else: ?>
+                                            <form method="post" action="portal-actions.php">
+                                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                                <input type="hidden" name="action" value="set_ticket_waiting_state">
+                                                <input type="hidden" name="ticket_no" value="<?= e((string) ($ticket['id'] ?? '')); ?>">
+                                                <select name="wait_type">
+                                                    <option value="customer">Musteri cavab gozlenilir</option>
+                                                    <option value="department">Basqa sobeden asili</option>
+                                                </select>
+                                                <input type="text" name="wait_department" placeholder="Sobe (mes: warehouse)">
+                                                <input type="text" name="wait_reason" placeholder="Sebeb" required>
+                                                <button type="submit">Tetbiq et</button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </details>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

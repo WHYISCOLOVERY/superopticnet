@@ -1935,6 +1935,25 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
         $input['source_type'] = $input['source_type'] ?? 'ticket';
         $input['source_id'] = $relatedTicketNo;
 
+        // Fairness rule (vision §9.3): "musterinin cavab vermemesi ayrica
+        // statusdur" / "basqa sobeden asili gecikme ayrilir" -- if the ticket
+        // was sitting in "awaiting customer response" or "blocked on another
+        // department" as of the penalty's own event_date, the delay is not
+        // the assigned technician's fault.
+        if (empty($input['override_ticket_waiting_state'])) {
+            $waitingState = app_db_ticket_waiting_state_as_of((int) $ticketRow['id'], $eventDate);
+            if (!empty($waitingState['waiting'])) {
+                if ((string) ($waitingState['type'] ?? '') === 'customer_no_response') {
+                    return ['ok' => false, 'error' => 'penalty_blocked_by_customer_no_response'];
+                }
+                return [
+                    'ok' => false,
+                    'error' => 'penalty_blocked_by_dept_dependency',
+                    'waiting_on_department' => (string) ($waitingState['department'] ?? ''),
+                ];
+            }
+        }
+
         // Fairness rule (vision §9.3): "kutlevi sebeke incident-i texnikin
         // sexsi nasazligi sayilmir" -- if an unusual number of tickets opened
         // company-wide the same day, treat it as a likely mass incident and

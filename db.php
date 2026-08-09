@@ -2877,6 +2877,179 @@ function app_db_close_ticket(string $ticketNo, string $reason, string $note): bo
     return $ok;
 }
 
+// Fairness rule (vision §9.3 "musterinin cavab vermemesi ayrica statusdur"):
+// a distinct ticket status so time spent waiting on the customer is never
+// mistaken for the technician being slow. status stays a plain VARCHAR (no
+// ENUM), so this is additive -- existing 'Aciqdir'/'Baglandi' code paths are
+// unaffected. app_mgs_record_hr_score_event() reads the portal_ticket_events
+// timeline this writes to decide whether a task_missed penalty applies.
+const APP_TICKET_STATUS_AWAITING_CUSTOMER = 'Musteri_Cavab_Gozleyir';
+const APP_TICKET_STATUS_DEPT_BLOCKED = 'Basqa_Sobede_Gozleyir';
+
+function app_db_set_ticket_awaiting_customer(string $ticketNo, array $actor, string $note = ''): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') === 'Baglandi') {
+        return ['ok' => false, 'error' => 'ticket_closed'];
+    }
+    if ((string) ($row['status'] ?? '') === APP_TICKET_STATUS_AWAITING_CUSTOMER) {
+        return ['ok' => false, 'error' => 'already_awaiting_customer'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => APP_TICKET_STATUS_AWAITING_CUSTOMER, 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'awaiting_customer_response',
+        $note,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        ['previous_status' => (string) ($row['status'] ?? '')]
+    );
+    return ['ok' => true];
+}
+
+function app_db_clear_ticket_awaiting_customer(string $ticketNo, array $actor, string $note = ''): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') !== APP_TICKET_STATUS_AWAITING_CUSTOMER) {
+        return ['ok' => false, 'error' => 'not_awaiting_customer'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => 'Aciqdir', 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'awaiting_customer_response_cleared',
+        $note,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        null
+    );
+    return ['ok' => true];
+}
+
+// Fairness rule (vision §9.3 "basqa sobeden asili gecikme ayrilir"): marks a
+// ticket as blocked on another department (warehouse/finance/noc/...) so the
+// wait is never attributed to the assigned technician's own delay.
+function app_db_set_ticket_dept_blocked(string $ticketNo, string $department, string $reason, array $actor): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $department = mb_substr(clean_text($department), 0, 64);
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($department === '' || $reason === '') {
+        return ['ok' => false, 'error' => 'department_and_reason_required'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') === 'Baglandi') {
+        return ['ok' => false, 'error' => 'ticket_closed'];
+    }
+    if ((string) ($row['status'] ?? '') === APP_TICKET_STATUS_DEPT_BLOCKED) {
+        return ['ok' => false, 'error' => 'already_dept_blocked'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => APP_TICKET_STATUS_DEPT_BLOCKED, 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'dept_blocked',
+        $reason,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        ['waiting_on_department' => $department, 'previous_status' => (string) ($row['status'] ?? '')]
+    );
+    return ['ok' => true];
+}
+
+function app_db_clear_ticket_dept_blocked(string $ticketNo, array $actor, string $note = ''): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') !== APP_TICKET_STATUS_DEPT_BLOCKED) {
+        return ['ok' => false, 'error' => 'not_dept_blocked'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => 'Aciqdir', 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'dept_blocked_cleared',
+        $note,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        null
+    );
+    return ['ok' => true];
+}
+
+/**
+ * Was this ticket in a waiting state (awaiting customer response, or blocked
+ * on another department) as of $asOfDate? Looks at the most recent relevant
+ * portal_ticket_events row up to that date -- if it's a "start" event with no
+ * later "cleared" event before the cutoff, the ticket was waiting that day.
+ *
+ * @return array{waiting:bool,type?:string,department?:string}
+ */
+function app_db_ticket_waiting_state_as_of(int $ticketId, string $asOfDate): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketId <= 0) {
+        return ['waiting' => false];
+    }
+    $statement = $db->prepare(
+        "SELECT event_type, payload_json FROM portal_ticket_events
+          WHERE ticket_id = :ticket_id
+            AND event_type IN ('awaiting_customer_response', 'awaiting_customer_response_cleared', 'dept_blocked', 'dept_blocked_cleared')
+            AND created_at <= :cutoff
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1"
+    );
+    $statement->execute(['ticket_id' => $ticketId, 'cutoff' => $asOfDate . ' 23:59:59']);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['waiting' => false];
+    }
+    $eventType = (string) ($row['event_type'] ?? '');
+    if ($eventType === 'awaiting_customer_response') {
+        return ['waiting' => true, 'type' => 'customer_no_response'];
+    }
+    if ($eventType === 'dept_blocked') {
+        $payload = is_string($row['payload_json'] ?? null) ? (json_decode((string) $row['payload_json'], true) ?: []) : [];
+        return ['waiting' => true, 'type' => 'dept_dependency', 'department' => (string) ($payload['waiting_on_department'] ?? '')];
+    }
+    return ['waiting' => false];
+}
+
 function app_db_accounts(array $filters = []): array
 {
     $db = app_db();
