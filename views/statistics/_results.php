@@ -7,6 +7,7 @@ $selectedMetric = (string) ($statisticsContext['selected_metric'] ?? 'all');
 $startDate = (string) ($statisticsContext['start_date'] ?? '');
 $endDate = (string) ($statisticsContext['end_date'] ?? '');
 $sourceNotes = (array) ($statisticsContext['source_notes'] ?? []);
+$ceoKpis = (array) ($statisticsContext['ceo_kpis'] ?? []);
 
 $visibleDatasets = $selectedMetric === 'all'
     ? $datasets
@@ -24,6 +25,45 @@ $circumference = 2 * M_PI * $ringRadius;
 ?>
 <div class="statistics-results" data-statistics-results>
     <p class="statistics-range-note"><?= e($startDate); ?> &ndash; <?= e($endDate); ?></p>
+    <?php if ($ceoKpis !== []): ?>
+        <div class="portal-card portal-reveal" data-statistics-ceo-kpis>
+            <div class="portal-card-head">
+                <h2>CEO göstəriciləri</h2>
+                <small>MRR/ARPU hazırkı vəziyyəti göstərir (dövrdən asılı deyil); churn və ərazi gəliri seçilmiş dövr üzrədir.</small>
+            </div>
+            <div class="statistics-kpis">
+                <article class="statistics-kpi">
+                    <span>MRR (aylıq təkrar gəlir)</span>
+                    <strong><?= e(billing_money((float) ($ceoKpis['mrr'] ?? 0))); ?></strong>
+                    <small><?= (int) ($ceoKpis['paying_customers'] ?? 0); ?> ödəyən müştəri</small>
+                </article>
+                <article class="statistics-kpi">
+                    <span>ARPU</span>
+                    <strong><?= e(billing_money((float) ($ceoKpis['arpu'] ?? 0))); ?></strong>
+                    <small>müştəri başına orta gəlir</small>
+                </article>
+                <article class="statistics-kpi">
+                    <span>Churn (dövr üzrə, yaxınlaşma)</span>
+                    <strong><?= e(number_format((float) ($ceoKpis['churn_rate_percent'] ?? 0), 2)); ?>%</strong>
+                    <small><?= (int) ($ceoKpis['churned_customers'] ?? 0); ?> müştəri itirilib</small>
+                </article>
+            </div>
+            <?php $revenueByArea = (array) ($ceoKpis['revenue_by_area'] ?? []); ?>
+            <?php if ($revenueByArea !== []): ?>
+            <div class="portal-table-wrap portal-section-gap">
+                <table class="portal-table">
+                    <thead><tr><th>Ərazi</th><th>Gəlir</th><th>Ödəniş sayı</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($revenueByArea as $areaRow): ?>
+                            <tr><td><?= e((string) ($areaRow['label'] ?? '-')); ?></td><td><?= e(billing_money((float) ($areaRow['value'] ?? 0))); ?></td><td><?= (int) ($areaRow['count'] ?? 0); ?></td></tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+            <small class="portal-section-gap"><?= e((string) ($ceoKpis['notes']['churn_rate_percent'] ?? '')); ?></small>
+        </div>
+    <?php endif; ?>
     <?php if ($visibleKpis !== []): ?>
         <div class="statistics-kpis">
             <?php foreach ($visibleKpis as $kpi): ?>
