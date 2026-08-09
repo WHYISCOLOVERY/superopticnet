@@ -30,6 +30,7 @@ function app_operations_action_module(string $action): ?string
             'create_finance_income','void_finance_income','save_finance_counterparty',
             'link_finance_counterparty','create_finance_entry','approve_finance_expense',
             'save_finance_budget','issue_finance_invoice','void_finance_invoice',
+            'record_finance_cash_reconciliation',
             'save_asset_depreciation','confirm_asset_writeoff',
             'create_finance_debt_record','record_finance_debt_payment',
             'request_finance_debt_writeoff','resolve_finance_debt_writeoff',

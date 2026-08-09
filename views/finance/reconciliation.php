@@ -7,6 +7,7 @@ $openDebts = array_values(array_filter((array) ($financeContext['data']['open_de
 $recentDebtPayments = array_slice((array) ($financeContext['data']['payments']['rows'] ?? []), 0, 8);
 $pendingDebtWriteoffs = (array) ($financeContext['data']['pending_debt_writeoffs'] ?? []);
 $canConfirmDebtWriteoff = !empty($financeContext['data']['can_confirm_maker_checker']);
+$cashReconciliationRows = (array) ($financeContext['data']['cash_reconciliation']['rows'] ?? []);
 ?>
 <div data-finance-reconciliation data-finance-debt-ledger data-finance-debt-payments>
     <div class="portal-card-head">
@@ -73,4 +74,48 @@ $canConfirmDebtWriteoff = !empty($financeContext['data']['can_confirm_maker_chec
         <div class="portal-form-row"><textarea name="writeoff_reason" placeholder="Sebeb (mecburidir)" required></textarea></div>
         <button class="portal-primary-btn" type="submit">Silinme sorgusu gonder</button>
     </form></section></div>
+
+    <div class="portal-card portal-section-gap" data-finance-cash-reconciliation>
+        <div class="portal-card-head">
+            <div><strong>Kassa/bank uzlasdirmasi</strong><small>Beyan edilmis (bank ekstraktı) xalis herekat ile sistemin oz qeydlerinin muqayisesi. Yalniz melumat/qeyd xarakterlidir -- heç bir ledger avtomatik duzelmir.</small></div>
+            <?php if (!empty($financeContext['data']['can_write'])): ?><button class="portal-primary-btn" type="button" data-finance-dialog-open="cash-reconciliation-create">Yeni yoxlama qeydi</button><?php endif; ?>
+        </div>
+        <div class="portal-table-wrap">
+            <table class="portal-table">
+                <thead><tr><th>Dovr</th><th>Menbe</th><th>Beyan (bank)</th><th>Sistem</th><th>Ferq</th><th>Qeyd</th><th>Tarix</th></tr></thead>
+                <tbody>
+                    <?php foreach ($cashReconciliationRows as $row): ?>
+                        <tr data-finance-row>
+                            <td><?= e((string) ($row['period_start'] ?? '-')); ?> - <?= e((string) ($row['period_end'] ?? '-')); ?></td>
+                            <td><?= e((string) ($row['source_label'] ?? '-')); ?></td>
+                            <td><?= e(billing_money($row['declared_net_movement'] ?? 0)); ?></td>
+                            <td><?= e(billing_money($row['system_net_movement'] ?? 0)); ?></td>
+                            <td><strong<?= abs((float) ($row['discrepancy_amount'] ?? 0)) > 0.01 ? ' class="dash-badge-warning"' : ''; ?>><?= e(billing_money($row['discrepancy_amount'] ?? 0)); ?></strong></td>
+                            <td><?= e((string) ($row['note'] ?? '-')); ?></td>
+                            <td><?= e((string) ($row['created_at'] ?? '-')); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if ($cashReconciliationRows === []): ?><tr><td colspan="7" class="finance-empty">Uzlasdirma qeydi yoxdur.</td></tr><?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <?php if (!empty($financeContext['data']['can_write'])): ?>
+    <div class="finance-dialog" data-finance-dialog="cash-reconciliation-create" hidden>
+        <div class="finance-dialog-backdrop" data-finance-dialog-close></div>
+        <section class="finance-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="cash-reconciliation-create-title">
+            <div class="finance-dialog-head"><h3 id="cash-reconciliation-create-title">Yeni kassa/bank yoxlamasi</h3><button class="finance-dialog-close" type="button" data-finance-dialog-close aria-label="Bagla">X</button></div>
+            <form class="portal-stacked-form" method="post">
+                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                <input type="hidden" name="action" value="record_finance_cash_reconciliation">
+                <input type="hidden" name="finance_tab" value="reconciliation">
+                <div class="portal-form-row portal-grid-slim"><input type="date" name="period_start" required><input type="date" name="period_end" required></div>
+                <div class="portal-form-row"><input type="text" name="source_label" placeholder="Menbe (meselen: Kapital Bank hesabi)" required maxlength="96"></div>
+                <div class="portal-form-row"><input type="number" step="0.01" name="declared_net_movement" placeholder="Bank ekstraktinda gorunen xalis herekat" required></div>
+                <div class="portal-form-row"><textarea name="note" maxlength="255" placeholder="Qeyd"></textarea></div>
+                <button class="portal-primary-btn" type="submit">Yoxlamani qeyd et</button>
+            </form>
+        </section>
+    </div>
+    <?php endif; ?>
 </div>

@@ -5,6 +5,7 @@ require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/finance-operations-lib.php';
 require_once __DIR__ . '/finance-budget-lib.php';
 require_once __DIR__ . '/finance-invoice-lib.php';
+require_once __DIR__ . '/finance-reconciliation-lib.php';
 require_once __DIR__ . '/finance-bonus-lib.php';
 require_once __DIR__ . '/reporting-period-lib.php';
 // Payroll/tax was moved from HR to Finance; reuse the HR payroll data loaders.
@@ -203,6 +204,22 @@ function app_finance_invoice_generated_page(PDO $db, array $query): array
         $db,
         'SELECT COUNT(*) FROM finance_invoices' . $where,
         'SELECT * FROM finance_invoices' . $where . ' ORDER BY id DESC',
+        $params,
+        $query
+    );
+}
+
+function app_finance_cash_reconciliation_page(PDO $db, array $query): array
+{
+    app_finance_reconciliation_require_schema($db);
+    $where = ' WHERE 1=1';
+    $params = [];
+    $where .= app_finance_search_filter($query, ['source_label', 'note'], $params);
+
+    return app_finance_query_page(
+        $db,
+        'SELECT COUNT(*) FROM finance_cash_reconciliations' . $where,
+        'SELECT * FROM finance_cash_reconciliations' . $where . ' ORDER BY id DESC',
         $params,
         $query
     );
@@ -677,6 +694,7 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         $context['data']['open_debts'] = app_mgs_finance_debt_rows($db, 'all', 50);
         $context['data']['payments'] = app_finance_debt_payment_page($db, ['page' => 1, 'limit' => 8]);
         $context['data']['pending_debt_writeoffs'] = app_mgs_finance_debt_writeoff_requests($db, 'pending');
+        $context['data']['cash_reconciliation'] = app_finance_cash_reconciliation_page($db, ['page' => 1, 'limit' => 10]);
     } elseif ($tab === 'assets') {
         $context['data']['page'] = app_finance_asset_page($db, $query);
         $context['data']['assets'] = app_mgs_finance_printable_inventory_rows($db, 50);
