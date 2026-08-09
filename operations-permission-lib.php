@@ -50,6 +50,10 @@ function app_operations_action_module(string $action): ?string
             'create_hr_employee_document','update_hr_record_status','record_hr_finance_expense',
         ],
         'messaging' => ['send_bot_test_message'],
+        'backup' => [
+            'backup_now','backup_telegram','install_weekly_backup_task','restore_verify',
+            'restore_execute','check_update_channel','verify_update_package','apply_update_package',
+        ],
     ];
     foreach ($actions as $module => $moduleActions) {
         if (in_array($action, $moduleActions, true)) return $module;
@@ -70,5 +74,11 @@ function app_operations_action_allowed(array $actor, string $action): bool
         if (in_array($action, ['approve_inventory_request','reject_inventory_request'], true)) return $employeeRole === 'warehouse_manager';
         return in_array($employeeRole, ['warehouse','warehouse_manager'], true);
     }
+    // Backup/restore/update-package actions are admin-only -- no operational
+    // role should ever reach them, regardless of what the portal module
+    // catalog does or doesn't contain (operations-center.php's own
+    // second-stage admin check at the backup/restore dispatch block is
+    // defense in depth, not the only gate).
+    if ($module === 'backup') return false;
     return app_portal_can_access_module($actor, $module);
 }
