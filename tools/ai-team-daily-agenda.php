@@ -50,6 +50,17 @@ foreach ($results as $personaResult) {
     $totalWouldStage += count($personaResult['would_stage']);
 }
 
+// Heartbeat: record every invocation (apply and dry-run) so the UI can prove
+// the "always running" job actually ran, even when it stages nothing.
+app_ai_team_record_agenda_run(
+    $db,
+    $results,
+    $apply,
+    'cron',
+    null,
+    (int) round((microtime(true) - $startedAt) * 1000)
+);
+
 ai_team_agenda_worker_out([
     'status' => 'ok',
     'mode' => $apply ? 'apply' : 'dry-run',

@@ -5,6 +5,7 @@ $personas = (array) ($aiContext['data']['personas'] ?? []);
 $pendingTasks = (array) ($aiContext['data']['pending_tasks'] ?? []);
 $approvedTasks = (array) ($aiContext['data']['approved_tasks'] ?? []);
 $employees = (array) ($aiContext['data']['employees'] ?? []);
+$lastAgendaRun = $aiContext['data']['last_agenda_run'] ?? null;
 $isAdmin = !empty($aiContext['is_admin']);
 $aiTeamFlash = $_SESSION['ai_team_flash'] ?? null;
 unset($_SESSION['ai_team_flash']);
@@ -14,6 +15,40 @@ unset($_SESSION['ai_team_flash']);
         <div class="portal-alert is-<?= e((string) ($aiTeamFlash['type'] ?? 'info')); ?>"><?= e((string) ($aiTeamFlash['message'] ?? '')); ?></div>
     <?php endif; ?>
     <p><small>Hər persona öz sahəsinin real faktlarına (advisor-agent-lib.php) əsaslanır. Sual "gündəlik/tapşırıq" sözlərini ehtiva edirsə, yüksək-riskli faktlar tapşırıq layihəsi kimi qeydə alınır -- heç vaxt birbaşa göndərilmir, YALNIZ admin təsdiqindən sonra əməkdaşa Telegram vasitəsilə göndərilir.</small></p>
+
+    <?php if ($isAdmin): ?>
+    <div class="portal-card portal-section-gap" data-ai-team-agenda>
+        <div class="portal-card-head">
+            <strong>Gündəlik agenda</strong>
+            <small>Bütün personalar üçün yüksək-riskli faktları avtomatik tapşırıq layihəsinə çevirir. Fon işçisi (cron) hər gün özü işlədir; buradan əl ilə də işlədə bilərsiniz.</small>
+        </div>
+        <div class="portal-card-body">
+            <?php if (is_array($lastAgendaRun)): ?>
+                <p class="ai-team-agenda-status" style="margin:0 0 10px">
+                    <strong>Son icra:</strong>
+                    <?= e((string) ($lastAgendaRun['created_at'] ?? '-')); ?>
+                    ·
+                    <?= ((string) ($lastAgendaRun['triggered_by'] ?? '') === 'admin') ? 'əl ilə' : 'avtomatik (cron)'; ?>
+                    <?php $runActor = trim((string) ($lastAgendaRun['actor_name'] ?? '')); ?>
+                    <?php if ($runActor !== ''): ?> · <?= e($runActor); ?><?php endif; ?>
+                    <br>
+                    <small>
+                        Qeydə alınan yeni tapşırıq: <strong><?= e((string) ((int) ($lastAgendaRun['total_staged'] ?? 0))); ?></strong>
+                        · rejim: <?= e((string) ($lastAgendaRun['mode'] ?? '-')); ?>
+                        · müddət: <?= e((string) ((int) ($lastAgendaRun['duration_ms'] ?? 0))); ?> ms
+                    </small>
+                </p>
+            <?php else: ?>
+                <p class="finance-empty" style="margin:0 0 10px">Agenda hələ heç işlədilməyib (nə cron, nə əl ilə).</p>
+            <?php endif; ?>
+            <form class="portal-inline-form" method="post">
+                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                <input type="hidden" name="action" value="run_daily_agenda">
+                <button class="portal-primary-btn" type="submit">Gündəlik agendanı indi işlət</button>
+            </form>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <?php if ($isAdmin && $pendingTasks !== []): ?>
     <div class="portal-card portal-section-gap">

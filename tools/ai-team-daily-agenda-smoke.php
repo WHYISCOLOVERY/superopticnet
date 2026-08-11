@@ -26,12 +26,16 @@ if (!$db instanceof PDO) {
 
 $taskIds = [];
 $stockItemIds = [];
-$cleanup = function () use ($db, &$taskIds, &$stockItemIds): void {
+$agendaRunIds = [];
+$cleanup = function () use ($db, &$taskIds, &$stockItemIds, &$agendaRunIds): void {
     foreach ($taskIds as $id) {
         $db->prepare('DELETE FROM ai_team_tasks WHERE id = :id')->execute(['id' => $id]);
     }
     foreach ($stockItemIds as $id) {
         $db->prepare('DELETE FROM inventory_stock_items WHERE id = :id')->execute(['id' => $id]);
+    }
+    foreach ($agendaRunIds as $id) {
+        $db->prepare('DELETE FROM ai_team_agenda_runs WHERE id = :id')->execute(['id' => $id]);
     }
 };
 
@@ -179,6 +183,53 @@ try {
     }
     if (!str_contains($workerSource, 'app_ai_team_run_daily_agenda($db, $apply)')) {
         ai_team_daily_agenda_smoke_fail('worker_not_calling_shared_agenda_function');
+    }
+    // The worker must ALSO record a heartbeat row every invocation, otherwise a
+    // run that stages zero tasks leaves no evidence it ever ran.
+    if (!str_contains($workerSource, 'app_ai_team_record_agenda_run(')) {
+        ai_team_daily_agenda_smoke_fail('worker_not_recording_agenda_run_heartbeat');
+    }
+
+    // --- Heartbeat log + admin "run now": a non-admin is rejected, an admin run
+    //     is idempotent here (fixtures already staged above), and it writes ONE
+    //     triggered_by='admin' row that app_ai_team_last_agenda_run() surfaces. ---
+    $runIdsBefore = array_map('intval', $db->query('SELECT id FROM ai_team_agenda_runs')->fetchAll(PDO::FETCH_COLUMN) ?: []);
+
+    $nonAdminActor = ['id' => 0, 'employee_role' => 'operator', 'account_type' => 'employee'];
+    $nonAdminRejected = false;
+    try {
+        app_ai_team_run_daily_agenda_now($db, $nonAdminActor);
+    } catch (Throwable $exception) {
+        $nonAdminRejected = ($exception->getMessage() === 'ai_team_forbidden');
+    }
+    if (!$nonAdminRejected) {
+        ai_team_daily_agenda_smoke_fail('non_admin_was_not_rejected_from_run_now');
+    }
+
+    $adminActor = ['id' => 0, 'full_name' => 'AI Team Agenda QA Admin', 'employee_role' => 'super_admin', 'account_type' => 'admin'];
+    $adminRun = app_ai_team_run_daily_agenda_now($db, $adminActor);
+    if (empty($adminRun['ok']) || (int) ($adminRun['total_staged'] ?? -1) !== 0) {
+        ai_team_daily_agenda_smoke_fail('admin_run_now_was_not_idempotent:' . json_encode($adminRun, JSON_UNESCAPED_SLASHES));
+    }
+
+    $runIdsAfter = array_map('intval', $db->query('SELECT id FROM ai_team_agenda_runs')->fetchAll(PDO::FETCH_COLUMN) ?: []);
+    foreach (array_diff($runIdsAfter, $runIdsBefore) as $newRunId) {
+        $agendaRunIds[] = (int) $newRunId;
+    }
+    // Exactly the admin run above should have added a heartbeat (non-admin threw
+    // before reaching the record call).
+    if (count($agendaRunIds) !== 1) {
+        ai_team_daily_agenda_smoke_fail('unexpected_heartbeat_row_count:' . count($agendaRunIds));
+    }
+
+    $lastRun = app_ai_team_last_agenda_run($db);
+    if (!is_array($lastRun)
+        || (int) $lastRun['id'] !== $agendaRunIds[0]
+        || (string) $lastRun['triggered_by'] !== 'admin'
+        || (string) $lastRun['mode'] !== 'apply'
+        || (int) $lastRun['total_staged'] !== 0
+        || (string) $lastRun['actor_name'] !== 'AI Team Agenda QA Admin') {
+        ai_team_daily_agenda_smoke_fail('last_agenda_run_row_wrong:' . json_encode($lastRun, JSON_UNESCAPED_SLASHES));
     }
 
     $cleanup();

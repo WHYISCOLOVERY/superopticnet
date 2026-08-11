@@ -420,6 +420,7 @@ $tests = [
     ['php_lint_ai_team_daily_agenda_smoke', ['-l', 'tools/ai-team-daily-agenda-smoke.php'], 30],
     ['php_lint_ai_team_daily_agenda_migration', ['-l', 'db/migrations/20260810_400_ai_team_daily_agenda.php'], 30],
     ['php_lint_ai_team_proposal_persona_unique_migration', ['-l', 'db/migrations/20260810_410_ai_team_task_proposal_persona_unique.php'], 30],
+    ['php_lint_ai_team_agenda_runs_migration', ['-l', 'db/migrations/20260811_420_ai_team_agenda_runs.php'], 30],
     ['php_lint_security_anomaly_lib', ['-l', 'security-anomaly-lib.php'], 30],
     ['php_lint_audit_log_lib', ['-l', 'audit-log-lib.php'], 30],
     ['php_lint_communication_provider', ['-l', 'communication-provider.php'], 30],

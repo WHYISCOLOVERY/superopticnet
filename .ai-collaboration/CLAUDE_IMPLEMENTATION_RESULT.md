@@ -788,3 +788,98 @@ Files changed: `mgs-integration-lib.php`,
 `tools/update-package-zip-slip-smoke.php` (new). No migration, no schema
 change, no secrets/credentials touched, no live router/OLT/device action, no
 production deploy. Not committed.
+
+## Claude continuation - AI Komanda daily-agenda visibility + scheduler wiring (2026-08-11, separate task)
+
+Separate objective: finish the "always running" daily-agenda increment from
+commit `82d575e`. Two gaps remained: (1) the agenda job had no UI surface --
+an admin could not trigger it or see whether/when it last ran; (2) the worker
+existed but nothing actually invoked it on a schedule, so "always running" was
+only true if someone ran the CLI by hand. Done in two steps the user asked for
+in order.
+
+### Step 1 - agenda visibility + admin "run now"
+
+- New migration `20260811_420_ai_team_agenda_runs`: a per-invocation
+  heartbeat/result log (`ai_team_agenda_runs`: mode, triggered_by cron|admin,
+  total_staged, total_would_stage, staged ids, personas json, duration_ms,
+  actor, created_at). Pure telemetry -- no business rule reads it; staging
+  idempotency still lives on `ai_team_tasks (proposal_id, persona_key)`. A run
+  that stages zero tasks still leaves a row here, which the existing task rows
+  alone can never reveal.
+- `ai-team-lib.php`: `app_ai_team_record_agenda_run()` (best-effort, swallows
+  a missing/unmigrated table so the agenda never fails on telemetry),
+  `app_ai_team_last_agenda_run()` (fail-soft read), and
+  `app_ai_team_run_daily_agenda_now()` (admin-gated via `app_portal_is_admin`,
+  runs the SAME `app_ai_team_run_daily_agenda($db, true)` staging + records an
+  `admin`-attributed heartbeat). The AI still only DRAFTS
+  `pending_admin_review` tasks -- nothing is assigned or sent here.
+- `tools/ai-team-daily-agenda.php`: records a `cron` heartbeat on every
+  invocation (apply and dry-run).
+- `ai-team.php`: new `run_daily_agenda` POST action (CSRF-verified, same guard
+  set as the existing actions; `ai_team_forbidden` message already mapped).
+- `ai-module-lib.php`: `team` section data now carries `last_agenda_run`
+  (admin-only, same gate as pending/approved tasks).
+- `views/ai/team.php`: admin-only "Gündəlik agenda" card -- shows last-run
+  time / cron-vs-manual / actor / staged count / mode / duration, an explicit
+  "hələ heç işlədilməyib" empty state, and a "Gündəlik agendanı indi işlət"
+  button.
+- `tools/ai-team-daily-agenda-smoke.php`: extended (cleanup now also clears
+  `ai_team_agenda_runs` rows it creates) to assert the worker records a
+  heartbeat, non-admin is rejected from run-now, an admin run is idempotent
+  here and writes exactly one `triggered_by='admin'` heartbeat that
+  `app_ai_team_last_agenda_run()` surfaces with the right actor/mode/count.
+- `tools/full-system-regression.php`: added the new migration's lint entry
+  (the daily-agenda smoke is already a registered lint+execution entry).
+
+### Step 2 - scheduler wiring (installers committed; live registration is the user's to run)
+
+- `deploy/windows/install-ai-team-agenda-task.ps1` (new): mirrors the existing
+  `install-maintenance-task.ps1` convention -- daily Windows Scheduled Task at
+  06:00 invoking the worker with `--apply`, Tee-logged to
+  `tmp/ai-team-daily-agenda-task.log`.
+- `deploy/ubuntu-install-ai-team-agenda-cron.sh` (new): mirrors
+  `ubuntu-install-maintenance-cron.sh` -- writes
+  `/etc/cron.d/superoptic-ai-team-agenda`, 06:00 daily, `--apply`, logged to
+  `tmp/ai-team-daily-agenda-cron.log`. Production runs Ubuntu.
+- I did NOT create the live scheduled task on this machine: the production-grade
+  Windows installer uses `-RunLevel Highest` (needs elevation -- attempt
+  returned "Erişim engellendi"), and creating OS scheduled tasks is outside
+  what this session may do unattended. The user runs the installer with
+  elevation to activate it. Chosen 06:00 so drafts are waiting when admins
+  arrive.
+
+### Tests actually executed (local XAMPP `D:\xampp\php\php.exe`, PHP CLI available)
+
+- PHP lint clean on every touched/created file
+  (`ai-team-lib.php`, `ai-team.php`, `ai-module-lib.php`,
+  `tools/ai-team-daily-agenda.php`, `tools/ai-team-daily-agenda-smoke.php`,
+  `tools/full-system-regression.php`, `views/ai/team.php`,
+  `db/migrations/20260811_420_ai_team_agenda_runs.php`).
+- `bash -n deploy/ubuntu-install-ai-team-agenda-cron.sh`: syntax OK;
+  `install-ai-team-agenda-task.ps1` parse-checked via PSParser.
+- Migration `20260811_420` applied locally (`run-portal-migrations.php`).
+- Worker exercised: dry-run (0 staged / 8 would-stage) and `--apply`
+  (8 staged), each wrote the expected heartbeat row; `app_ai_team_last_agenda_run()`
+  returned the latest.
+- Admin path proven in-process: non-admin -> `ai_team_forbidden`; admin ->
+  idempotent (0 new, 8 already staged) + `triggered_by=admin` heartbeat with
+  actor.
+- View partial rendered in isolation with a populated and a null
+  `last_agenda_run` -- card, button, CSRF input, last-run line, and empty
+  state all present.
+- `tools/ai-team-daily-agenda-smoke.php`: `passed` (with the new heartbeat/
+  admin-run assertions). `tools/ai-team-smoke.php`, `ai-module-separation-smoke.php`:
+  `passed`. `advisor-agent-foundation-smoke.php`: 110/0.
+- All test fixtures + the 8 manually-staged tasks + all heartbeat rows created
+  during verification were deleted afterward; local DB left with 0 pending
+  ai_team tasks and 0 agenda_runs rows (the table itself persists as the
+  migration deliverable).
+
+No commit/push, no production deploy, no real SMS/Telegram/WhatsApp send, no
+RADIUS/OLT/router action, no credential read/rotation, no destructive DB
+operation. `app_ai_team_task_approve()` (the only send path) was not touched.
+Full-system regression not re-run end to end this session (running the ~320-test
+suite twice back-to-back OOMs this box, per earlier entries) -- the focused
+AI-Komanda tests above cover the changed surface; a clean full run should be
+done before cutover.

@@ -295,6 +295,7 @@ function app_ai_build_context(PDO $db, array $user, string $section, array $quer
             'pending_tasks' => app_ai_user_is_admin($user) ? app_ai_team_pending_tasks($db, 30) : [],
             'approved_tasks' => app_ai_user_is_admin($user) ? app_ai_team_approved_tasks($db, 20) : [],
             'employees' => app_ai_user_is_admin($user) ? app_ai_team_active_employees($db) : [],
+            'last_agenda_run' => app_ai_user_is_admin($user) ? app_ai_team_last_agenda_run($db) : null,
         ];
     } elseif ($section === 'work-queue') {
         // Routed through app_agent_ops_queue_access() (audits the access,

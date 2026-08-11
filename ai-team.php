@@ -10,7 +10,7 @@ $db = app_db();
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $db instanceof PDO) {
     $action = clean_text((string) ($_POST['action'] ?? ''));
-    if (!in_array($action, ['ask_ai_team_bot', 'approve_ai_team_task', 'dismiss_ai_team_task'], true)) {
+    if (!in_array($action, ['ask_ai_team_bot', 'approve_ai_team_task', 'dismiss_ai_team_task', 'run_daily_agenda'], true)) {
         http_response_code(400);
         exit('Naməlum əməliyyat.');
     }
@@ -37,6 +37,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $db instanceof PDO) {
         } elseif ($action === 'dismiss_ai_team_task') {
             app_ai_team_task_dismiss($db, $user, (int) ($_POST['task_id'] ?? 0), (string) ($_POST['reason'] ?? ''));
             $flash = ['type' => 'success', 'message' => 'Tapşırıq layihəsi rədd edildi.'];
+        } elseif ($action === 'run_daily_agenda') {
+            $agenda = app_ai_team_run_daily_agenda_now($db, $user);
+            $staged = (int) ($agenda['total_staged'] ?? 0);
+            $flash = ['type' => 'success', 'message' => $staged > 0
+                ? ('Gündəlik agenda işlədi: ' . $staged . ' yeni tapşırıq layihəsi qeydə alındı (admin təsdiqi gözləyir).')
+                : 'Gündəlik agenda işlədi: yeni yüksək-riskli tapşırıq layihəsi yaranmadı (hamısı artıq qeydə alınıb və ya risk aşağıdır).'];
         }
     } catch (Throwable $exception) {
         $errorMessages = [

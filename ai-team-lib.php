@@ -550,3 +550,91 @@ function app_ai_team_active_employees(PDO $db): array
     $statement = $db->query('SELECT id, full_name, employee_role FROM portal_accounts WHERE role = "employee" AND is_active = 1 ORDER BY full_name, id LIMIT 200');
     return $statement !== false ? ($statement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
 }
+
+/**
+ * Records one daily-agenda invocation (cron worker or admin "run now") into the
+ * ai_team_agenda_runs heartbeat log. Pure best-effort telemetry: a run that
+ * stages zero tasks still leaves a row here (the only way to prove the job is
+ * actually running), and a missing/unmigrated table is swallowed so the agenda
+ * itself never fails just because the log is unavailable.
+ */
+function app_ai_team_record_agenda_run(PDO $db, array $results, bool $apply, string $triggeredBy, ?array $actor, int $durationMs): void
+{
+    $totalStaged = 0;
+    $totalWouldStage = 0;
+    $stagedIds = [];
+    foreach ($results as $personaResult) {
+        $totalStaged += count((array) ($personaResult['staged_task_ids'] ?? []));
+        $totalWouldStage += count((array) ($personaResult['would_stage'] ?? []));
+        foreach ((array) ($personaResult['staged_task_ids'] ?? []) as $stagedId) {
+            $stagedIds[] = (int) $stagedId;
+        }
+    }
+
+    try {
+        $insert = $db->prepare(
+            'INSERT INTO ai_team_agenda_runs
+                (mode, triggered_by, total_staged, total_would_stage, staged_task_ids_json, personas_json, duration_ms, actor_account_id, actor_name)
+             VALUES (:mode, :triggered_by, :total_staged, :total_would_stage, :staged_ids, :personas, :duration_ms, :actor_id, :actor_name)'
+        );
+        $insert->execute([
+            'mode' => $apply ? 'apply' : 'dry-run',
+            'triggered_by' => in_array($triggeredBy, ['cron', 'admin'], true) ? $triggeredBy : 'cron',
+            'total_staged' => $totalStaged,
+            'total_would_stage' => $totalWouldStage,
+            'staged_ids' => $stagedIds !== [] ? mb_substr(json_encode($stagedIds), 0, 512) : null,
+            'personas' => json_encode($results, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'duration_ms' => max(0, $durationMs),
+            'actor_id' => $actor !== null ? ((int) ($actor['id'] ?? 0) ?: null) : null,
+            'actor_name' => $actor !== null ? ((string) ($actor['full_name'] ?? $actor['login'] ?? '') ?: null) : null,
+        ]);
+    } catch (Throwable $exception) {
+        // Heartbeat log is best-effort telemetry -- never let its absence
+        // (e.g. migration not yet applied) break the agenda run itself.
+    }
+}
+
+/**
+ * Most recent agenda-run heartbeat row, or null if none/unavailable. Read-only,
+ * fail-soft: an unmigrated table returns null rather than throwing.
+ */
+function app_ai_team_last_agenda_run(PDO $db): ?array
+{
+    try {
+        $statement = $db->query('SELECT * FROM ai_team_agenda_runs ORDER BY id DESC LIMIT 1');
+        if ($statement === false) {
+            return null;
+        }
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    } catch (Throwable $exception) {
+        return null;
+    }
+}
+
+/**
+ * Admin-only "run the daily agenda now" from the web UI. Same deterministic
+ * evidence->task staging the cron worker uses (app_ai_team_run_daily_agenda in
+ * apply mode), plus a heartbeat-log row attributed to the human who clicked.
+ * The AI still only DRAFTS tasks (pending_admin_review); nothing is assigned or
+ * sent here.
+ */
+function app_ai_team_run_daily_agenda_now(PDO $db, array $actor): array
+{
+    if (!app_portal_is_admin($actor)) {
+        throw new RuntimeException('ai_team_forbidden');
+    }
+    app_ai_team_require_schema($db);
+
+    $startedAt = microtime(true);
+    $results = app_ai_team_run_daily_agenda($db, true);
+    $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+    app_ai_team_record_agenda_run($db, $results, true, 'admin', $actor, $durationMs);
+
+    $totalStaged = 0;
+    foreach ($results as $personaResult) {
+        $totalStaged += count((array) ($personaResult['staged_task_ids'] ?? []));
+    }
+
+    return ['ok' => true, 'total_staged' => $totalStaged, 'results' => $results];
+}
