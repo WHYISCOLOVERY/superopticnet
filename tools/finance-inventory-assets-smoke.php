@@ -71,12 +71,33 @@ if (!$db instanceof PDO) {
         if (empty($depreciation['ok'])
             || abs((float) ($depreciation['record']['depreciation_amount'] ?? 0) - 100.0) > 0.01
             || abs((float) ($depreciation['record']['net_book_value'] ?? 1) - 0.0) > 0.01
-            || (string) ($depreciation['record']['writeoff_status'] ?? '') !== 'written_off'
+            || (string) ($depreciation['record']['writeoff_status'] ?? '') !== 'pending_writeoff'
         ) {
             $errors[] = 'depreciation_roundtrip_failed';
         }
+        $depreciationId = (int) ($depreciation['id'] ?? 0);
 
+        // Maker-checker (vision 19.2 "asset silinmesi"): an eligible writeoff
+        // must NOT flip the asset's lifecycle_status until a different admin
+        // confirms it separately.
         $assetStatus = $db->prepare('SELECT lifecycle_status FROM inventory_assets WHERE id = :id');
+        $assetStatus->execute(['id' => $assetId]);
+        if ((string) $assetStatus->fetchColumn() === 'written_off') {
+            $errors[] = 'asset_writeoff_applied_before_confirmation';
+        }
+
+        $creatorActor = ['id' => 987654, 'role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'full_name' => 'Smoke Finance'];
+        $selfConfirm = app_mgs_confirm_inventory_writeoff($db, $depreciationId, $creatorActor);
+        if (!empty($selfConfirm['ok']) || ($selfConfirm['error'] ?? '') !== 'creator_cannot_confirm') {
+            $errors[] = 'creator_was_able_to_confirm_own_writeoff';
+        }
+
+        $checkerActor = ['id' => 987655, 'role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'full_name' => 'Smoke Finance Checker'];
+        $checkerConfirm = app_mgs_confirm_inventory_writeoff($db, $depreciationId, $checkerActor);
+        if (empty($checkerConfirm['ok'])) {
+            $errors[] = 'checker_could_not_confirm_writeoff:' . (string) ($checkerConfirm['error'] ?? '');
+        }
+
         $assetStatus->execute(['id' => $assetId]);
         if ((string) $assetStatus->fetchColumn() !== 'written_off') {
             $errors[] = 'asset_writeoff_status_failed';

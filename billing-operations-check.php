@@ -72,11 +72,11 @@ foreach ($checks as $check) {
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">Billing operations readiness</span>
-                <h1>Billing funksiyalarÄ±nÄ±n iÅŸlÉ™k statusu</h1>
-                <p>MÃ¼ÅŸtÉ™ri, tarif, IP pool, RADIUS SQL, Ã¶dÉ™niÅŸ, mesaj vÉ™ maintenance axÄ±nlarÄ± eyni paneldÉ™ yoxlanÄ±r.</p>
+                <h1>Billing funksiyalarının işlək statusu</h1>
+                <p>Müştəri, tarif, IP pool, RADIUS SQL, ödəniş, mesaj və maintenance axınları eyni paneldə yoxlanır.</p>
                 <div class="mgs-command-actions">
-            <a class="portal-primary-btn" href="billing-customers.php?create=1"><i class="fa-solid fa-user-plus"></i> Yeni mÃ¼ÅŸtÉ™ri</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="billing-cash-payment.php"><i class="fa-solid fa-cash-register"></i> Ã–dÉ™niÅŸ al</a>
+            <a class="portal-primary-btn" href="billing-customers.php?create=1"><i class="fa-solid fa-user-plus"></i> Yeni müştəri</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="billing-cash-payment.php"><i class="fa-solid fa-cash-register"></i> Ödəniş al</a>
                     <a class="portal-ghost-btn portal-inline-link" href="radius-active.php"><i class="fa-solid fa-satellite-dish"></i> RADIUS</a>
                 </div>
             </div>
@@ -117,18 +117,18 @@ foreach ($checks as $check) {
         </section>
 
         <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('MÃ¼ÅŸtÉ™ri', (string) ($summary['customers'] ?? 0), 'aktiv: ' . (string) ($summary['active_customers'] ?? 0), 'fa-users', 'blue', 'billing-customers.php'); ?>
+            <?php billing_render_stat_card('Müştəri', (string) ($summary['customers'] ?? 0), 'aktiv: ' . (string) ($summary['active_customers'] ?? 0), 'fa-users', 'blue', 'billing-customers.php'); ?>
             <?php billing_render_stat_card('Tarif', (string) ($summary['tariffs'] ?? 0), 'active price plans', 'fa-layer-group', 'orange', 'radius-billing.php#tariffs'); ?>
             <?php billing_render_stat_card('RADIUS servis', (string) ($summary['radius_services'] ?? 0), 'billing_radius_services', 'fa-satellite-dish', 'green', 'radius-active.php'); ?>
-            <?php billing_render_stat_card('Ã–dÉ™niÅŸ', (string) ($summary['payments'] ?? 0), 'billing_payments', 'fa-receipt', 'navy', 'billing-payments.php'); ?>
-            <?php billing_render_stat_card('Ticket', (string) ($summary['open_tickets'] ?? 0), 'aÃ§Ä±q ticket', 'fa-ticket', 'red', 'crm.php'); ?>
+            <?php billing_render_stat_card('Ödəniş', (string) ($summary['payments'] ?? 0), 'billing_payments', 'fa-receipt', 'navy', 'billing-payments.php'); ?>
+            <?php billing_render_stat_card('Ticket', (string) ($summary['open_tickets'] ?? 0), 'açıq ticket', 'fa-ticket', 'red', 'crm.php'); ?>
             <?php billing_render_stat_card('Message queue', (string) ($summary['queued_messages'] ?? 0), 'queued', 'fa-message', 'blue', 'message-center.php'); ?>
         </section>
 
         <section class="portal-card portal-reveal">
             <div class="portal-card-head">
                 <h2>CLI verification</h2>
-                <small>ServerdÉ™ eyni yoxlamanÄ± terminaldan da iÅŸlÉ™tmÉ™k Ã¼Ã§Ã¼n.</small>
+                <small>Serverdə eyni yoxlamanı terminaldan da işlətmək üçün.</small>
             </div>
             <code class="billing-check-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\billing-operation-check.php</code>
             <code class="billing-check-code">D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tools\optimize-billing-performance.php --apply</code>

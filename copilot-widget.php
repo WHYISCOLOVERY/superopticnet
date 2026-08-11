@@ -56,7 +56,7 @@ function app_render_copilot_widget(string $lang = 'az'): void
         .billing-copilot-form{display:grid;gap:9px;padding:12px;background:#fff;border-top:1px solid rgba(148,163,184,.2)}
         .billing-copilot-form textarea{width:100%;resize:vertical;min-height:78px;max-height:150px;border:1px solid rgba(148,163,184,.35);border-radius:15px;padding:11px;font:inherit}
         .billing-copilot-form button{justify-self:end;border:0;border-radius:999px;background:#ff8a4c;color:#111827;padding:10px 16px;font-weight:900;cursor:pointer}
-        @media (max-width:680px){.billing-copilot-widget{right:10px;bottom:10px;left:auto}.billing-copilot-toggle{margin-left:auto;padding:10px 13px}.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(78vh,640px);border-radius:20px}.billing-copilot-head{padding:12px 14px}.billing-copilot-log{padding:12px}.billing-copilot-form textarea{min-height:72px;max-height:120px}.billing-copilot-form button{width:100%;justify-self:stretch}}
+        @media (max-width:680px){.billing-copilot-widget{position:static;display:flex;justify-content:flex-end;padding:10px 12px 16px}.billing-copilot-toggle{margin-left:auto;padding:10px 13px}.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(78vh,640px);border-radius:20px}.billing-copilot-head{padding:12px 14px}.billing-copilot-log{padding:12px}.billing-copilot-form textarea{min-height:72px;max-height:120px}.billing-copilot-form button{width:100%;justify-self:stretch}}
     </style>
     <script>
     (() => {

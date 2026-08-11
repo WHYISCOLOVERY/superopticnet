@@ -158,7 +158,15 @@ function app_role_agent_reset_test_customer(PDO $db, string $subscriberCode, str
     $existingByLogin = app_db_account_by_login($login);
     foreach ([$existingByCode, $existingByLogin] as $account) {
         if (is_array($account) && (int) ($account['id'] ?? 0) > 0) {
-            app_db_delete_account((int) $account['id']);
+            $accountId = (int) $account['id'];
+            $db->prepare('DELETE r FROM billing_payment_reversals r JOIN billing_payment_operations o ON o.id = r.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE e FROM billing_payment_operation_events e JOIN billing_payment_operations o ON o.id = e.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE a FROM billing_payment_service_attempts a JOIN billing_payment_service_actions s ON s.id = a.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE b FROM billing_payment_outbox b JOIN billing_payment_service_actions s ON s.id = b.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE s FROM billing_payment_service_actions s JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE FROM billing_payment_operations WHERE account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE FROM billing_payments WHERE account_id = :id')->execute(['id' => $accountId]);
+            app_db_delete_account($accountId);
         }
     }
 }
@@ -171,7 +179,7 @@ function app_role_agent_create_test_customer(PDO $db): array
 
     $tariff = app_role_agent_default_tariff($db);
     $expiresAt = date('Y-m-d H:i:s', strtotime('+15 days'));
-    $password = 'RoleCust!2026';
+    $password = bin2hex(random_bytes(16)) . 'Aa1!';
     $payload = [
         'profile' => [
             'full_name' => 'Role Agent Test Musteri',

@@ -52,6 +52,18 @@ for ($loop = 0; $loop < $maxLoops; $loop++) {
     $offset = (int) app_mgs_runtime_setting('telegram_modem_search_offset', '0');
     $updates = app_mgs_telegram_bot_fetch_updates('modem_search', $offset, $timeout);
     if (empty($updates['ok'])) {
+        $reason = (string) ($updates['reason'] ?? 'unknown');
+        if (in_array($reason, ['bot_not_configured', 'channel_disabled'], true)) {
+            if ($once) {
+                echo json_encode([
+                    'status' => 'skipped',
+                    'reason' => $reason,
+                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+                exit(0);
+            }
+            sleep(15);
+            continue;
+        }
         app_mgs_record_operation_action([
             'action_type' => 'telegram_modem_bot_poll',
             'entity_type' => 'telegram_bot',
@@ -61,7 +73,7 @@ for ($loop = 0; $loop < $maxLoops; $loop++) {
             'payload' => $updates,
         ]);
         if ($once) {
-            fwrite(STDERR, 'poll_failed:' . (string) ($updates['reason'] ?? 'unknown') . "\n");
+            fwrite(STDERR, 'poll_failed:' . $reason . "\n");
             exit(3);
         }
         sleep(3);

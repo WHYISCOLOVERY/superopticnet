@@ -184,7 +184,7 @@ if (array_keys($navGroups) !== ['Overview', 'Customers', 'Billing', 'Analysis'])
 }
 
 $moduleCatalog = app_portal_module_catalog('az');
-foreach (['finance', 'hr', 'inventory', 'billing', 'ai', 'messaging', 'statistics', 'network'] as $moduleKey) {
+foreach (['finance', 'hr', 'inventory', 'billing', 'crm', 'ai', 'messaging', 'statistics', 'network'] as $moduleKey) {
     if (!isset($moduleCatalog[$moduleKey]['href'])) {
         operations_module_smoke_fail('portal module catalog missing route: ' . $moduleKey);
     }

@@ -197,7 +197,7 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RADIUS loglarÄ±</title>
+    <title>RADIUS logları</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <style>
@@ -210,35 +210,35 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
     </style>
 </head>
 <body class="portal-body">
-    <?php billing_render_header('RADIUS loglarÄ±', 'radius-logs', $lang); ?>
+    <?php billing_render_header('RADIUS logları', 'radius-logs', $lang); ?>
 
     <main class="portal-layout">
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">FreeRADIUS audit</span>
-                <h1>Auth vÉ™ accounting loglarÄ±</h1>
-                <p>Operator Ã¼Ã§Ã¼n sÃ¼rÉ™tli audit gÃ¶rÃ¼nÃ¼ÅŸÃ¼: kim qoÅŸuldu, kim reject aldÄ±, hansÄ± NAS-dan gÉ™ldi, hansÄ± IP/MAC gÃ¶rÃ¼ndÃ¼ vÉ™ sessiya necÉ™ baÄŸlandÄ±. Parol sahÉ™si gÃ¶stÉ™rilmir.</p>
+                <h1>Auth və accounting logları</h1>
+                <p>Operator üçün sürətli audit görünüşü: kim qoşuldu, kim reject aldı, hansı NAS-dan gəldi, hansı IP/MAC göründü və sessiya necə bağlandı. Parol sahəsi göstərilmir.</p>
                 <div class="mgs-command-actions">
                     <a class="portal-primary-btn portal-inline-link" href="radius-active.php<?= e($suffix); ?>">Online sessiyalar</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="radius-nas.php<?= e($suffix); ?>">NAS cihazlarÄ±</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= e($suffix); ?>">NAT log axtarÄ±ÅŸÄ±</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="radius-nas.php<?= e($suffix); ?>">NAS cihazları</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= e($suffix); ?>">NAT log axtarışı</a>
                 </div>
             </div>
             <div class="mgs-command-panel">
-                <span>DÃ¶vr Accept / Reject</span>
+                <span>Dövr Accept / Reject</span>
                 <strong><?= e((string) $stats['period_accept']); ?> / <?= e((string) $stats['period_reject']); ?></strong>
                 <small>Online: <?= e((string) $stats['online']); ?> sessiya</small>
-                <span>DÃ¶vr trafik</span>
+                <span>Dövr trafik</span>
                 <strong><?= e(billing_bytes($stats['period_traffic'])); ?></strong>
             </div>
         </section>
 
-        <section class="mgs-stat-grid portal-reveal">
+        <section class="mgs-stat-grid portal-reveal" data-auto-filter-results="radius-logs-kpis" data-auto-filter-form="radius-logs-filter">
             <?php billing_render_stat_card('Accept', (string) $stats['period_accept'], $startDate . ' - ' . $endDate, 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('Reject', (string) $stats['period_reject'], 'uÄŸursuz auth', 'fa-circle-xmark', 'orange'); ?>
+            <?php billing_render_stat_card('Reject', (string) $stats['period_reject'], 'uğursuz auth', 'fa-circle-xmark', 'orange'); ?>
             <?php billing_render_stat_card('Accounting', (string) $stats['period_accounting'], 'sessiya qeydi', 'fa-database', 'blue'); ?>
-            <?php billing_render_stat_card('Disconnect', (string) $stats['period_disconnect'], 'baÄŸlanan sessiya', 'fa-link-slash', 'orange'); ?>
-            <?php billing_render_stat_card('Online', (string) $stats['online'], 'aÃ§Ä±q sessiya', 'fa-signal', 'green'); ?>
+            <?php billing_render_stat_card('Disconnect', (string) $stats['period_disconnect'], 'bağlanan sessiya', 'fa-link-slash', 'orange'); ?>
+            <?php billing_render_stat_card('Online', (string) $stats['online'], 'açıq sessiya', 'fa-signal', 'green'); ?>
             <?php billing_render_stat_card('Trafik', billing_bytes($stats['period_traffic']), 'input + output', 'fa-chart-line', 'navy'); ?>
         </section>
 
@@ -246,20 +246,20 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
             <div class="mgs-section-head">
                 <div>
                     <h2>Log filtri</h2>
-                    <p>Username, mÃ¼ÅŸtÉ™ri kodu, ad, IP, MAC, NAS, reply vÉ™ tarix Ã¼zrÉ™ axtar.</p>
+                    <p>Username, müştəri kodu, ad, IP, MAC, NAS, reply və tarix üzrə axtar.</p>
                 </div>
             </div>
-            <form method="get" class="portal-stacked-form">
+            <form method="get" class="portal-stacked-form" id="radius-logs-filter" data-auto-filter data-auto-filter-targets="radius-logs-kpis,radius-logs-charts,radius-logs-results">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
                     <div class="portal-form-row">
-                        <label>AxtarÄ±ÅŸ</label>
+                        <label>Axtarış</label>
                         <input type="text" name="q" value="<?= e($query); ?>" placeholder="username, kod, ad, IP, MAC">
                     </div>
                     <div class="portal-form-row">
                         <label>Tip</label>
                         <select name="type">
-                            <option value="all" <?= $logType === 'all' ? 'selected' : ''; ?>>HamÄ±sÄ±</option>
+                            <option value="all" <?= $logType === 'all' ? 'selected' : ''; ?>>Hamısı</option>
                             <option value="auth" <?= $logType === 'auth' ? 'selected' : ''; ?>>Auth / reject</option>
                             <option value="accounting" <?= $logType === 'accounting' ? 'selected' : ''; ?>>Accounting</option>
                         </select>
@@ -267,7 +267,7 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                     <div class="portal-form-row">
                         <label>Reply</label>
                         <select name="reply">
-                            <option value="">BÃ¼tÃ¼n cavablar</option>
+                            <option value="">Bütün cavablar</option>
                             <?php foreach ($replyOptions as $replyOption): ?>
                                 <option value="<?= e((string) $replyOption); ?>" <?= $replyFilter === (string) $replyOption ? 'selected' : ''; ?>><?= e((string) $replyOption); ?></option>
                             <?php endforeach; ?>
@@ -276,25 +276,26 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                     <div class="portal-form-row">
                         <label>NAS IP</label>
                         <select name="nas">
-                            <option value="">BÃ¼tÃ¼n NAS-lar</option>
+                            <option value="">Bütün NAS-lar</option>
                             <?php foreach ($nasOptions as $nasOption): ?>
                                 <option value="<?= e((string) $nasOption); ?>" <?= $nasFilter === (string) $nasOption ? 'selected' : ''; ?>><?= e((string) $nasOption); ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="portal-form-row"><label>Ä°lkin tarix</label><input type="date" name="start_date" value="<?= e($startDate); ?>"></div>
+                    <div class="portal-form-row"><label>İlkin tarix</label><input type="date" name="start_date" value="<?= e($startDate); ?>"></div>
                     <div class="portal-form-row"><label>Son tarix</label><input type="date" name="end_date" value="<?= e($endDate); ?>"></div>
                     <div class="billing-filter-actions">
                         <button type="submit" class="portal-primary-btn">Axtar</button>
-                        <a class="portal-ghost-btn portal-inline-link" href="radius-logs.php<?= e($suffix); ?>">SÄ±fÄ±rla</a>
+                        <a class="portal-ghost-btn portal-inline-link" href="radius-logs.php<?= e($suffix); ?>">Sıfırla</a>
                     </div>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
-        <section class="portal-grid portal-grid-3 portal-reveal">
+        <section class="portal-grid portal-grid-3 portal-reveal" data-auto-filter-results="radius-logs-charts" data-auto-filter-form="radius-logs-filter">
             <article class="mgs-chart-card">
-                <div class="mgs-chart-head"><div><h2>Auth cavablarÄ±</h2><p>SeÃ§ilmiÅŸ period Ã¼zrÉ™ reply paylanmasÄ±.</p></div></div>
+                <div class="mgs-chart-head"><div><h2>Auth cavabları</h2><p>Seçilmiş period üzrə reply paylanması.</p></div></div>
                 <div class="mgs-bars">
                     <?php foreach ($replySummary as $row): ?>
                         <?php $label = (string) ($row['label'] ?? '-'); ?>
@@ -304,12 +305,12 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                             <strong><?= e((string) ($row['total'] ?? 0)); ?></strong>
                         </div>
                     <?php endforeach; ?>
-                    <?php if ($replySummary === []): ?><?php billing_render_empty_state('Auth log yoxdur', 'SeÃ§ilmiÅŸ period Ã¼Ã§Ã¼n radpostauth qeydi tapÄ±lmadÄ±.', 'fa-lock'); ?><?php endif; ?>
+                    <?php if ($replySummary === []): ?><?php billing_render_empty_state('Auth log yoxdur', 'Seçilmiş period üçün radpostauth qeydi tapılmadı.', 'fa-lock'); ?><?php endif; ?>
                 </div>
             </article>
 
             <article class="mgs-chart-card">
-                <div class="mgs-chart-head"><div><h2>BaÄŸlanma sÉ™bÉ™blÉ™ri</h2><p>Terminate cause Ã¼zrÉ™ qruplaÅŸdÄ±rma.</p></div></div>
+                <div class="mgs-chart-head"><div><h2>Bağlanma səbəbləri</h2><p>Terminate cause üzrə qruplaşdırma.</p></div></div>
                 <div class="mgs-bars">
                     <?php foreach ($terminateSummary as $row): ?>
                         <div class="mgs-bar-row">
@@ -318,12 +319,12 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                             <strong><?= e((string) ($row['total'] ?? 0)); ?></strong>
                         </div>
                     <?php endforeach; ?>
-                    <?php if ($terminateSummary === []): ?><?php billing_render_empty_state('Accounting yoxdur', 'SeÃ§ilmiÅŸ period Ã¼Ã§Ã¼n radacct qeydi tapÄ±lmadÄ±.', 'fa-database'); ?><?php endif; ?>
+                    <?php if ($terminateSummary === []): ?><?php billing_render_empty_state('Accounting yoxdur', 'Seçilmiş period üçün radacct qeydi tapılmadı.', 'fa-database'); ?><?php endif; ?>
                 </div>
             </article>
 
             <article class="mgs-chart-card">
-                <div class="mgs-chart-head"><div><h2>NAS paylanmasÄ±</h2><p>Accounting yazan NAS-lar.</p></div></div>
+                <div class="mgs-chart-head"><div><h2>NAS paylanması</h2><p>Accounting yazan NAS-lar.</p></div></div>
                 <div class="mgs-bars">
                     <?php foreach ($nasSummary as $row): ?>
                         <div class="mgs-bar-row">
@@ -332,25 +333,26 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                             <strong><?= e((string) ($row['total'] ?? 0)); ?></strong>
                         </div>
                     <?php endforeach; ?>
-                    <?php if ($nasSummary === []): ?><?php billing_render_empty_state('NAS log yoxdur', 'SeÃ§ilmiÅŸ period Ã¼Ã§Ã¼n NAS accounting qeydi yoxdur.', 'fa-server'); ?><?php endif; ?>
+                    <?php if ($nasSummary === []): ?><?php billing_render_empty_state('NAS log yoxdur', 'Seçilmiş period üçün NAS accounting qeydi yoxdur.', 'fa-server'); ?><?php endif; ?>
                 </div>
             </article>
         </section>
 
+        <div data-auto-filter-results="radius-logs-results" data-auto-filter-form="radius-logs-filter">
         <?php if ($logType !== 'accounting'): ?>
             <section class="mgs-data-card portal-reveal" id="auth-logs">
                 <div class="mgs-section-head">
                     <div>
-                        <h2>Auth / reject loglarÄ±</h2>
-                        <p><?= e((string) count($postAuthRows)); ?> nÉ™ticÉ™ gÃ¶stÉ™rilir. Parol sahÉ™si gÃ¶stÉ™rilmir.</p>
+                        <h2>Auth / reject logları</h2>
+                        <p><?= e((string) count($postAuthRows)); ?> nəticə göstərilir. Parol sahəsi göstərilmir.</p>
                     </div>
                 </div>
                 <?php if ($postAuthRows === []): ?>
-                    <?php billing_render_empty_state('Auth nÉ™ticÉ™si yoxdur', 'SeÃ§ilmiÅŸ filtrÉ™ uyÄŸun radpostauth qeydi tapÄ±lmadÄ±.', 'fa-user-lock'); ?>
+                    <?php billing_render_empty_state('Auth nəticəsi yoxdur', 'Seçilmiş filtrə uyğun radpostauth qeydi tapılmadı.', 'fa-user-lock'); ?>
                 <?php else: ?>
                     <div class="portal-table-wrap">
                         <table class="portal-table radius-log-table">
-                            <thead><tr><th>Username</th><th>MÃ¼ÅŸtÉ™ri</th><th>Reply</th><th>Class</th><th>Tarix</th><th>ÆmÉ™liyyat</th></tr></thead>
+                            <thead><tr><th>Username</th><th>Müştəri</th><th>Reply</th><th>Class</th><th>Tarix</th><th>Əməliyyat</th></tr></thead>
                             <tbody>
                                 <?php foreach ($postAuthRows as $row): ?>
                                     <tr>
@@ -366,7 +368,7 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                                             <?php if ((int) ($row['account_id'] ?? 0) > 0): ?>
                                                 <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) (int) $row['account_id']); ?>">Profil</a>
                                             <?php else: ?>
-                                                <span class="portal-pill">BaÄŸlÄ± deyil</span>
+                                                <span class="portal-pill">Bağlı deyil</span>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
@@ -382,16 +384,16 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
             <section class="mgs-data-card portal-reveal" id="accounting-logs">
                 <div class="mgs-section-head">
                     <div>
-                        <h2>Accounting loglarÄ±</h2>
-                        <p><?= e((string) count($accountingRows)); ?> nÉ™ticÉ™ gÃ¶stÉ™rilir.</p>
+                        <h2>Accounting logları</h2>
+                        <p><?= e((string) count($accountingRows)); ?> nəticə göstərilir.</p>
                     </div>
                 </div>
                 <?php if ($accountingRows === []): ?>
-                    <?php billing_render_empty_state('Accounting nÉ™ticÉ™si yoxdur', 'SeÃ§ilmiÅŸ filtrÉ™ uyÄŸun radacct qeydi tapÄ±lmadÄ±.', 'fa-database'); ?>
+                    <?php billing_render_empty_state('Accounting nəticəsi yoxdur', 'Seçilmiş filtrə uyğun radacct qeydi tapılmadı.', 'fa-database'); ?>
                 <?php else: ?>
                     <div class="portal-table-wrap">
                         <table class="portal-table radius-log-table">
-                            <thead><tr><th>Username</th><th>MÃ¼ÅŸtÉ™ri</th><th>NAS / port</th><th>IP / MAC</th><th>Status</th><th>Trafik</th><th>ÆmÉ™liyyat</th></tr></thead>
+                            <thead><tr><th>Username</th><th>Müştəri</th><th>NAS / port</th><th>IP / MAC</th><th>Status</th><th>Trafik</th><th>Əməliyyat</th></tr></thead>
                             <tbody>
                                 <?php foreach ($accountingRows as $row): ?>
                                     <?php $online = trim((string) ($row['acctstoptime'] ?? '')) === ''; ?>
@@ -404,12 +406,12 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                                             <span class="portal-pill <?= e($online ? 'portal-pill-success' : ''); ?>"><?= e($online ? 'Online' : ((string) ($row['acctterminatecause'] ?? 'Closed'))); ?></span>
                                             <br><small><?= e($online ? billing_datetime($row['acctupdatetime'] ?? null) : billing_datetime($row['acctstoptime'] ?? null)); ?></small>
                                         </td>
-                                        <td>â†“ <?= e(billing_bytes((float) ($row['acctoutputoctets'] ?? 0))); ?><br><small>â†‘ <?= e(billing_bytes((float) ($row['acctinputoctets'] ?? 0))); ?></small></td>
+                                        <td>↓ <?= e(billing_bytes((float) ($row['acctoutputoctets'] ?? 0))); ?><br><small>↑ <?= e(billing_bytes((float) ($row['acctinputoctets'] ?? 0))); ?></small></td>
                                         <td>
                                             <?php if ((int) ($row['account_id'] ?? 0) > 0): ?>
                                                 <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) (int) $row['account_id']); ?>">Profil</a>
                                             <?php else: ?>
-                                                <span class="portal-pill">BaÄŸlÄ± deyil</span>
+                                                <span class="portal-pill">Bağlı deyil</span>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
@@ -420,6 +422,7 @@ $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
                 <?php endif; ?>
             </section>
         <?php endif; ?>
+        </div>
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>

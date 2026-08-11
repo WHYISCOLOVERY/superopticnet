@@ -83,18 +83,46 @@ foreach ([
     'inventory_overview' => 'inventory',
 ] as $pageKey => $module) {
     $html = $pages[$pageKey]['html'];
-    $groupCount = substr_count($html, 'data-module-nav-group');
+    $groupCount = substr_count($html, 'class="billing-nav-group');
     $expect(substr_count($html, 'data-module-group-nav') === 1, $module . '_grouped_navigation_count_invalid:' . $pageKey);
     $expect($groupCount >= 3 && $groupCount <= 5, $module . '_group_count_invalid:' . $groupCount);
+
+    $document = new DOMDocument();
+    $previous = libxml_use_internal_errors(true);
+    $loaded = $document->loadHTML($html, LIBXML_NOWARNING | LIBXML_NOERROR);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+    $expect($loaded, $module . '_shell_dom_parse_failed:' . $pageKey);
+    if ($loaded) {
+        $xpath = new DOMXPath($document);
+        $expect($xpath->query('//header')->length === 1, $module . '_header_count_invalid:' . $pageKey);
+        $expect($xpath->query('//main')->length === 1, $module . '_main_count_invalid:' . $pageKey);
+        $expect($xpath->query('//*[@data-module-group-nav]')->length === 1, $module . '_dom_grouped_navigation_count_invalid:' . $pageKey);
+        $moduleAttribute = $module === 'billing' && in_array($pageKey, ['billing_customers', 'billing_payments'], true)
+            ? 'data-billing-legacy-module'
+            : 'data-' . $module . '-module';
+        $expect($xpath->query('//*[@' . $moduleAttribute . ']')->length === 1, $module . '_module_root_count_invalid:' . $pageKey);
+    }
 }
 foreach (['finance_overview' => 'finance-tabs', 'hr_overview' => 'hr-tabs', 'inventory_overview' => 'inventory-tabs'] as $pageKey => $flatClass) {
     $expect(!str_contains($pages[$pageKey]['html'], 'class="' . $flatClass . '"'), 'flat_module_tabs_still_rendered:' . $pageKey);
 }
 
+$shellCssPath = $root . '/css/operations-modules.css';
+$shellCss = is_file($shellCssPath) ? (string) file_get_contents($shellCssPath) : '';
+$expect($shellCss !== '', 'operations_modules_stylesheet_missing');
 foreach (['billing', 'finance', 'hr', 'inventory'] as $module) {
     $source = (string) file_get_contents($root . '/views/' . $module . '/module.php');
-    $expect(str_contains($source, 'overflow-wrap:anywhere'), $module . '_kpi_overflow_wrap_missing');
-    $expect(str_contains($source, 'min-width:0'), $module . '_kpi_min_width_missing');
+    $expect(!str_contains($source, '<style'), $module . '_inline_shell_style_remains');
+    $expect(str_contains($shellCss, '.' . $module . '-kpi strong'), $module . '_kpi_rule_missing');
+}
+$expect(str_contains($shellCss, 'overflow-wrap:anywhere'), 'shared_kpi_overflow_wrap_missing');
+$expect(str_contains($shellCss, 'min-width:0'), 'shared_kpi_min_width_missing');
+$sharedNav = (string) file_get_contents($root . '/views/_module-group-nav.php');
+$expect(!str_contains($sharedNav, '<style'), 'shared_nav_inline_style_remains');
+foreach (['operations-center.php', 'billing-section-page.php', 'noc-devices.php', 'message-center.php'] as $entrypoint) {
+    $source = (string) file_get_contents($root . '/' . $entrypoint);
+    $expect(substr_count($source, "css/operations-modules.css") === 1, 'operations_modules_stylesheet_reference_invalid:' . $entrypoint);
 }
 
 $financeLibrary = (string) file_get_contents($root . '/finance-module-lib.php');

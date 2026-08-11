@@ -27,6 +27,11 @@ function app_feature_flags_ensure_schema(PDO $db): void
         ['mgs_noc_scan_selectable_results', 'Selectable NOC scan results before adding devices'],
         ['mgs_statistics_ajax_charts', 'Partial-refresh statistics charts'],
         ['mgs_data_analytics_report_embed', 'Embedded Data Analytics report surface'],
+        ['stage1_finance_ledger', 'Canonical Finance income and expense ledger'],
+        ['stage1_e_invoice_atomic_import', 'Atomic and idempotent e-invoice import'],
+        ['stage1_inventory_repair_contract', 'Inventory inspection and repair state contract'],
+        ['stage1_statistics_date_contract', 'Timezone-aware statistics date contract'],
+        ['agent_ops_work_queue', 'Unified Agent Operations Work Queue / Approval Center'],
     ];
     $statement = $db->prepare('INSERT IGNORE INTO app_feature_flags (flag_key, description, is_enabled, rollout_percent, source) VALUES (:flag_key, :description, 0, 0, "local")');
     foreach ($seed as [$key, $description]) {

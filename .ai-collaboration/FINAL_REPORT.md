@@ -1,36 +1,32 @@
-# Yekun hesabat
+# SAR-5 yekun hesabatı
 
 Status: `COMPLETE`
 
 ## Nəticə
 
-WhatsApp Monitoring modulunun çat və QR axını Codex + Claude bölgüsü ilə tamamlandı. Eyni kontaktın fərqli şirkət nömrələrindəki yazışmaları qarışmır, çat siyahısı və mesajlar canlı yenilənir, mobil görünüşdə siyahı/çat keçidi aydındır və QR ekranındakı texniki detallar əsas əməliyyatdan ayrılıb.
+Maliyyə, HR, Anbar və Billing modulları eyni responsive shell standartına
+keçirildi. Səhifələrdə təkrarlanan naviqasiya və əməliyyat düymələri azaldıldı,
+mobil məzmunun üstünə düşən Superpilot düyməsi düzəldildi və əsas görünən
+mətn/statuslar düzgün Azərbaycan dilində təqdim olunur.
 
-İkinci mərhələdə ümumi baxış, canlı monitor, nömrələr, cihazlar, monitorinq qeydləri, performans, ayarlar və audit səhifələri də eyni sadə Azərbaycan dili və responsive dizayn standartına keçirildi.
+## Agent nəticələri
 
-## Əsas checkpoint-lər
-
-- `809b990` - şirkət nömrəsinə görə çat scope-u.
-- `00d38c6` - sadələşdirilmiş monitor interfeysi.
-- `6aa1ce8` - canlı çat siyahısı API contract-i.
-- `8d644f1` - reload-suz mesaj və siyahı yenilənməsi.
-- `885863f` - tam boş monitorun canlı qalması.
-- `015a66c` - Azərbaycan dili və QR ekranı cilası.
-- `51aed25` - desktop/mobile vizual regressiya alətləri.
-- `29a9f37` - qalan WhatsApp səhifələrinin Claude frontend cilası.
-- `52dc5e6` - bütün WhatsApp view-ları üçün genişləndirilmiş vizual və lint qoruması.
+- Hercules brief: orta yaşlı əməkdaş üçün skan edilə bilən iş axını və qəbul
+  meyarları müəyyənləşdirildi.
+- Claude Code: modul view-larındakı təkrarlanan inline CSS ortaq stylesheet-ə
+  çıxarıldı.
+- Paralel audit agentləri: dil, layout və test boşluqlarını müəyyənləşdirdi.
+- Codex: entrypoint inteqrasiyası, dil xəritələri, UX deduplikasiyası,
+  Superpilot düzəlişi və avtomatlaşdırılmış qəbul testlərini tamamladı.
 
 ## Test nəticəsi
 
-- Hədəf smoke-lar: hamısı keçdi.
-- Vizual smoke: `22/22` keçdi; overflow və console xətası yoxdur.
-- Tam sistem regressiyası: `117 pass`, `0 fail`, `0 timeout`, `4 skip`.
-- Hesabat: `tmp/full-system-regression-20260713-090235.json`.
+- `tools/module-shell-visual-smoke.js`: `11/11`.
+- `tools/billing-ui-smoke.php`: `45/45`.
+- Modul separation və shell smoke-ları: keçdi.
+- `tools/full-system-regression.php`: `130 pass`, `0 fail`, `0 timeout`,
+  `4 skip`.
+- Son hesabat: `tmp/full-system-regression-20260716-184153.json`.
 
-Kontrollu skip-lər canlı şəbəkə və ödəniş yarada biləcək əməliyyatlardır: router CoA, OLT/ONT restart, real SMS və Telegram live polling.
-
-## Alət vəziyyəti
-
-- `mcp-cli@1.0.5` global quraşdırılıb.
-- Claude Code `2.1.207` koordinasiya axınında istifadə olunub.
-- Vizual testlər lokal Edge üzərində Playwright ilə aparılıb.
+Nəzarətli skip-lər canlı şəbəkəyə və ödənişli provayderlərə təsir edə bilən
+əməliyyatlardır; bu paket həmin qoruyucuları dəyişmir.

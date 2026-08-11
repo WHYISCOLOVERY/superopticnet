@@ -257,6 +257,30 @@
     flex-wrap: wrap;
 }
 
+.ai-queue-source-warnings {
+    display: grid;
+    gap: 10px;
+    margin: 14px 0;
+}
+
+.ai-queue-unavailable-flag {
+    display: inline-block;
+    margin-top: 4px;
+    color: #a52f43;
+    font-weight: 800;
+}
+
+.ai-queue-advisor-flag {
+    display: inline-block;
+    margin-top: 4px;
+    color: #165869;
+}
+
+.ai-queue-table td p {
+    margin: 4px 0 0;
+    color: #63738e;
+}
+
 @media (max-width: 1100px) {
     .ai-kpis {
         grid-template-columns: repeat(3, minmax(0, 1fr));

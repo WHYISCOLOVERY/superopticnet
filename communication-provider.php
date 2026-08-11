@@ -3,8 +3,12 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 
-const APP_COMMUNICATION_SMS_POCTGOYERCINI_BASE_URL = 'https://api.poctgoyercini.com';
-const APP_COMMUNICATION_SMS_POCTGOYERCINI_SEND_ENDPOINT = 'https://api.poctgoyercini.com/gateway/api/sms/v1/message/send';
+const APP_COMMUNICATION_SMS_PG365_BASE_URL = 'https://api.poctgoyercini.com';
+const APP_COMMUNICATION_SMS_PG365_HOST = 'api.poctgoyercini.com';
+const APP_COMMUNICATION_SMS_PG365_SEND_ENDPOINT = APP_COMMUNICATION_SMS_PG365_BASE_URL . '/gateway/api/sms/v1/message/send';
+const APP_COMMUNICATION_SMS_POCTGOYERCINI_BASE_URL = APP_COMMUNICATION_SMS_PG365_BASE_URL;
+const APP_COMMUNICATION_SMS_POCTGOYERCINI_SEND_ENDPOINT = APP_COMMUNICATION_SMS_PG365_SEND_ENDPOINT;
+const APP_COMMUNICATION_TELEGRAM_BASE_URL = 'https://api.telegram.org';
 
 function app_communication_runtime_setting(string $key, string $default = ''): string
 {
@@ -24,105 +28,218 @@ function app_communication_runtime_setting(string $key, string $default = ''): s
     return app_config($key, $default);
 }
 
+function app_communication_environment_secret(string $key): string
+{
+    return app_environment_secret($key);
+}
+
+function app_communication_environment_secret_ready(string $key): bool
+{
+    return app_communication_environment_secret($key) !== '';
+}
+
+function app_communication_enabled_setting_value(string $value, bool $default = true): bool
+{
+    $value = strtolower(trim($value));
+    if ($value === '') {
+        return $default;
+    }
+
+    return match ($value) {
+        '1', 'true', 'yes', 'on', 'enabled' => true,
+        '0', 'false', 'no', 'off', 'disabled' => false,
+        default => $default,
+    };
+}
+
+function app_communication_external_delivery_enabled(): bool
+{
+    $environmentValue = getenv('COMMUNICATION_EXTERNAL_SEND_ENABLED');
+    $value = is_string($environmentValue) && trim($environmentValue) !== ''
+        ? $environmentValue
+        : app_config('communication_external_send_enabled', '0');
+
+    return app_communication_enabled_setting_value((string) $value, false);
+}
+
+function app_communication_channel_enabled(string $channel): bool
+{
+    $settings = [
+        'app' => 'channel_app_enabled',
+        'telegram' => 'channel_telegram_enabled',
+        'sms' => 'channel_sms_enabled',
+        'whatsapp' => 'channel_whatsapp_enabled',
+    ];
+    $channel = strtolower(trim($channel));
+    if (!isset($settings[$channel])) {
+        return false;
+    }
+
+    return app_communication_enabled_setting_value(
+        app_communication_runtime_setting($settings[$channel], '1'),
+        true
+    );
+}
+
 function app_communication_provider_config(string $channel, string $destination = ''): array
 {
     $channel = strtolower(trim($channel));
     $destination = trim($destination);
+    $channelEnabled = app_communication_channel_enabled($channel);
+    $externalDeliveryEnabled = app_communication_external_delivery_enabled();
 
     if ($channel === 'app') {
         return [
-            'configured' => true,
+            'enabled' => $channelEnabled,
+            'configured' => $channelEnabled,
+            'send_enabled' => $channelEnabled,
+            'external_delivery_enabled' => true,
             'delivery' => 'portal_inbox',
             'endpoint' => '',
-            'token' => '',
+            'credentials_ready' => true,
+            'credential_envs' => [],
             'sender' => 'SuperOptic',
             'destination' => $destination,
+            'reason' => $channelEnabled ? '' : 'channel_disabled',
         ];
     }
 
     if ($channel === 'telegram') {
-        $token = app_config('telegram_token');
+        $credentialReady = app_communication_environment_secret_ready('TELEGRAM_TOKEN');
         $chatId = $destination !== '' ? $destination : app_config('telegram_chat_id');
 
         return [
-            'configured' => $token !== '' && $chatId !== '',
+            'enabled' => $channelEnabled,
+            'configured' => $channelEnabled && $externalDeliveryEnabled && $credentialReady && $chatId !== '',
+            'send_enabled' => $channelEnabled && $externalDeliveryEnabled,
+            'external_delivery_enabled' => $externalDeliveryEnabled,
             'delivery' => 'telegram',
-            'endpoint' => $token !== '' ? ('https://api.telegram.org/bot' . $token . '/sendMessage') : '',
-            'token' => '',
+            'endpoint' => APP_COMMUNICATION_TELEGRAM_BASE_URL,
+            'credentials_ready' => $credentialReady,
+            'credential_envs' => ['TELEGRAM_TOKEN'],
             'sender' => 'SuperOptic',
             'destination' => $chatId,
+            'reason' => match (true) {
+                !$channelEnabled => 'channel_disabled',
+                !$externalDeliveryEnabled => 'external_delivery_paused',
+                !$credentialReady => 'telegram_credentials_missing',
+                $chatId === '' => 'telegram_destination_missing',
+                default => '',
+            },
         ];
     }
 
     if ($channel === 'sms') {
-        $driver = strtolower(trim(app_communication_runtime_setting('sms_provider_driver', 'poctgoyercini_json')));
-        if ($driver === '') {
-            $driver = 'poctgoyercini_json';
-        }
-        $endpoint = app_communication_runtime_setting('sms_provider_endpoint', APP_COMMUNICATION_SMS_POCTGOYERCINI_SEND_ENDPOINT);
-        $token = app_communication_runtime_setting('sms_provider_token');
-        $user = app_communication_runtime_setting('sms_provider_user');
-        $password = app_communication_runtime_setting('sms_provider_password');
-        $credentialReady = match ($driver) {
-            'poctgoyercini_json', 'poctgoyercini_xml' => $user !== '' && $password !== '',
-            default => $token !== '' || ($user !== '' && $password !== '') || $driver === 'json',
+        $endpoint = trim(app_communication_runtime_setting('sms_provider_endpoint', APP_COMMUNICATION_SMS_PG365_SEND_ENDPOINT));
+        $credentialReady = app_communication_environment_secret_ready('SMS_PROVIDER_PUBLIC_KEY')
+            && app_communication_environment_secret_ready('SMS_PROVIDER_PRIVATE_KEY');
+        $endpointValid = app_communication_pg365_url($endpoint, 'send', '') !== '';
+        $sendConfigured = $channelEnabled && $externalDeliveryEnabled && $endpointValid && $destination !== '' && $credentialReady;
+        $statusConfigured = $endpointValid && $credentialReady;
+        $reason = match (true) {
+            !$channelEnabled => 'channel_disabled',
+            !$externalDeliveryEnabled => 'external_delivery_paused',
+            !$endpointValid => 'sms_provider_endpoint_invalid',
+            !$credentialReady => 'sms_provider_credentials_missing',
+            $destination === '' => 'sms_destination_missing',
+            default => '',
         };
 
         return [
-            'configured' => $endpoint !== '' && $destination !== '' && $credentialReady,
+            'enabled' => $channelEnabled,
+            'configured' => $sendConfigured,
+            'status_configured' => $statusConfigured,
+            'send_enabled' => $channelEnabled && $externalDeliveryEnabled,
+            'external_delivery_enabled' => $externalDeliveryEnabled,
             'delivery' => 'sms_provider',
-            'driver' => $driver,
+            'driver' => 'pg365_json',
             'endpoint' => $endpoint,
-            'token' => $token,
-            'user' => $user,
-            'password' => $password,
-            'sender' => app_communication_runtime_setting('sms_provider_sender', 'SuperOptic'),
+            'endpoint_valid' => $endpointValid,
+            'credentials_ready' => $credentialReady,
+            'credential_envs' => ['SMS_PROVIDER_PUBLIC_KEY', 'SMS_PROVIDER_PRIVATE_KEY'],
+            // Originator is provider-managed and optional. Do not guess a
+            // header name because PG365 rejects unapproved values.
+            'sender' => app_communication_runtime_setting('sms_provider_sender', ''),
             'purpose' => app_communication_runtime_setting('sms_provider_purpose', 'INF'),
             'encoding' => app_communication_runtime_setting('sms_provider_encoding', 'LATIN'),
             'destination' => $destination,
+            'reason' => $reason,
         ];
     }
 
     if ($channel === 'whatsapp') {
         $enabled = in_array(strtolower((string) app_setting('whatsapp_provider_enabled', '0')), ['1', 'true', 'yes', 'on'], true);
+        $endpoint = app_config('whatsapp_provider_endpoint');
+        $credentialReady = app_communication_environment_secret_ready('WHATSAPP_PROVIDER_TOKEN');
 
         return [
-            'configured' => $enabled && app_config('whatsapp_provider_endpoint') !== '' && app_config('whatsapp_provider_token') !== '' && $destination !== '',
+            'enabled' => $channelEnabled,
+            'configured' => $channelEnabled && $externalDeliveryEnabled && $enabled && $endpoint !== '' && $credentialReady && $destination !== '',
+            'send_enabled' => $channelEnabled && $externalDeliveryEnabled,
+            'external_delivery_enabled' => $externalDeliveryEnabled,
             'delivery' => 'whatsapp_web_bridge',
-            'endpoint' => app_config('whatsapp_provider_endpoint'),
-            'token' => app_config('whatsapp_provider_token'),
+            'endpoint' => $endpoint,
+            'credentials_ready' => $credentialReady,
+            'credential_envs' => ['WHATSAPP_PROVIDER_TOKEN'],
             'sender' => app_config('whatsapp_provider_sender', 'SuperOptic'),
             'destination' => $destination,
+            'reason' => match (true) {
+                !$channelEnabled => 'channel_disabled',
+                !$externalDeliveryEnabled => 'external_delivery_paused',
+                !$enabled => 'whatsapp_provider_disabled',
+                $endpoint === '' => 'whatsapp_endpoint_missing',
+                !$credentialReady => 'whatsapp_credentials_missing',
+                $destination === '' => 'whatsapp_destination_missing',
+                default => '',
+            },
         ];
     }
 
     return [
+        'enabled' => false,
         'configured' => false,
+        'send_enabled' => false,
+        'external_delivery_enabled' => $externalDeliveryEnabled,
         'delivery' => 'unsupported',
         'endpoint' => '',
-        'token' => '',
+        'credentials_ready' => false,
+        'credential_envs' => [],
         'sender' => '',
         'destination' => $destination,
+        'reason' => 'unsupported_channel',
     ];
 }
 
 function app_communication_provider_public_status(string $channel, string $destination = ''): array
 {
     $provider = app_communication_provider_config($channel, $destination);
-    $hasToken = (string) ($provider['token'] ?? '') !== '';
-    $hasUserPassword = (string) ($provider['user'] ?? '') !== '' && (string) ($provider['password'] ?? '') !== '';
-    $bridgeStatus = strtolower(trim($channel)) === 'whatsapp'
-        ? app_communication_whatsapp_bridge_status($provider)
-        : null;
+    $credentialsReady = (bool) ($provider['credentials_ready'] ?? false);
+    $bridgeStatus = null;
+    if (strtolower(trim($channel)) === 'whatsapp') {
+        $bridgeStatus = !empty($provider['enabled'])
+            ? app_communication_whatsapp_bridge_status($provider)
+            : [
+                'reachable' => false,
+                'connected' => false,
+                'status' => 'disabled',
+                'reason' => 'channel_disabled',
+            ];
+    }
 
     $status = [
         'channel' => strtolower(trim($channel)),
+        'enabled' => (bool) ($provider['enabled'] ?? false),
         'configured' => (bool) ($provider['configured'] ?? false),
+        'status_configured' => (bool) ($provider['status_configured'] ?? false),
+        'send_enabled' => (bool) ($provider['send_enabled'] ?? false),
+        'external_delivery_enabled' => (bool) ($provider['external_delivery_enabled'] ?? false),
+        'reason' => (string) ($provider['reason'] ?? ''),
         'delivery' => (string) ($provider['delivery'] ?? 'unsupported'),
         'driver' => (string) ($provider['driver'] ?? ''),
         'has_endpoint' => (string) ($provider['endpoint'] ?? '') !== '',
-        'has_token' => $hasToken,
-        'has_credentials' => $hasToken || $hasUserPassword,
+        'has_token' => $credentialsReady && count((array) ($provider['credential_envs'] ?? [])) === 1,
+        'has_credentials' => $credentialsReady,
+        'credential_envs' => array_values((array) ($provider['credential_envs'] ?? [])),
         'has_destination' => (string) ($provider['destination'] ?? '') !== '',
         'sender' => (string) ($provider['sender'] ?? ''),
     ];
@@ -140,12 +257,35 @@ function app_communication_send_provider(string $channel, string $destination, s
     $provider = app_communication_provider_config($channel, $destination);
     $body = trim($body);
 
+    if (in_array($channel, ['app', 'telegram', 'sms', 'whatsapp'], true)
+        && !app_communication_channel_enabled($channel)) {
+        return [
+            'ok' => false,
+            'provider_message_id' => null,
+            'response' => null,
+            'reason' => 'channel_disabled',
+            'delivery' => (string) ($provider['delivery'] ?? 'unsupported'),
+        ];
+    }
+
+    if ($channel !== 'app'
+        && in_array($channel, ['telegram', 'sms', 'whatsapp'], true)
+        && !app_communication_external_delivery_enabled()) {
+        return [
+            'ok' => false,
+            'provider_message_id' => null,
+            'response' => null,
+            'reason' => 'external_delivery_paused',
+            'delivery' => (string) ($provider['delivery'] ?? $channel),
+        ];
+    }
+
     if (empty($provider['configured'])) {
         return [
             'ok' => false,
             'provider_message_id' => null,
             'response' => null,
-            'reason' => 'provider_not_configured',
+            'reason' => (string) ($provider['reason'] ?? 'provider_not_configured') ?: 'provider_not_configured',
             'delivery' => (string) ($provider['delivery'] ?? 'unsupported'),
         ];
     }
@@ -171,7 +311,17 @@ function app_communication_send_provider(string $channel, string $destination, s
     }
 
     if ($channel === 'telegram') {
-        $response = http_post_json((string) $provider['endpoint'], [
+        $token = app_communication_environment_secret('TELEGRAM_TOKEN');
+        if ($token === '') {
+            return [
+                'ok' => false,
+                'provider_message_id' => null,
+                'response' => null,
+                'reason' => 'telegram_credentials_missing',
+                'delivery' => 'telegram',
+            ];
+        }
+        $response = http_post_json(APP_COMMUNICATION_TELEGRAM_BASE_URL . '/bot' . $token . '/sendMessage', [
             'chat_id' => (string) $provider['destination'],
             'text' => $body,
             'disable_web_page_preview' => true,
@@ -186,45 +336,20 @@ function app_communication_send_provider(string $channel, string $destination, s
         ];
     }
 
-    if ($channel === 'sms' && (string) ($provider['driver'] ?? '') === 'poctgoyercini_json') {
+    if ($channel === 'sms') {
         return app_communication_send_poctgoyercini_json_sms($provider, $body, $externalId);
-    }
-
-    if ($channel === 'sms' && (string) ($provider['driver'] ?? '') === 'poctgoyercini_xml') {
-        return app_communication_send_poctgoyercini_sms($provider, $body);
     }
 
     if ($channel === 'whatsapp') {
         return app_communication_send_whatsapp_bridge($provider, $body, $externalId);
     }
 
-    $headers = ['Content-Type: application/json'];
-    if ((string) ($provider['token'] ?? '') !== '') {
-        $headers[] = 'Authorization: Bearer ' . (string) $provider['token'];
-    }
-
-    $response = http_post_json((string) $provider['endpoint'], [
-        'to' => (string) $provider['destination'],
-        'message' => $body,
-        'sender' => (string) ($provider['sender'] ?? 'SuperOptic'),
-        'external_id' => $externalId,
-        'channel' => $channel,
-    ], $headers);
-
-    $ok = is_array($response)
-        && (
-            !empty($response['ok'])
-            || !empty($response['success'])
-            || strtolower((string) ($response['status'] ?? '')) === 'sent'
-            || strtolower((string) ($response['status'] ?? '')) === 'ok'
-        );
-
     return [
-        'ok' => $ok,
-        'provider_message_id' => $response['message_id'] ?? $response['id'] ?? null,
-        'response' => is_array($response) ? $response : null,
-        'reason' => $ok ? '' : (is_array($response) ? (string) ($response['error'] ?? $response['message'] ?? 'provider_request_failed') : 'provider_request_failed'),
-        'delivery' => (string) ($provider['delivery'] ?? $channel),
+        'ok' => false,
+        'provider_message_id' => null,
+        'response' => null,
+        'reason' => 'unsupported_provider_transport',
+        'delivery' => (string) ($provider['delivery'] ?? 'unsupported'),
     ];
 }
 
@@ -235,7 +360,7 @@ function app_communication_whatsapp_bridge_status(array $provider = []): array
     }
 
     $endpoint = (string) ($provider['endpoint'] ?? app_config('whatsapp_provider_endpoint'));
-    $token = (string) ($provider['token'] ?? app_config('whatsapp_provider_token'));
+    $token = app_communication_environment_secret('WHATSAPP_PROVIDER_TOKEN');
     if ($endpoint === '' || $token === '') {
         return [
             'reachable' => false,
@@ -250,34 +375,52 @@ function app_communication_whatsapp_bridge_status(array $provider = []): array
         $statusUrl = rtrim($endpoint, '/') . '/api/status';
     }
 
+    // The status probe blocks up to 2s per call when the bridge is down, and it
+    // is queried on every message-center render. Cache the result briefly so a
+    // down (or up) bridge does not add 2s to each page load. A status indicator
+    // being ~15s stale is acceptable.
+    $cacheFile = sys_get_temp_dir() . '/soc_wa_status_' . md5($statusUrl) . '.json';
+    if (is_file($cacheFile) && (time() - (int) filemtime($cacheFile)) < 15) {
+        $cached = json_decode((string) @file_get_contents($cacheFile), true);
+        if (is_array($cached)) {
+            return $cached;
+        }
+    }
+
     $response = http_request_raw($statusUrl, 'GET', '', ['x-api-key: ' . $token], 2);
     $body = trim((string) ($response['body'] ?? ''));
     $decoded = json_decode($body, true);
 
     if (empty($response['ok']) || !is_array($decoded)) {
-        return [
+        $result = [
             'reachable' => false,
             'connected' => false,
             'status' => 'unreachable',
             'reason' => 'http_' . (string) ($response['status'] ?? 0),
         ];
+    } else {
+        $result = [
+            'reachable' => true,
+            'connected' => !empty($decoded['connected']),
+            'status' => (string) ($decoded['status'] ?? (!empty($decoded['connected']) ? 'connected' : 'loading')),
+            'provider_number' => app_communication_whatsapp_normalize_destination((string) ($decoded['provider_number'] ?? '')),
+            'ready_at' => (string) ($decoded['ready_at'] ?? ''),
+            'last_qr_at' => (string) ($decoded['last_qr_at'] ?? ''),
+            'qr_expires_at' => (string) ($decoded['qr_expires_at'] ?? ''),
+            'qr_expired' => !empty($decoded['qr_expired']),
+            'last_error' => (string) ($decoded['last_error'] ?? ''),
+        ];
     }
 
-    return [
-        'reachable' => true,
-        'connected' => !empty($decoded['connected']),
-        'status' => (string) ($decoded['status'] ?? (!empty($decoded['connected']) ? 'connected' : 'loading')),
-        'ready_at' => (string) ($decoded['ready_at'] ?? ''),
-        'last_qr_at' => (string) ($decoded['last_qr_at'] ?? ''),
-        'last_error' => (string) ($decoded['last_error'] ?? ''),
-    ];
+    @file_put_contents($cacheFile, json_encode($result));
+    return $result;
 }
 
 function app_communication_whatsapp_bridge_qr(): array
 {
     $provider = app_communication_provider_config('whatsapp', '994000000000');
     $endpoint = (string) ($provider['endpoint'] ?? '');
-    $token = (string) ($provider['token'] ?? '');
+    $token = app_communication_environment_secret('WHATSAPP_PROVIDER_TOKEN');
     if ($endpoint === '' || $token === '') {
         return ['ok' => false, 'status' => 'not_configured', 'qr' => '', 'reason' => 'endpoint_or_token_missing'];
     }
@@ -298,7 +441,34 @@ function app_communication_whatsapp_bridge_qr(): array
         'status' => (string) ($decoded['status'] ?? ''),
         'connected' => !empty($decoded['connected']),
         'qr' => (string) ($decoded['qr'] ?? ''),
+        'qr_expires_at' => (string) ($decoded['qr_expires_at'] ?? ''),
+        'qr_expired' => !empty($decoded['qr_expired']),
         'reason' => (string) ($decoded['error'] ?? ''),
+    ];
+}
+
+function app_communication_whatsapp_bridge_refresh(): array
+{
+    $provider = app_communication_provider_config('whatsapp', '994000000000');
+    $endpoint = (string) ($provider['endpoint'] ?? '');
+    $token = app_communication_environment_secret('WHATSAPP_PROVIDER_TOKEN');
+    if ($endpoint === '' || $token === '') {
+        return ['ok' => false, 'status' => 'not_configured', 'reason' => 'endpoint_or_token_missing'];
+    }
+
+    $refreshUrl = preg_replace('#/api/send$#', '/api/refresh', $endpoint) ?? $endpoint;
+    if ($refreshUrl === $endpoint) {
+        $refreshUrl = rtrim($endpoint, '/') . '/api/refresh';
+    }
+    $response = http_post_json($refreshUrl, ['reason' => 'admin_manual_refresh'], [
+        'Content-Type: application/json',
+        'x-api-key: ' . $token,
+    ]);
+
+    return [
+        'ok' => is_array($response) && !empty($response['ok']),
+        'status' => is_array($response) ? (string) ($response['status'] ?? '') : '',
+        'reason' => is_array($response) ? (string) ($response['error'] ?? '') : 'bridge_request_failed',
     ];
 }
 
@@ -316,10 +486,17 @@ function app_communication_send_whatsapp_bridge(array $provider, string $body, s
         ];
     }
 
-    $headers = ['Content-Type: application/json'];
-    if ((string) ($provider['token'] ?? '') !== '') {
-        $headers[] = 'x-api-key: ' . (string) $provider['token'];
+    $token = app_communication_environment_secret('WHATSAPP_PROVIDER_TOKEN');
+    if ($token === '') {
+        return [
+            'ok' => false,
+            'provider_message_id' => null,
+            'response' => null,
+            'reason' => 'whatsapp_credentials_missing',
+            'delivery' => 'whatsapp_web_bridge',
+        ];
     }
+    $headers = ['Content-Type: application/json', 'x-api-key: ' . $token];
 
     $response = http_post_json((string) ($provider['endpoint'] ?? ''), [
         'number' => $destination,
@@ -388,38 +565,18 @@ function app_communication_whatsapp_guard_limits(): array
     ];
 }
 
-function app_communication_whatsapp_guard_schema(PDO $db): void
+function app_communication_whatsapp_guard_schema(PDO $db): bool
 {
-    $db->exec(
-        'CREATE TABLE IF NOT EXISTS whatsapp_delivery_guard (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            destination_hash CHAR(64) NOT NULL UNIQUE,
-            known_contact TINYINT(1) NOT NULL DEFAULT 0,
-            sent_24h INT NOT NULL DEFAULT 0,
-            sent_total INT NOT NULL DEFAULT 0,
-            first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_window_at DATETIME NULL,
-            last_sent_at DATETIME NULL,
-            blocked_until DATETIME NULL,
-            note VARCHAR(255) NULL,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            KEY idx_whatsapp_guard_blocked (blocked_until),
-            KEY idx_whatsapp_guard_last_sent (last_sent_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-    );
-    $db->exec(
-        'CREATE TABLE IF NOT EXISTS whatsapp_delivery_guard_global (
-            id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
-            sent_24h INT NOT NULL DEFAULT 0,
-            sent_hour INT NOT NULL DEFAULT 0,
-            last_day_window_at DATETIME NULL,
-            last_hour_window_at DATETIME NULL,
-            last_sent_at DATETIME NULL,
-            blocked_until DATETIME NULL,
-            note VARCHAR(255) NULL,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-    );
+    try {
+        $statement = $db->query(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME IN ("whatsapp_delivery_guard","whatsapp_delivery_guard_global")'
+        );
+        return (int) $statement->fetchColumn() === 2;
+    } catch (Throwable) {
+        return false;
+    }
 }
 
 function app_communication_whatsapp_guard_check(string $destination): array
@@ -434,7 +591,9 @@ function app_communication_whatsapp_guard_check(string $destination): array
         return ['ok' => false, 'reason' => 'whatsapp_guard_db_unavailable'];
     }
 
-    app_communication_whatsapp_guard_schema($db);
+    if (!app_communication_whatsapp_guard_schema($db)) {
+        return ['ok' => false, 'reason' => 'whatsapp_guard_schema_not_migrated'];
+    }
     $hash = hash('sha256', $normalized);
     $limits = app_communication_whatsapp_guard_limits();
     $now = (int) ($db->query('SELECT UNIX_TIMESTAMP(NOW())')->fetchColumn() ?: time());
@@ -672,7 +831,9 @@ function app_communication_whatsapp_guard_record_sent(string $destination, bool 
         return;
     }
 
-    app_communication_whatsapp_guard_schema($db);
+    if (!app_communication_whatsapp_guard_schema($db)) {
+        return;
+    }
     $hash = hash('sha256', $normalized);
     $db->beginTransaction();
     try {
@@ -718,11 +879,6 @@ function app_communication_whatsapp_guard_record_sent(string $destination, bool 
     }
 }
 
-function app_communication_xml_escape(string $value): string
-{
-    return htmlspecialchars($value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
-}
-
 function app_communication_normalize_sms_destination(string $destination): string
 {
     $digits = preg_replace('/\D+/', '', $destination) ?? '';
@@ -739,54 +895,336 @@ function app_communication_normalize_sms_destination(string $destination): strin
     return $digits;
 }
 
-function app_communication_safe_provider_text(string $value): string
-{
-    if ($value === '') {
+function app_communication_pg365_url(
+    string $endpoint,
+    string $operation,
+    string $publicKey,
+    array $query = []
+): string {
+    $operation = strtolower(trim($operation));
+    if (!in_array($operation, ['send', 'status', 'statusmany'], true)) {
         return '';
     }
 
-    if (function_exists('mb_check_encoding') && function_exists('mb_convert_encoding')) {
-        if (@mb_check_encoding($value, 'UTF-8')) {
-            return $value;
-        }
-
-        $converted = @mb_convert_encoding($value, 'UTF-8', 'Windows-1251,Windows-1252,ISO-8859-1');
-        if (is_string($converted) && $converted !== '') {
-            return $converted;
-        }
-    }
-
-    $json = json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE);
-    if (is_string($json)) {
-        $decoded = json_decode($json, true);
-        if (is_string($decoded)) {
-            return $decoded;
-        }
-    }
-
-    return preg_replace('/[^\x09\x0A\x0D\x20-\x7E]/', '?', $value) ?? '';
-}
-
-function app_communication_poctgoyercini_send_url(string $endpoint, string $publicKey): string
-{
-    $url = trim($endpoint) !== '' ? trim($endpoint) : APP_COMMUNICATION_SMS_POCTGOYERCINI_SEND_ENDPOINT;
+    $url = trim($endpoint) !== '' ? trim($endpoint) : APP_COMMUNICATION_SMS_PG365_SEND_ENDPOINT;
     if (!preg_match('#^https?://#i', $url)) {
         $url = 'https://' . ltrim($url, '/');
     }
 
-    $path = parse_url($url, PHP_URL_PATH);
-    if ($path === null || $path === '' || $path === '/') {
-        $url = rtrim($url, '/') . '/gateway/api/sms/v1/message/send';
+    $parts = parse_url($url);
+    if (!is_array($parts)
+        || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+        || strtolower((string) ($parts['host'] ?? '')) !== APP_COMMUNICATION_SMS_PG365_HOST
+        || isset($parts['user'])
+        || isset($parts['pass'])
+        || isset($parts['port'])) {
+        return '';
     }
 
-    if (!preg_match('/(?:\?|&)publicKey=/i', $url)) {
-        $url .= (str_contains($url, '?') ? '&' : '?') . 'publicKey=' . rawurlencode($publicKey);
+    $path = (string) ($parts['path'] ?? '');
+    if ($path === '' || $path === '/') {
+        $path = '/gateway/api/sms/v1/message/' . $operation;
+    } elseif (preg_match('#/gateway/api/sms/v1/message(?:/(?:send|status|statusmany))?/?$#i', $path) === 1) {
+        $path = preg_replace(
+            '#/gateway/api/sms/v1/message(?:/(?:send|status|statusmany))?/?$#i',
+            '/gateway/api/sms/v1/message/' . $operation,
+            $path
+        ) ?? $path;
+    } else {
+        return '';
     }
 
-    return $url;
+    $queryValues = [];
+    parse_str((string) ($parts['query'] ?? ''), $queryValues);
+    foreach (array_keys($queryValues) as $key) {
+        if (in_array(strtolower((string) $key), ['publickey', 'id'], true)) {
+            unset($queryValues[$key]);
+        }
+    }
+    $queryValues['publicKey'] = $publicKey;
+    foreach ($query as $key => $value) {
+        $queryValues[(string) $key] = (string) $value;
+    }
+
+    $authority = (string) $parts['host'];
+    if (isset($parts['port'])) {
+        $authority .= ':' . (int) $parts['port'];
+    }
+
+    return 'https://' . $authority . $path . '?' . http_build_query($queryValues, '', '&', PHP_QUERY_RFC3986);
 }
 
-function app_communication_send_poctgoyercini_json_sms(array $provider, string $body, string $externalId = ''): array
+function app_communication_pg365_request_url_allowed(string $url): bool
+{
+    $parts = parse_url(trim($url));
+    if (!is_array($parts)
+        || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+        || strtolower((string) ($parts['host'] ?? '')) !== APP_COMMUNICATION_SMS_PG365_HOST
+        || isset($parts['user'])
+        || isset($parts['pass'])
+        || isset($parts['port'])
+        || isset($parts['fragment'])) {
+        return false;
+    }
+
+    return in_array((string) ($parts['path'] ?? ''), [
+        '/gateway/api/sms/v1/message/send',
+        '/gateway/api/sms/v1/message/status',
+        '/gateway/api/sms/v1/message/statusmany',
+    ], true);
+}
+
+function app_communication_poctgoyercini_send_url(string $endpoint, string $publicKey): string
+{
+    return app_communication_pg365_url($endpoint, 'send', $publicKey);
+}
+
+function app_communication_pg365_json_request(
+    string $url,
+    string $method,
+    ?array $payload,
+    array $headers,
+    ?callable $transport = null
+): ?array {
+    $method = strtoupper(trim($method));
+    if ($url === ''
+        || !app_communication_pg365_request_url_allowed($url)
+        || !in_array($method, ['GET', 'POST'], true)) {
+        return null;
+    }
+
+    if ($transport !== null) {
+        $mocked = $transport($url, $method, $payload, $headers);
+        if (!is_array($mocked)) {
+            return null;
+        }
+        $mockHttpStatus = isset($mocked['http_status']) ? (int) $mocked['http_status'] : 200;
+        if ($mockHttpStatus < 200 || $mockHttpStatus >= 300) {
+            return [
+                'Status' => $mockHttpStatus,
+                'Description' => 'sms_provider_http_' . $mockHttpStatus,
+            ];
+        }
+        if (isset($mocked['body']) && is_string($mocked['body'])) {
+            $decoded = json_decode($mocked['body'], true);
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        return $mocked;
+    }
+
+    $body = $payload === null
+        ? ''
+        : (json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
+    $httpStatus = 0;
+
+    if (function_exists('curl_init')) {
+        $handle = curl_init($url);
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS => 0,
+        ];
+        if ($body !== '') {
+            $options[CURLOPT_POSTFIELDS] = $body;
+        }
+        curl_setopt_array($handle, $options);
+        $responseBody = curl_exec($handle);
+        $httpStatus = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        curl_close($handle);
+    } else {
+        if (!filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN) && ini_get('allow_url_fopen') !== '1') {
+            return null;
+        }
+        $context = stream_context_create([
+            'http' => [
+                'method' => $method,
+                'header' => implode("\r\n", $headers),
+                'content' => $body,
+                'timeout' => 20,
+                'ignore_errors' => true,
+                'follow_location' => 0,
+                'max_redirects' => 0,
+            ],
+        ]);
+        $responseBody = @file_get_contents($url, false, $context);
+        $responseHeaders = is_array($http_response_header ?? null) ? $http_response_header : [];
+        foreach ($responseHeaders as $responseHeader) {
+            if (preg_match('/^HTTP\/\S+\s+(\d{3})\b/i', (string) $responseHeader, $matches) === 1) {
+                $httpStatus = (int) $matches[1];
+            }
+        }
+    }
+
+    if ($httpStatus < 200 || $httpStatus >= 300) {
+        return [
+            'Status' => $httpStatus,
+            'Description' => 'sms_provider_http_' . $httpStatus,
+        ];
+    }
+
+    if (!is_string($responseBody) || $responseBody === '') {
+        return null;
+    }
+    $decoded = json_decode($responseBody, true);
+
+    return is_array($decoded) ? $decoded : null;
+}
+
+function app_communication_pg365_headers(string $privateKey): array
+{
+    return [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $privateKey,
+    ];
+}
+
+function app_communication_pg365_bool(mixed $value): bool
+{
+    if (is_bool($value)) {
+        return $value;
+    }
+    if (is_int($value) || is_float($value)) {
+        return (int) $value === 1;
+    }
+
+    return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true);
+}
+
+function app_communication_pg365_delivery_state(int $statusCode, bool $isFinal): string
+{
+    return match (true) {
+        $statusCode === 400 => 'delivered',
+        in_array($statusCode, [110, 120, 200, 300], true) => 'submitted',
+        $isFinal => 'final_failed',
+        default => 'accepted',
+    };
+}
+
+function app_communication_pg365_parse_status_response(?array $response): array
+{
+    $responseStatus = is_array($response) ? (int) ($response['Status'] ?? 0) : 0;
+    if (!is_array($response) || $responseStatus !== 200) {
+        return [
+            'ok' => false,
+            'items' => [],
+            'reason' => !is_array($response)
+                ? 'sms_provider_request_failed'
+                : ((string) ($response['Description'] ?? '') ?: 'sms_provider_status_' . $responseStatus),
+            'response' => $response,
+        ];
+    }
+
+    $result = $response['Result'] ?? [];
+    if (!is_array($result)) {
+        $result = [];
+    }
+    $rows = $result === [] ? [] : (array_is_list($result) ? $result : [$result]);
+    $items = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $id = trim((string) ($row['id'] ?? ''));
+        if ($id === '') {
+            continue;
+        }
+        $statusCode = (int) ($row['Status'] ?? 0);
+        $isFinal = $statusCode === 400 || app_communication_pg365_bool($row['IsFinal'] ?? false);
+        $items[] = [
+            'id' => $id,
+            'receiver' => (string) ($row['Receiver'] ?? ''),
+            'status_code' => $statusCode,
+            'status_description' => (string) ($row['StatusDescription'] ?? ''),
+            'record_time' => (string) ($row['RecordTime'] ?? ''),
+            'sent_time' => (string) ($row['SentTime'] ?? ''),
+            'deliver_time' => (string) ($row['DeliverTime'] ?? ''),
+            'is_final' => $isFinal,
+            'delivery_state' => app_communication_pg365_delivery_state($statusCode, $isFinal),
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'items' => $items,
+        'reason' => '',
+        'response' => $response,
+    ];
+}
+
+function app_communication_pg365_poll_status(
+    array $provider,
+    string $receiverId,
+    ?callable $transport = null
+): array {
+    $receiverId = trim($receiverId);
+    $publicKey = app_communication_environment_secret('SMS_PROVIDER_PUBLIC_KEY');
+    $privateKey = app_communication_environment_secret('SMS_PROVIDER_PRIVATE_KEY');
+    if ($receiverId === '') {
+        return ['ok' => false, 'items' => [], 'item' => null, 'reason' => 'sms_provider_message_id_missing', 'response' => null];
+    }
+    if ($publicKey === '' || $privateKey === '') {
+        return ['ok' => false, 'items' => [], 'item' => null, 'reason' => 'sms_provider_credentials_missing', 'response' => null];
+    }
+
+    $url = app_communication_pg365_url((string) ($provider['endpoint'] ?? ''), 'status', $publicKey, ['id' => $receiverId]);
+    if ($url === '') {
+        return ['ok' => false, 'items' => [], 'item' => null, 'reason' => 'sms_provider_endpoint_invalid', 'response' => null];
+    }
+    $parsed = app_communication_pg365_parse_status_response(app_communication_pg365_json_request(
+        $url,
+        'GET',
+        null,
+        app_communication_pg365_headers($privateKey),
+        $transport
+    ));
+    $parsed['item'] = $parsed['items'][0] ?? null;
+
+    return $parsed;
+}
+
+function app_communication_pg365_poll_status_many(
+    array $provider,
+    array $receiverIds,
+    ?callable $transport = null
+): array {
+    $receiverIds = array_values(array_unique(array_filter(array_map(
+        static fn (mixed $value): string => trim((string) $value),
+        $receiverIds
+    ), static fn (string $value): bool => $value !== '')));
+    $receiverIds = array_slice($receiverIds, 0, 10000);
+    $publicKey = app_communication_environment_secret('SMS_PROVIDER_PUBLIC_KEY');
+    $privateKey = app_communication_environment_secret('SMS_PROVIDER_PRIVATE_KEY');
+    if ($receiverIds === []) {
+        return ['ok' => false, 'items' => [], 'reason' => 'sms_provider_message_ids_missing', 'response' => null];
+    }
+    if ($publicKey === '' || $privateKey === '') {
+        return ['ok' => false, 'items' => [], 'reason' => 'sms_provider_credentials_missing', 'response' => null];
+    }
+
+    $url = app_communication_pg365_url((string) ($provider['endpoint'] ?? ''), 'statusmany', $publicKey);
+    if ($url === '') {
+        return ['ok' => false, 'items' => [], 'reason' => 'sms_provider_endpoint_invalid', 'response' => null];
+    }
+
+    return app_communication_pg365_parse_status_response(app_communication_pg365_json_request(
+        $url,
+        'GET',
+        ['ReceiverIds' => $receiverIds],
+        app_communication_pg365_headers($privateKey),
+        $transport
+    ));
+}
+
+function app_communication_send_poctgoyercini_json_sms(
+    array $provider,
+    string $body,
+    string $externalId = '',
+    ?callable $transport = null
+): array
 {
     $destination = app_communication_normalize_sms_destination((string) ($provider['destination'] ?? ''));
     if ($destination === '') {
@@ -799,8 +1237,8 @@ function app_communication_send_poctgoyercini_json_sms(array $provider, string $
         ];
     }
 
-    $publicKey = trim((string) ($provider['user'] ?? ''));
-    $privateKey = trim((string) ($provider['password'] ?? ''));
+    $publicKey = app_communication_environment_secret('SMS_PROVIDER_PUBLIC_KEY');
+    $privateKey = app_communication_environment_secret('SMS_PROVIDER_PRIVATE_KEY');
     if ($publicKey === '' || $privateKey === '') {
         return [
             'ok' => false,
@@ -840,13 +1278,25 @@ function app_communication_send_poctgoyercini_json_sms(array $provider, string $
         ],
     ];
 
-    $response = http_post_json(
-        app_communication_poctgoyercini_send_url((string) ($provider['endpoint'] ?? ''), $publicKey),
+    $url = app_communication_poctgoyercini_send_url((string) ($provider['endpoint'] ?? ''), $publicKey);
+    if ($url === '') {
+        return [
+            'ok' => false,
+            'provider_message_id' => null,
+            'provider_status' => 'final_failed',
+            'provider_status_final' => true,
+            'response' => null,
+            'reason' => 'sms_provider_endpoint_invalid',
+            'delivery' => 'sms_provider',
+        ];
+    }
+
+    $response = app_communication_pg365_json_request(
+        $url,
+        'POST',
         $payload,
-        [
-            'Content-Type: application/json',
-            'Authorization: Bearer ' . $privateKey,
-        ]
+        app_communication_pg365_headers($privateKey),
+        $transport
     );
 
     $result = is_array($response['Result'] ?? null) ? $response['Result'] : [];
@@ -856,11 +1306,17 @@ function app_communication_send_poctgoyercini_json_sms(array $provider, string $
     $ok = is_array($response) && $status === 200 && $accepted !== [];
     $firstAccepted = is_array($accepted[0] ?? null) ? $accepted[0] : [];
     $firstRejected = is_array($rejected[0] ?? null) ? $rejected[0] : [];
+    $providerMessageId = trim((string) ($firstAccepted['id'] ?? ''));
 
+    $transientFailure = !is_array($response)
+        || $status <= 0
+        || in_array($status, [408, 425, 429], true)
+        || $status >= 500;
     $reason = '';
     if (!$ok) {
         $reason = match (true) {
             !is_array($response) => 'sms_provider_request_failed',
+            $status <= 0 => 'sms_provider_invalid_response',
             $status !== 200 => (string) ($response['Description'] ?? ('sms_provider_status_' . $status)),
             $firstRejected !== [] => trim((string) ($firstRejected['ErrorCode'] ?? '') . ':' . (string) ($firstRejected['ErrorMessage'] ?? ''), ':'),
             default => 'sms_provider_no_accepted_receivers',
@@ -869,66 +1325,11 @@ function app_communication_send_poctgoyercini_json_sms(array $provider, string $
 
     return [
         'ok' => $ok,
-        'provider_message_id' => $firstAccepted['id'] ?? null,
+        'provider_message_id' => $providerMessageId !== '' ? $providerMessageId : null,
+        'provider_status' => $ok ? 'accepted' : ($transientFailure ? 'pending' : 'final_failed'),
+        'provider_status_final' => !$ok && !$transientFailure,
         'response' => is_array($response) ? $response : null,
         'reason' => $reason,
         'delivery' => 'sms_provider',
     ];
-}
-
-function app_communication_send_poctgoyercini_sms(array $provider, string $body): array
-{
-    $destination = app_communication_normalize_sms_destination((string) ($provider['destination'] ?? ''));
-    if ($destination === '') {
-        return [
-            'ok' => false,
-            'provider_message_id' => null,
-            'response' => null,
-            'reason' => 'empty_sms_destination',
-            'delivery' => 'sms_provider',
-        ];
-    }
-
-    $xml = '<SMS-InsRequest>'
-        . '<CLIENT user="' . app_communication_xml_escape((string) ($provider['user'] ?? '')) . '" pwd="' . app_communication_xml_escape((string) ($provider['password'] ?? '')) . '" />'
-        . '<INSERTMSG text="' . app_communication_xml_escape($body) . '" dt="' . date('Y/m/d H:i') . '">'
-        . '<TO>' . app_communication_xml_escape($destination) . '</TO>'
-        . '</INSERTMSG>'
-        . '</SMS-InsRequest>';
-
-    $response = http_request_raw(
-        (string) ($provider['endpoint'] ?? ''),
-        'POST',
-        $xml,
-        [],
-        20
-    );
-    $responseBody = trim(app_communication_safe_provider_text((string) ($response['body'] ?? '')));
-    $lowerBody = strtolower($responseBody);
-    $ok = !empty($response['ok'])
-        && $responseBody !== ''
-        && !str_contains($lowerBody, 'error')
-        && !str_contains($lowerBody, 'failed')
-        && !str_contains($lowerBody, 'invalid')
-        && !str_contains($lowerBody, 'denied');
-
-    return [
-        'ok' => $ok,
-        'provider_message_id' => app_communication_poctgoyercini_message_id($responseBody),
-        'response' => [
-            'status' => (int) ($response['status'] ?? 0),
-            'body_preview' => mb_substr($responseBody, 0, 500),
-        ],
-        'reason' => $ok ? '' : ('sms_provider_rejected_or_unexpected_response_http_' . (string) ($response['status'] ?? 0)),
-        'delivery' => 'sms_provider',
-    ];
-}
-
-function app_communication_poctgoyercini_message_id(string $responseBody): ?string
-{
-    if (preg_match('/(?:id|msgid|messageid)[^0-9A-Za-z_-]*([0-9A-Za-z_-]+)/i', $responseBody, $match) === 1) {
-        return (string) $match[1];
-    }
-
-    return null;
 }

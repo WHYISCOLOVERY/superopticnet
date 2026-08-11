@@ -6,8 +6,16 @@ require_once dirname(__DIR__, 2) . '/ui-language-lib.php';
 $pageData = (array) ($financeContext['data']['page'] ?? []);
 $invoiceRows = (array) ($pageData['rows'] ?? []);
 $invoiceStatusOptions = app_ui_select_status_options(['imported', 'failed']);
+$invoiceView = (string) ($financeContext['data']['invoice_view'] ?? 'imports');
 ?>
 <div data-finance-invoices data-finance-einvoice-workflow>
+    <div class="portal-tabs-inline">
+        <a class="portal-pill<?= $invoiceView === 'imports' ? ' is-active' : ''; ?>" href="<?= e(app_finance_url('invoices', ['invoice_view' => 'imports'], $financeLang)); ?>">Xarici e-qaime importu</a>
+        <a class="portal-pill<?= $invoiceView === 'issued' ? ' is-active' : ''; ?>" href="<?= e(app_finance_url('invoices', ['invoice_view' => 'issued'], $financeLang)); ?>">Tertib olunmus qaimeler</a>
+    </div>
+    <?php if ($invoiceView === 'issued'): ?>
+        <?php require __DIR__ . '/_invoices-issued.php'; ?>
+    <?php else: ?>
     <div class="portal-card-head">
         <div><strong>Elektron qaimeler</strong><small>Import olunan alis ve satis qaimeleri, borc qaligi ve son tarix.</small></div>
         <div class="portal-badge-list">
@@ -23,7 +31,7 @@ $invoiceStatusOptions = app_ui_select_status_options(['imported', 'failed']);
         <button class="portal-primary-btn" type="submit"><?= e(app_ui_action('apply')); ?></button>
     </form>
     <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Qaime</th><th>Qarsi teref</th><th>Nov</th><th>Mebleg</th><th>Qaliq</th><th>Son tarix</th><th><?= e(app_ui_label('status')); ?></th><th><?= e(app_ui_label('imported_at')); ?></th></tr></thead><tbody>
-        <?php foreach ($invoiceRows as $row): ?><tr data-finance-row><td><?= e((string) ($row['document_no'] ?? '-')); ?></td><td><?= e((string) ($row['counterparty_name'] ?? '-')); ?></td><td><?= e((string) ($row['ledger_type'] ?? '-')); ?></td><td><?= e(billing_money($row['amount'] ?? 0)); ?></td><td><?= e(billing_money($row['amount_open'] ?? 0)); ?></td><td><?= e((string) ($row['due_date'] ?? '-')); ?></td><td><?= e(app_ui_status((string) ($row['debt_status'] ?? $row['status'] ?? '-'))); ?></td><td><?= e((string) ($row['created_at'] ?? '-')); ?></td></tr><?php endforeach; ?>
+        <?php foreach ($invoiceRows as $row): ?><tr data-finance-row><td><?= e((string) ($row['document_no'] ?? '-')); ?></td><td><?= e((string) ($row['counterparty_name'] ?? '-')); ?></td><td><?= e(app_ui_term((string) ($row['ledger_type'] ?? '-'))); ?></td><td><?= e(billing_money($row['amount'] ?? 0)); ?></td><td><?= e(billing_money($row['amount_open'] ?? 0)); ?></td><td><?= e((string) ($row['due_date'] ?? '-')); ?></td><td><?= e(app_ui_status((string) ($row['debt_status'] ?? $row['status'] ?? '-'))); ?></td><td><?= e((string) ($row['created_at'] ?? '-')); ?></td></tr><?php endforeach; ?>
         <?php if ($invoiceRows === []): ?><tr><td colspan="8" class="finance-empty">Qaime tapilmadi.</td></tr><?php endif; ?>
     </tbody></table></div>
     <?php require __DIR__ . '/_pagination.php'; ?>
@@ -39,4 +47,5 @@ $invoiceStatusOptions = app_ui_select_status_options(['imported', 'failed']);
             </form>
         </section>
     </div>
+    <?php endif; ?>
 </div>

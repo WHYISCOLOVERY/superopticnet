@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/billing-payment-workflow-lib.php';
+
 function app_db_ready(): bool
 {
     return app_setting('portal_storage_driver', 'mysql') === 'mysql' && extension_loaded('pdo_mysql');
@@ -13,7 +15,7 @@ function app_db_settings(): array
         'port' => (int) app_setting('db_port', 3306),
         'name' => app_config('db_name', 'superoptic_portal'),
         'user' => app_config('db_user', 'root'),
-        'pass' => app_config('db_pass', ''),
+        'pass' => app_environment_secret('DB_PASS'),
         'charset' => app_config('db_charset', 'utf8mb4'),
     ];
 }
@@ -40,25 +42,6 @@ function app_db(): ?PDO
             $settings['port'],
             $settings['charset']
         );
-        $server = new PDO($serverDsn, $settings['user'], $settings['pass'], [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
-        try {
-            $server->exec(
-                sprintf(
-                    'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET %s COLLATE %s_unicode_ci',
-                    str_replace('`', '``', $settings['name']),
-                    $settings['charset'],
-                    $settings['charset']
-                )
-            );
-        } catch (Throwable) {
-            // Production app users should not need global CREATE DATABASE.
-            // If the target DB already exists and table-level grants are valid,
-            // continue with the normal database connection below.
-        }
-
         $dsn = sprintf(
             'mysql:host=%s;port=%d;dbname=%s;charset=%s',
             $settings['host'],
@@ -66,10 +49,34 @@ function app_db(): ?PDO
             $settings['name'],
             $settings['charset']
         );
-        $pdo = new PDO($dsn, $settings['user'], $settings['pass'], [
+        $pdoOptions = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
+        ];
+
+        // Fast path: connect straight to the database (one connection). Only if
+        // the database does not exist yet do we open a server-level connection
+        // to CREATE it — this avoids a second connection on every normal request.
+        try {
+            $pdo = new PDO($dsn, $settings['user'], $settings['pass'], $pdoOptions);
+        } catch (Throwable) {
+            try {
+                $server = new PDO($serverDsn, $settings['user'], $settings['pass'], $pdoOptions);
+                $server->exec(
+                    sprintf(
+                        'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET %s COLLATE %s_unicode_ci',
+                        str_replace('`', '``', $settings['name']),
+                        $settings['charset'],
+                        $settings['charset']
+                    )
+                );
+            } catch (Throwable) {
+                // Production app users should not need global CREATE DATABASE.
+                // If table-level grants are valid the retry below still works.
+            }
+            $pdo = new PDO($dsn, $settings['user'], $settings['pass'], $pdoOptions);
+        }
+        $pdo->exec('SET time_zone = ' . $pdo->quote(app_timezone_offset()));
     } catch (Throwable) {
         return null;
     }
@@ -79,7 +86,14 @@ function app_db(): ?PDO
             app_db_bootstrap($pdo);
             app_db_bootstrap_write_stamp($settings);
         }
-        app_db_runtime_migrations($pdo);
+        if (app_db_runtime_migrations_should_run($settings)) {
+            app_db_runtime_migrations($pdo);
+            // Only stamp once the core schema is actually present, otherwise a
+            // not-yet-ready DB would be marked done and never re-checked.
+            if (app_db_core_schema_ready($pdo)) {
+                app_db_runtime_migrations_write_stamp($settings);
+            }
+        }
         $bootstrapped = true;
     }
 
@@ -93,7 +107,7 @@ function app_db_available(): bool
 
 function app_db_bootstrap_schema_version(): string
 {
-    return '2026-07-02-operational-crud-identity-v2';
+    return '2026-07-19-portal-auth-recovery-v1';
 }
 
 function app_db_bootstrap_stamp_path(): string
@@ -126,6 +140,69 @@ function app_db_bootstrap_stamp_valid(array $settings): bool
 
     return (string) ($decoded['schema_version'] ?? '') === app_db_bootstrap_schema_version()
         && (string) ($decoded['settings_hash'] ?? '') === app_db_bootstrap_settings_hash($settings);
+}
+
+/**
+ * Version tag for idempotent runtime migrations (app_db_runtime_migrations).
+ * Bump this whenever a runtime migration's logic changes so it re-runs once.
+ */
+function app_db_runtime_migrations_version(): string
+{
+    return '2026-07-25-runtime-mig-v2';
+}
+
+function app_db_runtime_migrations_stamp_path(): string
+{
+    return __DIR__ . '/data/db-migrations-ok.json';
+}
+
+function app_db_runtime_migrations_stamp_valid(array $settings): bool
+{
+    $path = app_db_runtime_migrations_stamp_path();
+    if (!is_file($path)) {
+        return false;
+    }
+
+    $decoded = json_decode((string) file_get_contents($path), true);
+    if (!is_array($decoded)) {
+        return false;
+    }
+
+    return (string) ($decoded['migrations_version'] ?? '') === app_db_runtime_migrations_version()
+        && (string) ($decoded['settings_hash'] ?? '') === app_db_bootstrap_settings_hash($settings);
+}
+
+/**
+ * Runtime migrations do ~20 SHOW COLUMNS/SHOW INDEX probes each request. Once the
+ * stamp matches the current version+settings we skip them entirely, saving
+ * ~150-230ms on every page load. Mode 'always' forces, 'off' disables.
+ */
+function app_db_runtime_migrations_should_run(array $settings): bool
+{
+    $mode = strtolower((string) app_setting('db_bootstrap_mode', 'cached'));
+    if ($mode === 'always') {
+        return true;
+    }
+    if ($mode === 'off') {
+        return false;
+    }
+
+    return !app_db_runtime_migrations_stamp_valid($settings);
+}
+
+function app_db_runtime_migrations_write_stamp(array $settings): void
+{
+    $path = app_db_runtime_migrations_stamp_path();
+    $directory = dirname($path);
+    if (!is_dir($directory)) {
+        mkdir($directory, 0775, true);
+    }
+
+    file_put_contents($path, json_encode([
+        'migrations_version' => app_db_runtime_migrations_version(),
+        'settings_hash' => app_db_bootstrap_settings_hash($settings),
+        'created_at' => date(DATE_ATOM),
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
 }
 
 function app_db_core_schema_ready(PDO $db): bool
@@ -460,7 +537,7 @@ function app_db_bootstrap(PDO $db): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS radius_session_actions (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            action_type ENUM('disconnect_request') NOT NULL DEFAULT 'disconnect_request',
+            action_type ENUM('disconnect_request','coa_qos_change') NOT NULL DEFAULT 'disconnect_request',
             status ENUM('pending','approved','rejected','executed','cancelled') NOT NULL DEFAULT 'pending',
             account_id BIGINT UNSIGNED DEFAULT NULL,
             username VARCHAR(191) NOT NULL,
@@ -602,13 +679,24 @@ function app_db_bootstrap(PDO $db): void
             template_code VARCHAR(64) DEFAULT NULL,
             message_body TEXT NOT NULL,
             status ENUM('queued','sent','failed','test') NOT NULL DEFAULT 'queued',
+            delivery_state ENUM('pending','accepted','submitted','delivered','final_failed') NOT NULL DEFAULT 'pending',
+            provider_message_id VARCHAR(191) DEFAULT NULL,
+            provider_status_code INT DEFAULT NULL,
+            provider_status_description VARCHAR(191) DEFAULT NULL,
+            provider_status_final TINYINT(1) NOT NULL DEFAULT 0,
             sent_at DATETIME DEFAULT NULL,
+            accepted_at DATETIME DEFAULT NULL,
+            submitted_at DATETIME DEFAULT NULL,
+            delivered_at DATETIME DEFAULT NULL,
+            final_failed_at DATETIME DEFAULT NULL,
+            delivery_updated_at DATETIME DEFAULT NULL,
             created_by_account_id BIGINT UNSIGNED DEFAULT NULL,
             metadata_json LONGTEXT DEFAULT NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_communication_messages_account (account_id, created_at),
             KEY idx_communication_messages_subscriber (subscriber_code, created_at),
             KEY idx_communication_messages_status (status, created_at),
+            KEY idx_communication_messages_delivery_state (delivery_state, created_at),
             KEY idx_communication_messages_template (template_code),
             CONSTRAINT fk_communication_messages_account
                 FOREIGN KEY (account_id) REFERENCES portal_accounts(id)
@@ -623,12 +711,18 @@ function app_db_bootstrap(PDO $db): void
             delivery VARCHAR(64) NOT NULL DEFAULT '',
             destination_masked VARCHAR(64) NOT NULL DEFAULT '',
             status ENUM('sent','failed','skipped') NOT NULL DEFAULT 'failed',
+            delivery_state ENUM('pending','accepted','submitted','delivered','final_failed') NOT NULL DEFAULT 'pending',
             provider_message_id VARCHAR(191) DEFAULT NULL,
+            provider_status_code INT DEFAULT NULL,
+            provider_status_description VARCHAR(191) DEFAULT NULL,
+            provider_status_final TINYINT(1) NOT NULL DEFAULT 0,
+            delivery_updated_at DATETIME DEFAULT NULL,
             reason VARCHAR(191) DEFAULT NULL,
             response_summary_json LONGTEXT DEFAULT NULL,
             attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_communication_attempts_message (message_id, attempted_at),
             KEY idx_communication_attempts_status (status, attempted_at),
+            KEY idx_communication_attempts_delivery_state (delivery_state, attempted_at),
             KEY idx_communication_attempts_channel (channel, attempted_at),
             KEY idx_communication_attempts_account (account_id, attempted_at),
             CONSTRAINT fk_communication_attempts_message
@@ -727,6 +821,31 @@ function app_db_bootstrap(PDO $db): void
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uq_sso_auth_states_state_hash (state_hash),
             KEY idx_sso_auth_states_provider_expiry (provider, expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS portal_password_recovery_requests (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            account_id BIGINT UNSIGNED NOT NULL,
+            channel VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
+            token_hash CHAR(64) NOT NULL,
+            code_hash CHAR(64) NOT NULL,
+            destination_hash CHAR(64) NOT NULL,
+            requested_ip_hash CHAR(64) NOT NULL,
+            attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 5,
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME DEFAULT NULL,
+            invalidated_at DATETIME DEFAULT NULL,
+            created_by_account_id BIGINT UNSIGNED DEFAULT NULL,
+            metadata_json LONGTEXT DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_portal_password_recovery_token (token_hash),
+            KEY idx_portal_password_recovery_account (account_id, created_at),
+            KEY idx_portal_password_recovery_expiry (expires_at, consumed_at, invalidated_at),
+            CONSTRAINT fk_portal_password_recovery_account
+                FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE,
+            CONSTRAINT fk_portal_password_recovery_actor
+                FOREIGN KEY (created_by_account_id) REFERENCES portal_accounts(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS radcheck (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -881,7 +1000,12 @@ function app_db_bootstrap(PDO $db): void
     }
 
     app_db_migrate_schema($db);
-    app_db_seed_if_empty($db);
+    if (app_db_demo_seed_enabled()) {
+        app_db_seed_if_empty($db);
+    } else {
+        app_db_seed_branches($db);
+        app_db_seed_area_code_prefixes($db);
+    }
     app_billing_seed_defaults($db);
     app_message_seed_defaults($db);
 }
@@ -892,7 +1016,60 @@ function app_db_runtime_migrations(PDO $db): void
         return;
     }
 
-    app_db_ensure_default_admin($db);
+    app_db_migrate_communication_delivery_state($db);
+    app_db_migrate_portal_password_recovery($db);
+    app_db_migrate_billing_debt_column($db);
+}
+
+/**
+ * Materialize the customer debt (stored in payload_json as a formatted string)
+ * into an indexed generated column. Sorting/filtering the balance and dashboard
+ * views by debt previously forced a JSON extract + string cleanup on every one
+ * of 5k+ rows before the sort (~1.5s). A STORED generated column is computed on
+ * write and indexed, so those queries become index-friendly. No write-path code
+ * changes are needed — MySQL maintains the value automatically.
+ */
+function app_db_migrate_billing_debt_column(PDO $db): void
+{
+    if (!app_db_table_exists($db, 'portal_accounts')
+        || !app_db_column_exists($db, 'portal_accounts', 'payload_json')) {
+        return;
+    }
+    if (!app_db_column_exists($db, 'portal_accounts', 'billing_debt_amount')) {
+        try {
+            $db->exec(
+                "ALTER TABLE portal_accounts ADD COLUMN billing_debt_amount DECIMAL(12,2)
+                 AS (CAST(REPLACE(REPLACE(REPLACE(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.billing.debt_raw')), '0'), 'AZN', ''), ' ', ''), ',', '.') AS DECIMAL(12,2))) STORED"
+            );
+        } catch (Throwable) {
+            return;
+        }
+    }
+    if (!app_db_index_exists($db, 'portal_accounts', 'idx_portal_accounts_debt')) {
+        try {
+            $db->exec('CREATE INDEX idx_portal_accounts_debt ON portal_accounts (billing_debt_amount)');
+        } catch (Throwable) {
+            // Index creation is best-effort; the column alone already removes the
+            // per-row JSON computation.
+        }
+    }
+}
+
+function app_db_demo_seed_enabled(): bool
+{
+    return app_demo_fixtures_enabled();
+}
+
+function app_db_table_exists(PDO $db, string $table): bool
+{
+    $statement = $db->prepare(
+        'SELECT COUNT(*)
+         FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name'
+    );
+    $statement->execute(['table_name' => $table]);
+
+    return (int) $statement->fetchColumn() === 1;
 }
 
 function app_db_column_exists(PDO $db, string $table, string $column): bool
@@ -911,8 +1088,125 @@ function app_db_index_exists(PDO $db, string $table, string $index): bool
     return $statement !== false && (bool) $statement->fetch(PDO::FETCH_ASSOC);
 }
 
+function app_db_migrate_communication_delivery_state(PDO $db): void
+{
+    if (!app_db_table_exists($db, 'communication_messages')) {
+        return;
+    }
+
+    $messageColumns = [
+        'delivery_state' => "ALTER TABLE communication_messages ADD COLUMN delivery_state ENUM('pending','accepted','submitted','delivered','final_failed') NOT NULL DEFAULT 'pending' AFTER status",
+        'provider_message_id' => 'ALTER TABLE communication_messages ADD COLUMN provider_message_id VARCHAR(191) DEFAULT NULL AFTER delivery_state',
+        'provider_status_code' => 'ALTER TABLE communication_messages ADD COLUMN provider_status_code INT DEFAULT NULL AFTER provider_message_id',
+        'provider_status_description' => 'ALTER TABLE communication_messages ADD COLUMN provider_status_description VARCHAR(191) DEFAULT NULL AFTER provider_status_code',
+        'provider_status_final' => 'ALTER TABLE communication_messages ADD COLUMN provider_status_final TINYINT(1) NOT NULL DEFAULT 0 AFTER provider_status_description',
+        'accepted_at' => 'ALTER TABLE communication_messages ADD COLUMN accepted_at DATETIME DEFAULT NULL AFTER sent_at',
+        'submitted_at' => 'ALTER TABLE communication_messages ADD COLUMN submitted_at DATETIME DEFAULT NULL AFTER accepted_at',
+        'delivered_at' => 'ALTER TABLE communication_messages ADD COLUMN delivered_at DATETIME DEFAULT NULL AFTER submitted_at',
+        'final_failed_at' => 'ALTER TABLE communication_messages ADD COLUMN final_failed_at DATETIME DEFAULT NULL AFTER delivered_at',
+        'delivery_updated_at' => 'ALTER TABLE communication_messages ADD COLUMN delivery_updated_at DATETIME DEFAULT NULL AFTER final_failed_at',
+    ];
+    $messageSchemaChanged = false;
+    foreach ($messageColumns as $column => $sql) {
+        if (!app_db_column_exists($db, 'communication_messages', $column)) {
+            $db->exec($sql);
+            $messageSchemaChanged = true;
+        }
+    }
+    if (!app_db_index_exists($db, 'communication_messages', 'idx_communication_messages_delivery_state')) {
+        $db->exec('CREATE INDEX idx_communication_messages_delivery_state ON communication_messages (delivery_state, created_at)');
+    }
+    if ($messageSchemaChanged) {
+        $db->exec(
+            "UPDATE communication_messages
+             SET delivery_state = CASE
+                    WHEN delivery_state <> 'pending' THEN delivery_state
+                    WHEN status = 'sent' THEN 'accepted'
+                    WHEN status = 'failed' THEN 'final_failed'
+                    ELSE 'pending'
+                 END,
+                 accepted_at = CASE WHEN status = 'sent' THEN COALESCE(accepted_at, sent_at) ELSE accepted_at END,
+                 final_failed_at = CASE WHEN status = 'failed' THEN COALESCE(final_failed_at, created_at) ELSE final_failed_at END,
+                 delivery_updated_at = CASE
+                    WHEN status IN ('sent','failed') THEN COALESCE(delivery_updated_at, sent_at, created_at)
+                    ELSE delivery_updated_at
+                 END"
+        );
+    }
+
+    if (!app_db_table_exists($db, 'communication_delivery_attempts')) {
+        return;
+    }
+    $attemptColumns = [
+        'delivery_state' => "ALTER TABLE communication_delivery_attempts ADD COLUMN delivery_state ENUM('pending','accepted','submitted','delivered','final_failed') NOT NULL DEFAULT 'pending' AFTER status",
+        'provider_status_code' => 'ALTER TABLE communication_delivery_attempts ADD COLUMN provider_status_code INT DEFAULT NULL AFTER provider_message_id',
+        'provider_status_description' => 'ALTER TABLE communication_delivery_attempts ADD COLUMN provider_status_description VARCHAR(191) DEFAULT NULL AFTER provider_status_code',
+        'provider_status_final' => 'ALTER TABLE communication_delivery_attempts ADD COLUMN provider_status_final TINYINT(1) NOT NULL DEFAULT 0 AFTER provider_status_description',
+        'delivery_updated_at' => 'ALTER TABLE communication_delivery_attempts ADD COLUMN delivery_updated_at DATETIME DEFAULT NULL AFTER provider_status_final',
+    ];
+    $attemptSchemaChanged = false;
+    foreach ($attemptColumns as $column => $sql) {
+        if (!app_db_column_exists($db, 'communication_delivery_attempts', $column)) {
+            $db->exec($sql);
+            $attemptSchemaChanged = true;
+        }
+    }
+    if (!app_db_index_exists($db, 'communication_delivery_attempts', 'idx_communication_attempts_delivery_state')) {
+        $db->exec('CREATE INDEX idx_communication_attempts_delivery_state ON communication_delivery_attempts (delivery_state, attempted_at)');
+    }
+    if ($attemptSchemaChanged) {
+        $db->exec(
+            "UPDATE communication_delivery_attempts
+             SET delivery_state = CASE
+                    WHEN delivery_state <> 'pending' THEN delivery_state
+                    WHEN status = 'sent' THEN 'accepted'
+                    WHEN status = 'failed' THEN 'final_failed'
+                    ELSE 'pending'
+                 END,
+                 provider_status_final = CASE WHEN status = 'failed' THEN 1 ELSE provider_status_final END,
+                 delivery_updated_at = CASE
+                    WHEN status IN ('sent','failed') THEN COALESCE(delivery_updated_at, attempted_at)
+                    ELSE delivery_updated_at
+                 END"
+        );
+    }
+}
+
+function app_db_migrate_portal_password_recovery(PDO $db): void
+{
+    $db->exec(
+        "CREATE TABLE IF NOT EXISTS portal_password_recovery_requests (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            account_id BIGINT UNSIGNED NOT NULL,
+            channel VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
+            token_hash CHAR(64) NOT NULL,
+            code_hash CHAR(64) NOT NULL,
+            destination_hash CHAR(64) NOT NULL,
+            requested_ip_hash CHAR(64) NOT NULL,
+            attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 5,
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME DEFAULT NULL,
+            invalidated_at DATETIME DEFAULT NULL,
+            created_by_account_id BIGINT UNSIGNED DEFAULT NULL,
+            metadata_json LONGTEXT DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_portal_password_recovery_token (token_hash),
+            KEY idx_portal_password_recovery_account (account_id, created_at),
+            KEY idx_portal_password_recovery_expiry (expires_at, consumed_at, invalidated_at),
+            CONSTRAINT fk_portal_password_recovery_account
+                FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE,
+            CONSTRAINT fk_portal_password_recovery_actor
+                FOREIGN KEY (created_by_account_id) REFERENCES portal_accounts(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+}
+
 function app_db_migrate_schema(PDO $db): void
 {
+    app_db_migrate_communication_delivery_state($db);
+    app_db_migrate_portal_password_recovery($db);
     $accountColumns = [
         'job_title' => "ALTER TABLE portal_accounts ADD COLUMN job_title VARCHAR(191) DEFAULT NULL AFTER employee_role",
         'fin_code' => "ALTER TABLE portal_accounts ADD COLUMN fin_code VARCHAR(32) DEFAULT NULL AFTER contract_no",
@@ -1062,7 +1356,7 @@ function app_db_migrate_schema(PDO $db): void
     $db->exec(
         "CREATE TABLE IF NOT EXISTS radius_session_actions (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            action_type ENUM('disconnect_request') NOT NULL DEFAULT 'disconnect_request',
+            action_type ENUM('disconnect_request','coa_qos_change') NOT NULL DEFAULT 'disconnect_request',
             status ENUM('pending','approved','rejected','executed','cancelled') NOT NULL DEFAULT 'pending',
             account_id BIGINT UNSIGNED DEFAULT NULL,
             username VARCHAR(191) NOT NULL,
@@ -1097,12 +1391,18 @@ function app_db_migrate_schema(PDO $db): void
             delivery VARCHAR(64) NOT NULL DEFAULT '',
             destination_masked VARCHAR(64) NOT NULL DEFAULT '',
             status ENUM('sent','failed','skipped') NOT NULL DEFAULT 'failed',
+            delivery_state ENUM('pending','accepted','submitted','delivered','final_failed') NOT NULL DEFAULT 'pending',
             provider_message_id VARCHAR(191) DEFAULT NULL,
+            provider_status_code INT DEFAULT NULL,
+            provider_status_description VARCHAR(191) DEFAULT NULL,
+            provider_status_final TINYINT(1) NOT NULL DEFAULT 0,
+            delivery_updated_at DATETIME DEFAULT NULL,
             reason VARCHAR(191) DEFAULT NULL,
             response_summary_json LONGTEXT DEFAULT NULL,
             attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_communication_attempts_message (message_id, attempted_at),
             KEY idx_communication_attempts_status (status, attempted_at),
+            KEY idx_communication_attempts_delivery_state (delivery_state, attempted_at),
             KEY idx_communication_attempts_channel (channel, attempted_at),
             KEY idx_communication_attempts_account (account_id, attempted_at),
             CONSTRAINT fk_communication_attempts_message
@@ -1182,6 +1482,12 @@ function app_db_migrate_schema(PDO $db): void
 
 function app_db_seed_if_empty(PDO $db): void
 {
+    if (!app_db_demo_seed_enabled()) {
+        app_db_seed_branches($db);
+        app_db_seed_area_code_prefixes($db);
+        return;
+    }
+
     $count = (int) $db->query('SELECT COUNT(*) FROM portal_accounts')->fetchColumn();
     if ($count === 0) {
         app_db_seed_accounts_from_mock($db);
@@ -1295,7 +1601,7 @@ function app_db_seed_accounts_from_mock(PDO $db): void
         app_db_upsert_account([
             'external_id' => (string) ($technician['id'] ?? ''),
             'login' => $login,
-            'password' => 'Tech12345!',
+            'password' => bin2hex(random_bytes(16)) . 'Aa1!',
             'role' => 'employee',
             'account_type' => 'technician',
             'employee_role' => 'technician',
@@ -1318,6 +1624,10 @@ function app_db_seed_accounts_from_mock(PDO $db): void
 
 function app_db_ensure_default_admin(PDO $db): void
 {
+    if (!app_db_demo_seed_enabled()) {
+        return;
+    }
+
     $existing = app_db_account_by_login('s.abdullayev@superoptic.net');
     $payload = [
         'summary' => [
@@ -1360,7 +1670,7 @@ function app_db_ensure_default_admin(PDO $db): void
     app_db_upsert_account([
         'external_id' => 'emp-admin-001',
         'login' => 's.abdullayev@superoptic.net',
-        'password' => '!Asan!1312',
+        'password' => bin2hex(random_bytes(32)),
         'role' => 'employee',
         'account_type' => 'admin',
         'employee_role' => 'super_admin',
@@ -1617,15 +1927,15 @@ function app_db_area_code_key(string $area): string
         'Ö' => 'o',
         'Ç' => 'c',
         'É™' => 'e',
-        'Ä±' => 'i',
-        'Ä°' => 'i',
+        'ı' => 'i',
+        'İ' => 'i',
         'ÅŸ' => 's',
         'Åž' => 's',
-        'Ã§' => 'c',
-        'Ã¼' => 'u',
-        'Ã¶' => 'o',
+        'ç' => 'c',
+        'ü' => 'u',
+        'ö' => 'o',
         'ÄŸ' => 'g',
-        'Æ' => 'e',
+        'Ə' => 'e',
         'Æ' => 'e',
     ];
     $value = strtr($value, $replace);
@@ -1684,23 +1994,6 @@ function app_db_seed_branches(?PDO $db = null): void
         return;
     }
 
-    $db->exec(
-        "CREATE TABLE IF NOT EXISTS company_branches (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            branch_name VARCHAR(128) NOT NULL,
-            branch_key VARCHAR(160) NOT NULL,
-            area_name VARCHAR(128) DEFAULT NULL,
-            address VARCHAR(255) DEFAULT NULL,
-            status VARCHAR(32) NOT NULL DEFAULT 'active',
-            note VARCHAR(255) DEFAULT NULL,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_company_branches_key (branch_key),
-            KEY idx_company_branches_status (status),
-            KEY idx_company_branches_area (area_name)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-
     foreach (app_db_default_branches() as $branch) {
         app_db_upsert_branch(
             $db,
@@ -1720,7 +2013,6 @@ function app_db_branches(?PDO $db = null, bool $activeOnly = true): array
         return [];
     }
 
-    app_db_seed_branches($db);
     $sql = 'SELECT id, branch_name, area_name, address, status, note, updated_at FROM company_branches';
     if ($activeOnly) {
         $sql .= ' WHERE status = "active"';
@@ -1753,24 +2045,24 @@ function app_db_default_area_code_prefixes(): array
     return [
         'Qaracuxur' => '100',
         'Qaraçuxur' => '100',
-        'QaraÃ§uxur' => '100',
+        'Qaraçuxur' => '100',
         'Astara' => '300',
         'Sahagaci' => '200',
         'Şahağacı' => '200',
-        'ÅžahaÄŸacÄ±' => '200',
+        'Şahağacı' => '200',
         'Bileceri' => '110',
         'Biləcəri' => '110',
-        'BilÉ™cÉ™ri' => '110',
+        'Biləcəri' => '110',
         'Kurdexani' => '232',
         'Kürdəxanı' => '232',
-        'KÃ¼rdÉ™xanÄ±' => '232',
+        'Kürdəxanı' => '232',
         'Zabrat' => '232',
         'Lenkeran' => '500',
         'Lənkəran' => '500',
-        'LÉ™nkÉ™ran' => '500',
+        'Lənkəran' => '500',
         'Masalli' => '400',
         'Masallı' => '400',
-        'MasallÄ±' => '400',
+        'Masallı' => '400',
     ];
 }
 
@@ -1807,6 +2099,23 @@ function app_db_seed_area_code_prefixes(?PDO $db = null): void
     if (!$db instanceof PDO) {
         return;
     }
+
+    // This is called from many read paths (customer list, code resolution) and
+    // used to fire ~16 INSERT IGNOREs on every page render. Run at most once per
+    // request, and skip entirely when the table is already seeded.
+    static $seeded = false;
+    if ($seeded) {
+        return;
+    }
+    try {
+        if ((int) $db->query('SELECT COUNT(*) FROM customer_area_code_prefixes')->fetchColumn() > 0) {
+            $seeded = true;
+            return;
+        }
+    } catch (Throwable) {
+        // Table may not exist yet on a fresh install — fall through and seed.
+    }
+    $seeded = true;
 
     $canonicalPrefixes = [
         'Qaracuxur' => '100',
@@ -1971,7 +2280,9 @@ function app_db_account_payload(array $account): array
 
 function app_db_user_session_payload(array $account): array
 {
-    return [
+    $payload = app_db_account_payload($account);
+    $security = is_array($payload['security'] ?? null) ? $payload['security'] : [];
+    $session = [
         'id' => (string) ($account['id'] ?? ''),
         'name' => (string) ($account['full_name'] ?? ''),
         'role' => (string) ($account['role'] ?? 'customer'),
@@ -1982,7 +2293,20 @@ function app_db_user_session_payload(array $account): array
         'token' => 'db-session',
         'login' => (string) ($account['login'] ?? ''),
         'email' => (string) ($account['email'] ?? ''),
+        'must_change_password' => !empty($security['must_change_password']),
     ];
+    $access = is_array($payload['access'] ?? null) ? $payload['access'] : [];
+    if (array_key_exists('module_keys', $access) && is_array($access['module_keys'])) {
+        $allowedModules = array_keys(app_portal_module_catalog());
+        $session['module_keys'] = array_values(array_intersect(
+            $allowedModules,
+            array_values(array_unique(array_map(
+                static fn (mixed $key): string => strtolower(trim((string) $key)),
+                $access['module_keys']
+            )))
+        ));
+    }
+    return $session;
 }
 
 function app_db_session_user_from_legacy(array $user): ?array
@@ -2188,9 +2512,19 @@ function app_db_update_password(array $user, string $currentPassword, string $ne
         return false;
     }
 
-    $statement = $db->prepare('UPDATE portal_accounts SET password_hash = :password_hash WHERE id = :id');
+    $payload = app_db_account_payload($account);
+    $security = is_array($payload['security'] ?? null) ? $payload['security'] : [];
+    $security['must_change_password'] = false;
+    $security['password_changed_at'] = date(DATE_ATOM);
+    $payload['security'] = $security;
+    $statement = $db->prepare(
+        'UPDATE portal_accounts
+            SET password_hash = :password_hash, payload_json = :payload_json
+          WHERE id = :id'
+    );
     return $statement->execute([
         'password_hash' => password_hash($newPassword, PASSWORD_DEFAULT),
+        'payload_json' => app_db_json_encode($payload),
         'id' => (int) $account['id'],
     ]);
 }
@@ -2377,6 +2711,11 @@ function app_db_ticket_row_to_public(array $row): array
         'assigned_technician_name' => (string) ($row['assigned_technician_name'] ?? ''),
         'resolution_reason' => (string) ($row['resolution_reason'] ?? ''),
         'resolution_note' => (string) ($row['resolution_note'] ?? ''),
+        'resolution_verification_status' => (string) ($row['resolution_verification_status'] ?? 'none'),
+        'resolution_check' => app_db_json_decode((string) ($row['resolution_check_json'] ?? ''), []),
+        'close_requested_at' => app_db_display_datetime((string) ($row['close_requested_at'] ?? '')),
+        'verified_at' => app_db_display_datetime((string) ($row['verified_at'] ?? '')),
+        'verification_attempts' => (int) ($row['verification_attempts'] ?? 0),
         'handled_by' => (string) ($row['handled_by'] ?? ''),
         'created_by_role' => (string) ($row['created_by_role'] ?? ''),
         'created_by_name' => (string) ($row['created_by_name'] ?? ''),
@@ -2538,6 +2877,179 @@ function app_db_close_ticket(string $ticketNo, string $reason, string $note): bo
     return $ok;
 }
 
+// Fairness rule (vision §9.3 "musterinin cavab vermemesi ayrica statusdur"):
+// a distinct ticket status so time spent waiting on the customer is never
+// mistaken for the technician being slow. status stays a plain VARCHAR (no
+// ENUM), so this is additive -- existing 'Aciqdir'/'Baglandi' code paths are
+// unaffected. app_mgs_record_hr_score_event() reads the portal_ticket_events
+// timeline this writes to decide whether a task_missed penalty applies.
+const APP_TICKET_STATUS_AWAITING_CUSTOMER = 'Musteri_Cavab_Gozleyir';
+const APP_TICKET_STATUS_DEPT_BLOCKED = 'Basqa_Sobede_Gozleyir';
+
+function app_db_set_ticket_awaiting_customer(string $ticketNo, array $actor, string $note = ''): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') === 'Baglandi') {
+        return ['ok' => false, 'error' => 'ticket_closed'];
+    }
+    if ((string) ($row['status'] ?? '') === APP_TICKET_STATUS_AWAITING_CUSTOMER) {
+        return ['ok' => false, 'error' => 'already_awaiting_customer'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => APP_TICKET_STATUS_AWAITING_CUSTOMER, 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'awaiting_customer_response',
+        $note,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        ['previous_status' => (string) ($row['status'] ?? '')]
+    );
+    return ['ok' => true];
+}
+
+function app_db_clear_ticket_awaiting_customer(string $ticketNo, array $actor, string $note = ''): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') !== APP_TICKET_STATUS_AWAITING_CUSTOMER) {
+        return ['ok' => false, 'error' => 'not_awaiting_customer'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => 'Aciqdir', 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'awaiting_customer_response_cleared',
+        $note,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        null
+    );
+    return ['ok' => true];
+}
+
+// Fairness rule (vision §9.3 "basqa sobeden asili gecikme ayrilir"): marks a
+// ticket as blocked on another department (warehouse/finance/noc/...) so the
+// wait is never attributed to the assigned technician's own delay.
+function app_db_set_ticket_dept_blocked(string $ticketNo, string $department, string $reason, array $actor): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $department = mb_substr(clean_text($department), 0, 64);
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($department === '' || $reason === '') {
+        return ['ok' => false, 'error' => 'department_and_reason_required'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') === 'Baglandi') {
+        return ['ok' => false, 'error' => 'ticket_closed'];
+    }
+    if ((string) ($row['status'] ?? '') === APP_TICKET_STATUS_DEPT_BLOCKED) {
+        return ['ok' => false, 'error' => 'already_dept_blocked'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => APP_TICKET_STATUS_DEPT_BLOCKED, 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'dept_blocked',
+        $reason,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        ['waiting_on_department' => $department, 'previous_status' => (string) ($row['status'] ?? '')]
+    );
+    return ['ok' => true];
+}
+
+function app_db_clear_ticket_dept_blocked(string $ticketNo, array $actor, string $note = ''): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketNo === '') {
+        return ['ok' => false, 'error' => 'invalid_ticket'];
+    }
+    $statement = $db->prepare('SELECT * FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+    $statement->execute(['ticket_no' => $ticketNo]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'ticket_not_found'];
+    }
+    if ((string) ($row['status'] ?? '') !== APP_TICKET_STATUS_DEPT_BLOCKED) {
+        return ['ok' => false, 'error' => 'not_dept_blocked'];
+    }
+    $db->prepare('UPDATE portal_tickets SET status = :status, updated_at = :updated_at WHERE ticket_no = :ticket_no')
+        ->execute(['status' => 'Aciqdir', 'updated_at' => app_db_now(), 'ticket_no' => $ticketNo]);
+    app_db_add_ticket_event(
+        (int) $row['id'],
+        'dept_blocked_cleared',
+        $note,
+        (int) ($actor['id'] ?? 0),
+        (string) ($actor['full_name'] ?? $actor['login'] ?? ''),
+        null
+    );
+    return ['ok' => true];
+}
+
+/**
+ * Was this ticket in a waiting state (awaiting customer response, or blocked
+ * on another department) as of $asOfDate? Looks at the most recent relevant
+ * portal_ticket_events row up to that date -- if it's a "start" event with no
+ * later "cleared" event before the cutoff, the ticket was waiting that day.
+ *
+ * @return array{waiting:bool,type?:string,department?:string}
+ */
+function app_db_ticket_waiting_state_as_of(int $ticketId, string $asOfDate): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || $ticketId <= 0) {
+        return ['waiting' => false];
+    }
+    $statement = $db->prepare(
+        "SELECT event_type, payload_json FROM portal_ticket_events
+          WHERE ticket_id = :ticket_id
+            AND event_type IN ('awaiting_customer_response', 'awaiting_customer_response_cleared', 'dept_blocked', 'dept_blocked_cleared')
+            AND created_at <= :cutoff
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1"
+    );
+    $statement->execute(['ticket_id' => $ticketId, 'cutoff' => $asOfDate . ' 23:59:59']);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['waiting' => false];
+    }
+    $eventType = (string) ($row['event_type'] ?? '');
+    if ($eventType === 'awaiting_customer_response') {
+        return ['waiting' => true, 'type' => 'customer_no_response'];
+    }
+    if ($eventType === 'dept_blocked') {
+        $payload = is_string($row['payload_json'] ?? null) ? (json_decode((string) $row['payload_json'], true) ?: []) : [];
+        return ['waiting' => true, 'type' => 'dept_dependency', 'department' => (string) ($payload['waiting_on_department'] ?? '')];
+    }
+    return ['waiting' => false];
+}
+
 function app_db_accounts(array $filters = []): array
 {
     $db = app_db();
@@ -2663,10 +3175,6 @@ function app_db_upsert_account(array $payload, bool $syncOlt = true): ?array
 
     if ($login === '' || $fullName === '' || !in_array($role, ['customer', 'employee'], true)) {
         return null;
-    }
-
-    if ($role === 'customer' && !$db->inTransaction()) {
-        $db->exec('CREATE TABLE IF NOT EXISTS billing_customer_fin_claims(fin_code VARCHAR(32) NOT NULL PRIMARY KEY,account_id BIGINT UNSIGNED NOT NULL,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,UNIQUE KEY uq_billing_fin_claim_account(account_id))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
     }
 
     $startedTransaction=!$db->inTransaction();
@@ -2880,7 +3388,10 @@ function app_db_sync_olt_account(string $action, array $account): void
     ];
 
     $headers = [];
-    $secret = app_config('olt_user_sync_secret', app_config('olt_sso_shared_secret'));
+    $secret = app_environment_secret('OLT_USER_SYNC_SECRET');
+    if ($secret === '') {
+        $secret = app_environment_secret('OLT_SSO_SHARED_SECRET');
+    }
     if ($secret !== '') {
         $headers[] = 'X-Portal-Sync-Secret: ' . $secret;
     }
@@ -4321,7 +4832,7 @@ function app_radius_request_disconnect(PDO $db, array $session, array $user, str
     $existingId = (int) ($existing->fetchColumn() ?: 0);
 
     $radiusSettings = app_radius_settings();
-    $disconnectReadiness = app_radius_disconnect_worker_readiness($radiusSettings);
+    $disconnectReadiness = app_radius_disconnect_worker_readiness($radiusSettings, $db, $nasIp);
     $safeRadiusSettings = $radiusSettings;
     unset($safeRadiusSettings['shared_secret']);
     $safeRadiusSettings['shared_secret_configured'] = trim((string) ($radiusSettings['shared_secret'] ?? '')) !== '';
@@ -4403,7 +4914,7 @@ function app_radius_settings(): array
     return [
         'router_ip' => trim((string) app_config('radius_router_ip', '172.16.5.5')),
         'server_ip' => trim((string) app_config('radius_server_ip', '10.99.99.10')),
-        'shared_secret' => trim((string) app_config('radius_shared_secret', '')),
+        'shared_secret' => app_environment_secret('RADIUS_SHARED_SECRET'),
         'core_nas_ip' => trim((string) app_config('radius_core_nas_ip', '10.99.99.1')),
         'auth_port' => max(1, (int) app_config('radius_auth_port', '1812')),
         'acct_port' => max(1, (int) app_config('radius_acct_port', '1813')),
@@ -4415,7 +4926,7 @@ function app_radius_settings(): array
     ];
 }
 
-function app_radius_disconnect_worker_readiness(?array $settings = null): array
+function app_radius_disconnect_worker_readiness(?array $settings = null, ?PDO $db = null, string $targetHost = ''): array
 {
     $settings ??= app_radius_settings();
     if (trim((string) ($settings['router_ip'] ?? '')) === '') {
@@ -4424,14 +4935,41 @@ function app_radius_disconnect_worker_readiness(?array $settings = null): array
     if (trim((string) ($settings['server_ip'] ?? '')) === '') {
         return ['ok' => false, 'reason' => 'missing_server_ip'];
     }
-    if (trim((string) ($settings['shared_secret'] ?? '')) === '') {
-        return ['ok' => false, 'reason' => 'missing_shared_secret'];
-    }
     if ((int) ($settings['coa_port'] ?? 0) <= 0) {
         return ['ok' => false, 'reason' => 'missing_coa_port'];
     }
 
-    return ['ok' => true, 'reason' => 'ready'];
+    if (trim((string) ($settings['shared_secret'] ?? '')) !== '') {
+        return ['ok' => true, 'reason' => 'ready', 'secret_reference' => 'RADIUS_SHARED_SECRET'];
+    }
+
+    if ($db instanceof PDO && app_db_table_exists($db, 'router_registry')) {
+        try {
+            $sql = 'SELECT radius_secret_env FROM router_registry WHERE is_active=1 AND radius_secret_env IS NOT NULL AND radius_secret_env<>""';
+            $params = [];
+            $targetHost = trim($targetHost);
+            if ($targetHost !== '') {
+                $sql .= ' AND (management_ip=:target OR nas_identity=:target)';
+                $params['target'] = $targetHost;
+            }
+            $sql .= ' ORDER BY id ASC';
+            $statement = $db->prepare($sql);
+            $statement->execute($params);
+            foreach ($statement->fetchAll(PDO::FETCH_COLUMN) ?: [] as $reference) {
+                $reference = trim((string) $reference);
+                if (preg_match('/^ROUTER_[A-Z0-9]+(?:_[A-Z0-9]+)*_RADIUS_SECRET$/D', $reference) !== 1) {
+                    continue;
+                }
+                if (trim((string) getenv($reference)) !== '') {
+                    return ['ok' => true, 'reason' => 'ready', 'secret_reference' => $reference];
+                }
+            }
+        } catch (Throwable) {
+            return ['ok' => false, 'reason' => 'router_secret_lookup_failed'];
+        }
+    }
+
+    return ['ok' => false, 'reason' => 'missing_shared_secret'];
 }
 
 function app_radius_disconnect_action_session(array $actionRow): array
@@ -4459,6 +4997,9 @@ function app_radius_disconnect_payload(array $actionRow, ?array $settings = null
     $acctUniqueSessionId = trim((string) ($session['acct_unique_session_id'] ?? ''));
     $nasIdentifier = trim((string) ($session['nas_identifier'] ?? ''));
     $calledStationId = trim((string) ($session['called_station_id'] ?? ''));
+    $targetHost = filter_var($nasIp, FILTER_VALIDATE_IP) !== false
+        ? $nasIp
+        : trim((string) ($settings['router_ip'] ?? ''));
 
     $lines = [];
     if ($username !== '') {
@@ -4490,9 +5031,223 @@ function app_radius_disconnect_payload(array $actionRow, ?array $settings = null
     }
 
     return [
-        'target' => trim((string) ($settings['router_ip'] ?? '')) . ':' . (int) ($settings['coa_port'] ?? 3799),
+        'target' => $targetHost . ':' . (int) ($settings['coa_port'] ?? 3799),
+        'target_host' => $targetHost,
         'attributes' => implode(PHP_EOL, $lines) . PHP_EOL,
         'username' => $username,
+    ];
+}
+
+/**
+ * Router policy-map adları üçün icazə verilən simvollar (Cisco AVPair sətrinə injection qarşısı,
+ * eyni zamanda `show policy-map`-da gördüyümüz adlandırma konvensiyasına uyğun: "1M", "100M" və s.)
+ */
+function app_radius_qos_policy_name_valid(string $name): bool
+{
+    return preg_match('/^[A-Za-z0-9_-]{1,64}$/D', trim($name)) === 1;
+}
+
+/**
+ * CoA ilə müştəri sessiyasına müvəqqəti başqa QoS policy-map tətbiq etmək üçün növbəyə qoyur
+ * (məs. abuse aşkarlandıqda "1M"-ə endirmək, sonra əsl tarifin policy-map adına geri qaytarmaq).
+ * Bu, RFC 5176 CoA-Request-dir — sessiyanı KƏSMİR, yalnız QoS-u dəyişir (Disconnect-Request-dən fərqli).
+ * `$purpose`: 'throttle' | 'restore' — yalnız audit/metadata üçün, icra məntiqinə təsir etmir.
+ */
+function app_radius_request_qos_change(PDO $db, array $session, array $user, string $policyMapName, string $purpose = 'throttle', string $reason = ''): int
+{
+    $username = trim((string) ($session['username'] ?? ''));
+    $policyMapName = trim($policyMapName);
+    if ($username === '' || !app_radius_qos_policy_name_valid($policyMapName)) {
+        return 0;
+    }
+
+    $accountId = (int) ($session['account_id'] ?? 0);
+    $requestedBy = (int) ($user['id'] ?? 0);
+    $framedIp = trim((string) ($session['framed_ip'] ?? $session['framedipaddress'] ?? ''));
+    $nasIp = trim((string) ($session['nas_ip'] ?? $session['nasipaddress'] ?? ''));
+    $nasPortId = trim((string) ($session['nas_port_id'] ?? $session['nasportid'] ?? ''));
+    $callingStationId = trim((string) ($session['calling_station_id'] ?? $session['callingstationid'] ?? ''));
+    $acctSessionId = trim((string) ($session['acct_session_id'] ?? $session['acctsessionid'] ?? ''));
+    $acctUniqueSessionId = trim((string) ($session['acct_unique_session_id'] ?? $session['acctuniquesessionid'] ?? ''));
+    $nasIdentifier = trim((string) ($session['nas_identifier'] ?? $session['nasidentifier'] ?? ''));
+    $calledStationId = trim((string) ($session['called_station_id'] ?? $session['calledstationid'] ?? ''));
+    $reason = trim($reason) !== '' ? trim($reason) : ('QoS policy change (' . $purpose . '): ' . $policyMapName);
+
+    $existing = $db->prepare(
+        'SELECT id
+         FROM radius_session_actions
+         WHERE action_type = "coa_qos_change"
+           AND status = "pending"
+           AND username = :username
+           AND requested_at >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+         ORDER BY id DESC
+         LIMIT 1'
+    );
+    $existing->execute(['username' => $username]);
+    $existingId = (int) ($existing->fetchColumn() ?: 0);
+
+    $radiusSettings = app_radius_settings();
+    $disconnectReadiness = app_radius_disconnect_worker_readiness($radiusSettings, $db, $nasIp);
+    $safeRadiusSettings = $radiusSettings;
+    unset($safeRadiusSettings['shared_secret']);
+    $safeRadiusSettings['shared_secret_configured'] = trim((string) ($radiusSettings['shared_secret'] ?? '')) !== '';
+    $metadata = [
+        'source' => 'radius-coa-qos',
+        'purpose' => $purpose,
+        'policy_map_name' => $policyMapName,
+        'mode' => !empty($disconnectReadiness['ok']) ? 'queued_for_worker' : 'config_pending',
+        'safety_note' => !empty($disconnectReadiness['ok'])
+            ? 'Queue created for live CoA worker. Session is NOT disconnected — only QoS policy changes.'
+            : 'CoA queue is ready but worker/apply path still needs config: ' . (string) ($disconnectReadiness['reason'] ?? 'unknown'),
+        'radius' => $safeRadiusSettings,
+        'session' => [
+            'username' => $username,
+            'framed_ip' => $framedIp,
+            'nas_ip' => $nasIp,
+            'nas_port_id' => $nasPortId,
+            'calling_station_id' => $callingStationId,
+            'acct_session_id' => $acctSessionId,
+            'acct_unique_session_id' => $acctUniqueSessionId,
+            'nas_identifier' => $nasIdentifier,
+            'called_station_id' => $calledStationId,
+        ],
+    ];
+
+    if ($existingId > 0) {
+        $update = $db->prepare(
+            'UPDATE radius_session_actions
+             SET account_id = :account_id,
+                 framed_ip = :framed_ip,
+                 nas_ip = :nas_ip,
+                 nas_port_id = :nas_port_id,
+                 calling_station_id = :calling_station_id,
+                 reason = :reason,
+                 requested_by_account_id = :requested_by,
+                 requested_at = NOW(),
+                 metadata_json = :metadata_json
+             WHERE id = :id'
+        );
+        $update->execute([
+            'account_id' => $accountId > 0 ? $accountId : null,
+            'framed_ip' => $framedIp !== '' ? $framedIp : null,
+            'nas_ip' => $nasIp !== '' ? $nasIp : null,
+            'nas_port_id' => $nasPortId !== '' ? $nasPortId : null,
+            'calling_station_id' => $callingStationId !== '' ? $callingStationId : null,
+            'reason' => $reason,
+            'requested_by' => $requestedBy > 0 ? $requestedBy : null,
+            'metadata_json' => app_db_json_encode($metadata),
+            'id' => $existingId,
+        ]);
+
+        return $existingId;
+    }
+
+    $insert = $db->prepare(
+        'INSERT INTO radius_session_actions (
+            action_type, status, account_id, username, framed_ip, nas_ip, nas_port_id,
+            calling_station_id, reason, requested_by_account_id, metadata_json
+         ) VALUES (
+            "coa_qos_change", "pending", :account_id, :username, :framed_ip, :nas_ip, :nas_port_id,
+            :calling_station_id, :reason, :requested_by, :metadata_json
+         )'
+    );
+    $insert->execute([
+        'account_id' => $accountId > 0 ? $accountId : null,
+        'username' => $username,
+        'framed_ip' => $framedIp !== '' ? $framedIp : null,
+        'nas_ip' => $nasIp !== '' ? $nasIp : null,
+        'nas_port_id' => $nasPortId !== '' ? $nasPortId : null,
+        'calling_station_id' => $callingStationId !== '' ? $callingStationId : null,
+        'reason' => $reason,
+        'requested_by' => $requestedBy > 0 ? $requestedBy : null,
+        'metadata_json' => app_db_json_encode($metadata),
+    ]);
+
+    return (int) $db->lastInsertId();
+}
+
+function app_radius_coa_qos_action_metadata(array $actionRow): array
+{
+    $metadata = app_db_json_decode((string) ($actionRow['metadata_json'] ?? ''), []);
+    return is_array($metadata) ? $metadata : [];
+}
+
+/**
+ * CoA-Request payload-u qurur: eyni sessiya-eynilik atributları (Disconnect-Request-də olduğu kimi,
+ * qəsdən TƏKRAR yazılıb — mövcud, canlıda sınanmış app_radius_disconnect_payload()-a TOXUNMURUQ ki,
+ * disconnect funksionallığını risk altına atmayaq) + Cisco-AVPair ilə QoS policy-map dəyişikliyi.
+ */
+function app_radius_coa_qos_payload(array $actionRow, ?array $settings = null): array
+{
+    $settings ??= app_radius_settings();
+    $metadata = app_radius_coa_qos_action_metadata($actionRow);
+    $session = is_array($metadata['session'] ?? null) ? $metadata['session'] : [];
+    $policyMapName = trim((string) ($metadata['policy_map_name'] ?? ''));
+
+    $username = trim((string) ($actionRow['username'] ?? ''));
+    $framedIp = trim((string) ($actionRow['framed_ip'] ?? ''));
+    $nasIp = trim((string) ($actionRow['nas_ip'] ?? ($settings['core_nas_ip'] ?? '')));
+    $nasPortId = trim((string) ($actionRow['nas_port_id'] ?? ''));
+    $callingStationId = trim((string) ($actionRow['calling_station_id'] ?? ''));
+    $acctSessionId = trim((string) ($session['acct_session_id'] ?? ''));
+    $acctUniqueSessionId = trim((string) ($session['acct_unique_session_id'] ?? ''));
+    $nasIdentifier = trim((string) ($session['nas_identifier'] ?? ''));
+    $calledStationId = trim((string) ($session['called_station_id'] ?? ''));
+    $targetHost = filter_var($nasIp, FILTER_VALIDATE_IP) !== false
+        ? $nasIp
+        : trim((string) ($settings['router_ip'] ?? ''));
+
+    $lines = [];
+    if ($username !== '') {
+        $lines[] = 'User-Name = "' . app_radius_escape_attribute_value($username) . '"';
+    }
+    if ($nasIp !== '' && filter_var($nasIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        $lines[] = 'NAS-IP-Address = ' . $nasIp;
+    }
+    if ($framedIp !== '' && filter_var($framedIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        $lines[] = 'Framed-IP-Address = ' . $framedIp;
+    }
+    if ($nasPortId !== '') {
+        $lines[] = 'NAS-Port-Id = "' . app_radius_escape_attribute_value($nasPortId) . '"';
+    }
+    if ($callingStationId !== '') {
+        $lines[] = 'Calling-Station-Id = "' . app_radius_escape_attribute_value($callingStationId) . '"';
+    }
+    if ($calledStationId !== '') {
+        $lines[] = 'Called-Station-Id = "' . app_radius_escape_attribute_value($calledStationId) . '"';
+    }
+    if ($acctSessionId !== '') {
+        $lines[] = 'Acct-Session-Id = "' . app_radius_escape_attribute_value($acctSessionId) . '"';
+    }
+    if ($acctUniqueSessionId !== '') {
+        $lines[] = 'Acct-Unique-Session-Id = "' . app_radius_escape_attribute_value($acctUniqueSessionId) . '"';
+    }
+    if ($nasIdentifier !== '') {
+        $lines[] = 'NAS-Identifier = "' . app_radius_escape_attribute_value($nasIdentifier) . '"';
+    }
+
+    // Sessiyanı tapmaq üçün YALNIZ İKİ münasib atribut olsa belə (məs. User-Name+Framed-IP) CoA
+    // göndərilə bilər, amma AVPair-siz (policy adı yoxdursa) heç nə etmək mənasızdır — boş qaytar.
+    if ($policyMapName === '' || !app_radius_qos_policy_name_valid($policyMapName)) {
+        return [
+            'target' => $targetHost . ':' . (int) ($settings['coa_port'] ?? 3799),
+            'target_host' => $targetHost,
+            'attributes' => implode(PHP_EOL, $lines) . PHP_EOL,
+            'username' => $username,
+            'policy_map_name' => '',
+        ];
+    }
+
+    $escapedPolicy = app_radius_escape_attribute_value($policyMapName);
+    $lines[] = 'Cisco-AVPair = "ip:sub-qos-policy-in=' . $escapedPolicy . '"';
+    $lines[] = 'Cisco-AVPair = "ip:sub-qos-policy-out=' . $escapedPolicy . '"';
+
+    return [
+        'target' => $targetHost . ':' . (int) ($settings['coa_port'] ?? 3799),
+        'target_host' => $targetHost,
+        'attributes' => implode(PHP_EOL, $lines) . PHP_EOL,
+        'username' => $username,
+        'policy_map_name' => $policyMapName,
     ];
 }
 
@@ -5370,7 +6125,9 @@ function app_billing_apply_customer_payment(
     int $days = 0,
     string $transactionId = '',
     string $externalId = '',
-    ?string $createdAt = null
+    ?string $createdAt = null,
+    string $idempotencyKey = '',
+    string $correlationId = ''
 ): bool
 {
     $account = app_db_account_by_subscriber_code($subscriberCode);
@@ -5474,8 +6231,70 @@ function app_billing_apply_customer_payment(
         'tariff_name' => is_array($tariff) ? (string) ($tariff['name'] ?? '') : (string) ($billing['tariff'] ?? ''),
     ];
 
+    $idempotencyKey = app_billing_payment_idempotency_key(
+        $subscriberCode,
+        $method,
+        $transactionId,
+        $externalId,
+        $idempotencyKey
+    );
+    $correlationId = app_billing_payment_correlation_id($correlationId);
+    $requestHash = app_billing_payment_request_hash([
+        'subscriber_code' => strtolower(trim($subscriberCode)),
+        'amount' => number_format($resolvedAmount, 2, '.', ''),
+        'method' => strtolower(trim($method)),
+        'days' => $resolvedDays,
+        'transaction_id' => trim($transactionId),
+        'external_id' => trim($externalId),
+        'created_at' => $createdAtSql,
+        'effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+    ]);
+    $existingOperation = app_billing_payment_operation_by_key($db, $idempotencyKey);
+    if (is_array($existingOperation)) {
+        return hash_equals((string) $existingOperation['request_hash'], $requestHash);
+    }
+
+    $radiusSnapshotStatement = $db->prepare(
+        'SELECT id, status, expires_at FROM billing_radius_services WHERE account_id = :account_id ORDER BY id'
+    );
+    $radiusSnapshotStatement->execute(['account_id' => (int) $account['id']]);
+    $beforeSnapshot = [
+        'account' => [
+            'payload_json' => (string) ($account['payload_json'] ?? '{}'),
+            'status' => (string) ($account['status'] ?? ''),
+            'is_active' => (int) ($account['is_active'] ?? 0),
+        ],
+        'radius_services' => $radiusSnapshotStatement->fetchAll(PDO::FETCH_ASSOC) ?: [],
+    ];
+
     $db->beginTransaction();
+    $operationId = 0;
+    $actionId = 0;
     try {
+        $operationStatement = $db->prepare(
+            'INSERT INTO billing_payment_operations
+                (account_id, subscriber_code, idempotency_key, request_hash, correlation_id, state,
+                 amount, payment_method, transaction_id, external_id, payment_effect, before_snapshot_json)
+             VALUES
+                (:account_id, :subscriber_code, :idempotency_key, :request_hash, :correlation_id,
+                 "payment_recorded", :amount, :payment_method, :transaction_id, :external_id,
+                 :payment_effect, :before_snapshot_json)'
+        );
+        $operationStatement->execute([
+            'account_id' => (int) $account['id'],
+            'subscriber_code' => $subscriberCode,
+            'idempotency_key' => $idempotencyKey,
+            'request_hash' => $requestHash,
+            'correlation_id' => $correlationId,
+            'amount' => $resolvedAmount,
+            'payment_method' => $method,
+            'transaction_id' => $transactionId !== '' ? $transactionId : null,
+            'external_id' => $externalId !== '' ? $externalId : null,
+            'payment_effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+            'before_snapshot_json' => app_db_json_encode($beforeSnapshot),
+        ]);
+        $operationId = (int) $db->lastInsertId();
+
         $paymentStatement = $db->prepare(
             'INSERT INTO billing_payments (external_id, account_id, subscriber_code, amount, payment_method, transaction_id, note, metadata_json, created_at)
              VALUES (:external_id, :account_id, :subscriber_code, :amount, :payment_method, :transaction_id, :note, :metadata_json, COALESCE(:created_at, NOW()))'
@@ -5493,6 +6312,20 @@ function app_billing_apply_customer_payment(
             'metadata_json' => app_db_json_encode($metadata),
             'created_at' => $createdAtSql,
         ]);
+        $paymentId = (int) $db->lastInsertId();
+        $db->prepare(
+            'UPDATE billing_payment_operations SET payment_id = :payment_id WHERE id = :id'
+        )->execute(['payment_id' => $paymentId, 'id' => $operationId]);
+        app_billing_payment_event(
+            $db,
+            $operationId,
+            null,
+            null,
+            'payment_recorded',
+            'payment_committed_locally',
+            $correlationId,
+            ['payment_id' => $paymentId, 'idempotency_key_hash' => hash('sha256', $idempotencyKey)]
+        );
 
         $saveStatement = $db->prepare(
             'UPDATE portal_accounts
@@ -5518,21 +6351,72 @@ function app_billing_apply_customer_payment(
                 'expires_at' => $newExpiresAt,
                 'account_id' => (int) $account['id'],
             ]);
+
+            $actionId = app_billing_payment_queue_service_action($db, $operationId, 'radius_sync', $correlationId);
+            $db->prepare(
+                'UPDATE billing_payment_operations SET state = "service_action_pending" WHERE id = :id'
+            )->execute(['id' => $operationId]);
+            app_billing_payment_event(
+                $db,
+                $operationId,
+                $actionId,
+                'payment_recorded',
+                'service_action_pending',
+                'radius_sync_queued',
+                $correlationId,
+                ['action_key' => 'radius_sync:' . $operationId]
+            );
+        } else {
+            $db->prepare(
+                'UPDATE billing_payment_operations
+                    SET state = "service_action_completed", completed_at = NOW()
+                  WHERE id = :id'
+            )->execute(['id' => $operationId]);
+            app_billing_payment_event(
+                $db,
+                $operationId,
+                null,
+                'payment_recorded',
+                'service_action_completed',
+                'no_external_action_required',
+                $correlationId
+            );
         }
+        app_billing_payment_audit($db, [
+            'action_type' => 'billing_payment_recorded',
+            'operation_id' => $operationId,
+            'correlation_id' => $correlationId,
+            'summary' => $fullPayment
+                ? 'Payment recorded and RADIUS action queued'
+                : 'Partial payment recorded without service activation',
+            'payload' => [
+                'payment_id' => $paymentId,
+                'subscriber_code' => $subscriberCode,
+                'amount' => $resolvedAmount,
+                'service_action_id' => $actionId ?: null,
+            ],
+        ]);
         $db->commit();
-    } catch (Throwable) {
+    } catch (Throwable $exception) {
         if ($db->inTransaction()) {
             $db->rollBack();
         }
+        if ((string) $exception->getCode() === '23000') {
+            $existingOperation = app_billing_payment_operation_by_key($db, $idempotencyKey);
+            return is_array($existingOperation)
+                && hash_equals((string) $existingOperation['request_hash'], $requestHash);
+        }
         return false;
     }
 
-    $updated = app_db_account_by_id((int) $account['id']);
-    if ($updated === null) {
-        return false;
+    if ($fullPayment && $actionId > 0
+        && (!app_billing_payment_outbox_enabled() || app_billing_payment_inline_dispatch_enabled())) {
+        $dispatch = app_billing_payment_process_action($db, $actionId, 'inline-payment-' . getmypid());
+        if (!app_billing_payment_outbox_enabled()) {
+            return !empty($dispatch['ok']);
+        }
     }
-
-    return $fullPayment ? app_billing_sync_radius_account($updated) : true;
+    return true;
 }
 
 function app_message_seed_defaults(PDO $db): void
@@ -5690,19 +6574,178 @@ function app_message_template_by_code(string $code): ?array
     return is_array($row) ? $row : null;
 }
 
+/**
+ * Create a new template, or edit an existing one by code -- there was no
+ * editor at all before this (docs/38 3.6). Every edit to an existing
+ * template requires a reason and writes a communication_template_history row
+ * (previous title/body/status -> new), and bumps version. Past sends are
+ * unaffected: communication_messages.message_body already freezes the
+ * rendered text at send time, so editing a template never rewrites history.
+ *
+ * @return array{ok:bool,error?:string,id?:int,version?:int}
+ */
+function app_message_template_save(array $input, array $actor): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO) {
+        return ['ok' => false, 'error' => 'db_unavailable'];
+    }
+
+    $code = mb_substr(clean_text((string) ($input['code'] ?? '')), 0, 64);
+    $title = mb_substr(clean_text((string) ($input['title'] ?? '')), 0, 191);
+    $category = mb_substr(clean_text((string) ($input['category'] ?? 'general')), 0, 64) ?: 'general';
+    $channelScope = mb_substr(clean_text((string) ($input['channel_scope'] ?? 'any')), 0, 64) ?: 'any';
+    $body = trim((string) ($input['body'] ?? ''));
+    $status = (string) ($input['status'] ?? 'active') === 'disabled' ? 'disabled' : 'active';
+    $autoTrigger = trim((string) ($input['auto_trigger'] ?? '')) ?: null;
+    if ($code === '' || $title === '' || $body === '') {
+        return ['ok' => false, 'error' => 'invalid_template'];
+    }
+
+    $existingStatement = $db->prepare('SELECT * FROM communication_templates WHERE code = :code LIMIT 1');
+    $existingStatement->execute(['code' => $code]);
+    $existing = $existingStatement->fetch(PDO::FETCH_ASSOC);
+
+    $actorId = (int) ($actor['id'] ?? 0) ?: null;
+    $actorName = clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin'));
+
+    if (!is_array($existing)) {
+        $insert = $db->prepare(
+            'INSERT INTO communication_templates (code, title, category, channel_scope, body, auto_trigger, status, version, updated_by_account_id, updated_by_name)
+             VALUES (:code, :title, :category, :channel_scope, :body, :auto_trigger, :status, 1, :actor_id, :actor_name)'
+        );
+        $insert->execute([
+            'code' => $code, 'title' => $title, 'category' => $category, 'channel_scope' => $channelScope,
+            'body' => $body, 'auto_trigger' => $autoTrigger, 'status' => $status,
+            'actor_id' => $actorId, 'actor_name' => $actorName,
+        ]);
+        return ['ok' => true, 'id' => (int) $db->lastInsertId(), 'version' => 1];
+    }
+
+    $reason = mb_substr(clean_text((string) ($input['reason'] ?? '')), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    if ((string) $existing['title'] === $title && (string) $existing['body'] === $body && (string) $existing['status'] === $status
+        && (string) ($existing['category'] ?? '') === $category && (string) ($existing['channel_scope'] ?? '') === $channelScope
+    ) {
+        return ['ok' => false, 'error' => 'no_changes'];
+    }
+    $newVersion = (int) ($existing['version'] ?? 1) + 1;
+    $templateId = (int) $existing['id'];
+
+    if (function_exists('app_audit_ensure_schema')) {
+        app_audit_ensure_schema($db);
+    }
+
+    try {
+        $db->beginTransaction();
+        $db->prepare(
+            'UPDATE communication_templates
+                SET title = :title, category = :category, channel_scope = :channel_scope, body = :body,
+                    auto_trigger = :auto_trigger, status = :status, version = :version,
+                    updated_by_account_id = :actor_id, updated_by_name = :actor_name
+              WHERE id = :id'
+        )->execute([
+            'title' => $title, 'category' => $category, 'channel_scope' => $channelScope, 'body' => $body,
+            'auto_trigger' => $autoTrigger, 'status' => $status, 'version' => $newVersion,
+            'actor_id' => $actorId, 'actor_name' => $actorName, 'id' => $templateId,
+        ]);
+        $db->prepare(
+            'INSERT INTO communication_template_history (
+                template_id, template_code, version, previous_title, previous_body, previous_status,
+                new_title, new_body, new_status, reason, changed_by_account_id, changed_by_name
+             ) VALUES (
+                :template_id, :template_code, :version, :previous_title, :previous_body, :previous_status,
+                :new_title, :new_body, :new_status, :reason, :actor_id, :actor_name
+             )'
+        )->execute([
+            'template_id' => $templateId, 'template_code' => $code, 'version' => $newVersion,
+            'previous_title' => (string) $existing['title'], 'previous_body' => (string) $existing['body'], 'previous_status' => (string) $existing['status'],
+            'new_title' => $title, 'new_body' => $body, 'new_status' => $status,
+            'reason' => $reason, 'actor_id' => $actorId, 'actor_name' => $actorName,
+        ]);
+        if (function_exists('app_audit_record')) {
+            app_audit_record($db, [
+                'module_key' => 'messaging',
+                'operation_class' => 'template_edit',
+                'action_type' => 'communication_template_edited',
+                'entity_type' => 'communication_template',
+                'entity_id' => $code,
+                'status' => 'executed',
+                'actor_account_id' => $actorId,
+                'actor_name' => $actorName,
+                'summary' => 'Message template edited: ' . $code . ' (v' . $newVersion . ')',
+                'reason' => $reason,
+                'before' => ['title' => $existing['title'], 'body' => $existing['body'], 'status' => $existing['status']],
+                'after' => ['title' => $title, 'body' => $body, 'status' => $status],
+                'sensitivity' => 'normal',
+            ]);
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'template_save_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'id' => $templateId, 'version' => $newVersion];
+}
+
+function app_message_template_history(string $code, int $limit = 20): array
+{
+    $db = app_db();
+    if (!$db instanceof PDO || trim($code) === '') {
+        return [];
+    }
+    $statement = $db->prepare('SELECT * FROM communication_template_history WHERE template_code = :code ORDER BY version DESC LIMIT :limit_rows');
+    $statement->bindValue(':code', trim($code));
+    $statement->bindValue(':limit_rows', max(1, min(100, $limit)), PDO::PARAM_INT);
+    $statement->execute();
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
 function app_message_stats(): array
 {
     $db = app_db();
     if (!$db instanceof PDO) {
-        return ['templates' => 0, 'today' => 0, 'queued' => 0, 'test' => 0];
+        return [
+            'templates' => 0,
+            'today' => 0,
+            'queued' => 0,
+            'test' => 0,
+            'accepted' => 0,
+            'submitted' => 0,
+            'delivered' => 0,
+            'final_failed' => 0,
+        ];
     }
 
-    return [
+    $stats = [
         'templates' => (int) $db->query('SELECT COUNT(*) FROM communication_templates WHERE status = "active"')->fetchColumn(),
         'today' => (int) $db->query('SELECT COUNT(*) FROM communication_messages WHERE created_at >= CURDATE()')->fetchColumn(),
         'queued' => (int) $db->query('SELECT COUNT(*) FROM communication_messages WHERE status = "queued"')->fetchColumn(),
         'test' => (int) $db->query('SELECT COUNT(*) FROM communication_messages WHERE status = "test"')->fetchColumn(),
+        'accepted' => 0,
+        'submitted' => 0,
+        'delivered' => 0,
+        'final_failed' => 0,
     ];
+    $rows = $db->query(
+        'SELECT delivery_state, COUNT(*) AS total
+         FROM communication_messages
+         WHERE delivery_state IN ("accepted","submitted","delivered","final_failed")
+         GROUP BY delivery_state'
+    )->fetchAll() ?: [];
+    foreach ($rows as $row) {
+        $state = (string) ($row['delivery_state'] ?? '');
+        if (array_key_exists($state, $stats)) {
+            $stats[$state] = (int) ($row['total'] ?? 0);
+        }
+    }
+
+    return $stats;
 }
 
 function app_message_customer_history(int $accountId, int $limit = 20): array
@@ -5766,6 +6809,40 @@ function app_message_render_body(string $body, array $account, array $extra = []
     return trim($body);
 }
 
+function app_message_channel_is_enabled(string $channel): bool
+{
+    $channel = strtolower(trim($channel));
+    if (function_exists('app_communication_channel_enabled')) {
+        return app_communication_channel_enabled($channel);
+    }
+
+    $settingKeys = [
+        'whatsapp' => 'channel_whatsapp_enabled',
+        'app' => 'channel_app_enabled',
+        'telegram' => 'channel_telegram_enabled',
+        'sms' => 'channel_sms_enabled',
+    ];
+    if (!isset($settingKeys[$channel])) {
+        return false;
+    }
+
+    $value = '1';
+    $db = app_db();
+    if ($db instanceof PDO) {
+        try {
+            $statement = $db->prepare('SELECT setting_value FROM mgs_runtime_settings WHERE setting_key = :setting_key LIMIT 1');
+            $statement->execute(['setting_key' => $settingKeys[$channel]]);
+            $stored = $statement->fetchColumn();
+            if (is_string($stored)) {
+                $value = $stored;
+            }
+        } catch (Throwable) {
+        }
+    }
+
+    return !in_array(strtolower(trim($value)), ['0', 'false', 'no', 'off', 'disabled'], true);
+}
+
 function app_message_channel_for_account(array $account, string $requested = 'auto'): array
 {
     $requested = strtolower(trim($requested));
@@ -5787,29 +6864,43 @@ function app_message_channel_for_account(array $account, string $requested = 'au
     ];
 
     if ($requested !== 'auto') {
+        if (!app_message_channel_is_enabled($requested)) {
+            return [
+                'channel' => '',
+                'destination' => '',
+                'fallback_chain' => $requested,
+                'reason' => 'channel_disabled',
+            ];
+        }
         return [
             'channel' => $requested,
             'destination' => $destinations[$requested] !== '' ? $destinations[$requested] : ($phone !== '' ? $phone : $login),
             'fallback_chain' => $requested,
+            'reason' => '',
         ];
     }
 
     $chain = [];
     foreach (['whatsapp', 'app', 'telegram', 'sms'] as $channel) {
+        if (!app_message_channel_is_enabled($channel)) {
+            continue;
+        }
         $chain[] = $channel;
         if ($destinations[$channel] !== '') {
             return [
                 'channel' => $channel,
                 'destination' => $destinations[$channel],
                 'fallback_chain' => implode('>', $chain),
+                'reason' => '',
             ];
         }
     }
 
     return [
-        'channel' => 'app',
-        'destination' => $login,
-        'fallback_chain' => 'whatsapp>app>telegram>sms',
+        'channel' => '',
+        'destination' => '',
+        'fallback_chain' => implode('>', $chain),
+        'reason' => $chain === [] ? 'all_channels_disabled' : 'destination_missing',
     ];
 }
 
@@ -5838,6 +6929,9 @@ function app_message_queue_for_account(array $account, string $templateCode, str
     }
 
     $channel = app_message_channel_for_account($account, $requestedChannel);
+    if ((string) ($channel['channel'] ?? '') === '' || (string) ($channel['destination'] ?? '') === '') {
+        return false;
+    }
     $statement = $db->prepare(
         'INSERT INTO communication_messages (
             account_id, subscriber_code, recipient_name, destination, channel, fallback_chain,
@@ -5991,7 +7085,7 @@ function app_sso_provider_config(string $provider = 'mygov'): array
         'enabled' => (string) app_setting('mygov_enabled', '0') === '1',
         'mock_enabled' => (string) app_setting('mygov_mock_enabled', '0') === '1',
         'client_id' => app_config('mygov_client_id'),
-        'client_secret' => app_config('mygov_client_secret'),
+        'client_secret' => app_environment_secret('MYGOV_CLIENT_SECRET'),
         'authorize_url' => app_config('mygov_authorize_url'),
         'token_url' => app_config('mygov_token_url'),
         'userinfo_url' => app_config('mygov_userinfo_url'),

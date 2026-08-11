@@ -39,9 +39,9 @@ $openDialog = clean_text((string) ($query['open'] ?? ''));
                 <?php foreach ($rows as $row): ?>
                     <tr data-inventory-row>
                         <td><strong><?= e((string) ($row['document_no'] ?? '-')); ?></strong></td>
-                        <td><?= e((string) ($row['document_type'] ?? '-')); ?></td>
-                        <td><?= e((string) ($row['status'] ?? '-')); ?></td>
-                        <td><?= e((string) ($row['source_location_type'] ?? '-')); ?> / <?= e((string) ($row['source_location_id'] ?? '-')); ?></td>
+                        <td><?= e(app_ui_term((string) ($row['document_type'] ?? '-'))); ?></td>
+                        <td><?= e(app_ui_status((string) ($row['status'] ?? '-'))); ?></td>
+                        <td><?= e(app_ui_term((string) ($row['source_location_type'] ?? '-'))); ?> / <?= e((string) ($row['source_location_id'] ?? '-')); ?></td>
                         <td><?= e((string) ($row['destination_name'] ?? $row['destination_id'] ?? '-')); ?></td>
                         <td><?= e((string) ($row['item_count'] ?? 0)); ?></td>
                         <td><?= e((string) ($row['created_at'] ?? '-')); ?></td>

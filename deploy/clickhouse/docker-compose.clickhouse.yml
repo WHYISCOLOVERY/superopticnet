@@ -21,7 +21,7 @@ services:
     environment:
       CLICKHOUSE_DB: superoptic_analytics
       CLICKHOUSE_USER: superoptic
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change_me_clickhouse_password}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD is required}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ulimits:
       nofile:

@@ -22,6 +22,8 @@ $billingTitle = (string) (($billingContext['sections'] ?? [])[$billingSection] ?
     <title><?= e($billingTitle); ?> - Billing</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/dashboard.css')); ?>">
 </head>
 <body class="portal-body">
 <?php billing_render_header($billingTitle, $billingSection, $lang); ?>
@@ -110,8 +112,9 @@ $billingTitle = (string) (($billingContext['sections'] ?? [])[$billingSection] ?
     };
     module.addEventListener('input', event => {
         const field = event.target.closest('[data-billing-filter] input, [data-billing-filter] textarea, [data-billing-statistics-form] input');
-        if (!field || ['hidden', 'submit', 'button', 'reset'].includes(field.type)) return;
-        scheduleFilter(field, field.type === 'search' || field.type === 'text' ? 320 : 180);
+        const isTextFilter = field && (field.matches('textarea') || ['search', 'text'].includes(field.type));
+        if (!isTextFilter) return;
+        scheduleFilter(field, 320);
     });
     module.addEventListener('change', event => {
         const field = event.target.closest('[data-billing-filter] select, [data-billing-filter] input, [data-billing-statistics-form] select, [data-billing-statistics-form] input');

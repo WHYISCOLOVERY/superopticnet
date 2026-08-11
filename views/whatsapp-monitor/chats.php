@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 $chatRows = (array) ($context['chat_rows'] ?? []);
+$chatNumberGroups = (array) ($context['chat_number_groups'] ?? []);
 $selectedNumberId = (int) ($context['selected_number_id'] ?? 0);
 $selectedChatId = (string) ($context['selected_chat_id'] ?? '');
 $selectedChat = is_array($context['selected_chat'] ?? null) ? $context['selected_chat'] : [];
@@ -11,11 +12,27 @@ $hasSelection = $selectedChatId !== '' && $selectedNumberId > 0;
 $chatSelectionExplicit = !empty($context['chat_selection_explicit']);
 $backUrl = whatsapp_monitor_url('chats', [], $monitorLang);
 ?>
-<section class="portal-muted-card portal-section-gap wa-chat-monitor" data-wa-chat-monitor data-wa-monitor-lang="<?= e($monitorLang); ?>" data-has-selection="<?= $chatSelectionExplicit ? '1' : '0'; ?>">
+<section class="portal-muted-card portal-section-gap wa-chat-monitor" data-wa-chat-monitor data-wa-monitor-lang="<?= e($monitorLang); ?>" data-has-selection="<?= $chatSelectionExplicit ? '1' : '0'; ?>" data-selected-number-id="<?= e((string) $selectedNumberId); ?>">
     <div class="portal-card-head">
         <div><h3>WhatsApp çat monitoru</h3><small>Bağlı şirkət nömrələrinə gələn və göndərilən mesajlar real vaxtda göstərilir.</small></div>
         <span class="portal-pill" data-wa-chat-count-total><?= e((string) count($chatRows)); ?> aktiv çat</span>
     </div>
+    <?php if ($chatNumberGroups !== []): ?>
+        <div class="wa-number-switch" role="tablist" aria-label="Şirkət nömrəsi və əməkdaş seç">
+            <?php foreach ($chatNumberGroups as $group): ?>
+                <?php
+                $groupNumberId = (int) ($group['number_id'] ?? 0);
+                $isGroupActive = $groupNumberId === $selectedNumberId;
+                $groupQrStatus = (string) ($group['qr_status'] ?? 'not_connected');
+                ?>
+                <a class="wa-number-chip<?= $isGroupActive ? ' is-active' : ''; ?>" role="tab" aria-selected="<?= $isGroupActive ? 'true' : 'false'; ?>" href="<?= e(whatsapp_monitor_url('chats', ['number_id' => $groupNumberId], $monitorLang)); ?>">
+                    <strong><?= e((string) ($group['company_number'] ?? '-')); ?></strong>
+                    <small><?= e((string) ($group['employee_name'] ?? '-')); ?> &middot; <?= e((string) ($group['chat_count'] ?? 0)); ?> çat</small>
+                    <span class="wa-status wa-number-chip-badge <?= e($groupQrStatus); ?>"><?= e(whatsapp_monitor_pairing_status_label($groupQrStatus)); ?></span>
+                </a>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
     <div class="wa-chat-layout" data-wa-chat-layout>
         <aside class="wa-chat-list" aria-label="Çat siyahısı">
             <div class="wa-chat-search">

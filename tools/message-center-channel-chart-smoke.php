@@ -23,7 +23,7 @@ foreach ([
     'data-message-content',
     'data-message-command-strip',
     'data-message-status',
-    'Mesaj emeliyyatlari',
+    'İş sahələri',
     'Ferdi mesaj',
     'Kanal ayarlari',
     'sms-provider-settings',

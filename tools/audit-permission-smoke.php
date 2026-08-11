@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/config.php';
-require dirname(__DIR__) . '/audit-log-lib.php';
+require_once dirname(__DIR__) . '/audit-log-lib.php';
 
 $errors = [];
 $expect = static function (bool $condition, string $message) use (&$errors): void {
@@ -43,6 +43,7 @@ try {
         str_contains($portalActionsSource, 's.abdullayev@superoptic.net'),
         'portal_action_protected_designated_account_missing'
     );
+    $expect(str_contains($portalActionsSource, '$protectedShapeChanged'), 'protected_super_admin_shape_guard_missing');
     $expect(
         str_contains($portalActionsSource, 'privilege_change_reason'),
         'portal_action_privilege_reason_missing'
@@ -91,7 +92,15 @@ try {
     $expect(str_contains($adminUsersSource, 'operation-logs.php'), 'admin_users_journal_link_missing');
     $expect(str_contains($portalSource, 'operation-logs.php'), 'portal_journal_link_missing');
     $expect(str_contains($portalSource, 'Admin kecidleri'), 'portal_admin_shortcuts_missing');
-    $expect(str_contains($portalSource, 'SMS provider ayari'), 'portal_sms_provider_shortcut_missing');
+    // Label text was renamed to "Mesaj kanallari" when SMS/WhatsApp/external
+    // delivery readiness were consolidated under one shortcut card; check the
+    // stable route+anchor instead of the cosmetic label so relabeling doesn't
+    // keep breaking this contract.
+    $expect(
+        str_contains($portalSource, 'message-center.php?view=settings')
+            && str_contains($portalSource, '#sms-provider-settings'),
+        'portal_sms_provider_shortcut_missing'
+    );
 
     $superAdmin = app_db_account_by_login('s.abdullayev@superoptic.net');
     $expect(is_array($superAdmin), 'designated_super_admin_missing');
@@ -130,13 +139,14 @@ try {
         'full_name' => 'Permission Smoke NOC',
         'login' => 'permission-smoke-noc@superoptic.local',
     ];
-    $serdarFallback = [
+    $nameImpersonator = [
         'id' => 910004,
         'role' => 'employee',
-        'account_type' => 'operator',
-        'employee_role' => 'operator',
+        'account_type' => 'admin',
+        'employee_role' => 'super_admin',
         'full_name' => 'Serdar Abdullayev',
-        'login' => 'serdar@sp.az',
+        'login' => 'permission-smoke-impostor@superoptic.local',
+        'email' => 's.abdullayev@superoptic.net',
     ];
 
     if (function_exists('app_audit_actor_can_view')) {
@@ -147,7 +157,7 @@ try {
     if (function_exists('app_audit_actor_can_manage')) {
         $expect(app_audit_actor_can_manage($normalAdmin) === false, 'normal_admin_can_manage_journal');
         $expect(app_audit_actor_can_manage($nocAdmin) === false, 'account_type_admin_can_manage_journal');
-        $expect(app_audit_actor_can_manage($serdarFallback) === true, 'serdar_fallback_cannot_manage_journal');
+        $expect(app_audit_actor_can_manage($nameImpersonator) === false, 'name_or_role_impersonator_can_manage_journal');
         if (is_array($superAdmin)) {
             $expect(app_audit_actor_can_manage($superAdmin) === true, 'super_admin_cannot_manage_journal');
         }

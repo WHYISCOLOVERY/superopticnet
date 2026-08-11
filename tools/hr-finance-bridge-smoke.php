@@ -24,6 +24,7 @@ if (!$db instanceof PDO) {
     $payrollId = 0;
     $employeeId = 0;
     $expenseEntityId = '';
+    $hrActor = ['id' => 987654, 'full_name' => 'Smoke HR', 'employee_role' => 'hr'];
 
     try {
         $employeeInsert=$db->prepare('INSERT INTO portal_accounts(login,password_hash,role,account_type,employee_role,full_name,status,is_active,payload_json)VALUES(:login,:password,"employee","employee","hr","Smoke Finance Bridge","Aktiv",1,"{}")');$employeeInsert->execute(['login'=>'smoke-bridge-'.bin2hex(random_bytes(4)),'password'=>password_hash('smoke',PASSWORD_DEFAULT)]);$employeeId=(int)$db->lastInsertId();
@@ -32,7 +33,7 @@ if (!$db instanceof PDO) {
             'period_month' => '2026-06',
             'gross_salary' => 1000,
             'status' => 'draft',
-        ], ['id' => 987654, 'full_name' => 'Smoke HR'], $db);
+        ], $hrActor, $db);
         $payrollId = (int) ($payroll['id'] ?? 0);
         $expenseEntityId = 'hr-payroll-' . $payrollId;
         if (empty($payroll['ok']) || $payrollId <= 0) {
@@ -40,40 +41,39 @@ if (!$db instanceof PDO) {
         }
 
         if ($payrollId > 0) {
-            $approved=app_mgs_hr_update_record_status('payroll',$payrollId,'approved',['id'=>987654,'full_name'=>'Smoke HR'],$db);
-            $statusResult = !empty($approved['ok']) ? app_mgs_hr_update_record_status('payroll', $payrollId, 'paid', ['id' => 987654, 'full_name' => 'Smoke HR'], $db) : $approved;
+            $approved = app_mgs_hr_update_record_status('payroll', $payrollId, 'approved', $hrActor, $db, 'Smoke test approval');
+            $statusResult = !empty($approved['ok']) ? app_mgs_hr_update_record_status('payroll', $payrollId, 'paid', $hrActor, $db, 'Smoke test payout') : $approved;
             if (empty($statusResult['ok']) || (string) ($statusResult['record']['status'] ?? '') !== 'paid') {
                 $errors[] = 'payroll_status_update_failed';
             }
 
-            $expense = app_mgs_hr_record_finance_expense('payroll', $payrollId, ['id' => 987654, 'full_name' => 'Smoke HR'], $db);
+            $expense = app_mgs_hr_record_finance_expense('payroll', $payrollId, $hrActor, $db);
             if (empty($expense['ok']) || (float) ($expense['amount'] ?? 0) < 1188.99) {
-                $errors[] = 'finance_expense_record_failed';
+                $errors[] = 'finance_expense_record_failed:' . (string) ($expense['error'] ?? 'amount_mismatch');
             }
 
-            $expenseAgain = app_mgs_hr_record_finance_expense('payroll', $payrollId, ['id' => 987654, 'full_name' => 'Smoke HR'], $db);
+            $expenseAgain = app_mgs_hr_record_finance_expense('payroll', $payrollId, $hrActor, $db);
             if (empty($expenseAgain['ok']) || (int) ($expenseAgain['action_id'] ?? 0) !== (int) ($expense['action_id'] ?? 0)) {
-                $errors[] = 'finance_expense_idempotency_failed';
+                $errors[] = 'finance_expense_idempotency_failed:' . (string) ($expenseAgain['error'] ?? 'action_mismatch');
             }
 
             $statement = $db->prepare(
-                'SELECT status, payload_json
-                   FROM mgs_operation_actions
-                  WHERE action_type = "hr_finance_expense_recorded"
-                    AND entity_type = "finance"
-                    AND entity_id = :entity_id
+                'SELECT status, amount, payload_json
+                   FROM finance_entries
+                  WHERE source_type = "hr"
+                    AND source_id = :source_id
                   LIMIT 1'
             );
-            $statement->execute(['entity_id' => $expenseEntityId]);
+            $statement->execute(['source_id' => 'payroll:' . $payrollId]);
             $actionRow = $statement->fetch(PDO::FETCH_ASSOC) ?: [];
-            if ((string) ($actionRow['status'] ?? '') !== 'executed') {
+            if ((string) ($actionRow['status'] ?? '') !== 'posted') {
                 $errors[] = 'finance_action_missing';
             }
             $payload = json_decode((string) ($actionRow['payload_json'] ?? ''), true);
             if (!is_array($payload)
-                || (string) ($payload['entryType'] ?? '') !== 'expense'
-                || (string) ($payload['category'] ?? '') !== 'hr_payroll'
-                || (float) ($payload['amount'] ?? 0) < 1188.99
+                || (string) ($payload['source'] ?? '') !== 'hr_finance_bridge'
+                || (string) ($payload['record_type'] ?? '') !== 'payroll'
+                || (float) ($actionRow['amount'] ?? 0) < 1188.99
             ) {
                 $errors[] = 'finance_action_payload_failed';
             }
@@ -119,6 +119,13 @@ if (!$db instanceof PDO) {
             }
         }
         if($employeeId>0){try{$db->prepare('DELETE FROM portal_accounts WHERE id=:id')->execute(['id'=>$employeeId]);}catch(Throwable){}}
+        if ($payrollId > 0) {
+            try {
+                $db->prepare('DELETE FROM finance_entries WHERE source_type = "hr" AND source_id = :source_id')
+                    ->execute(['source_id' => 'payroll:' . $payrollId]);
+            } catch (Throwable) {
+            }
+        }
         try {
             $cleanup = $db->prepare(
                 'DELETE FROM mgs_operation_actions

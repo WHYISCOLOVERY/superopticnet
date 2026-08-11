@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/noc-scan-results-lib.php';
+require_once __DIR__ . '/ui-language-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
@@ -39,7 +40,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'maxHosts' => max(1, min(1024, (int) ($_POST['scan_max_hosts'] ?? 64))),
             'concurrency' => max(1, min(128, (int) ($_POST['scan_concurrency'] ?? 24))),
         ];
-        $result = app_mgs_service_request_json('/api/service/network-scan', 'POST', $payload, 60);
+        $result = app_mgs_noc_service_request_json(
+            '/api/service/network-scan',
+            'POST',
+            $payload,
+            $user,
+            'scan_network',
+            [],
+            60
+        );
         if (!empty($result['ok'])) {
             $scanState = is_array($result['data'] ?? null) ? $result['data'] : [];
             if (!array_key_exists('target', $scanState)) {
@@ -72,7 +81,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? 'private')),
             'driverMode' => clean_text((string) ($_POST['driver_mode'] ?? 'real')),
         ];
-        $result = app_mgs_service_request_json('/api/service/devices', 'POST', $payload, 60);
+        $result = app_mgs_noc_service_request_json(
+            '/api/service/devices',
+            'POST',
+            $payload,
+            $user,
+            'create_monitor_device',
+            ['management_network' => (string) ($payload['location'] ?? '')],
+            60
+        );
         $flash = [
             'type' => !empty($result['ok']) ? 'success' : 'error',
             'message' => !empty($result['ok'])
@@ -81,17 +98,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ];
     } elseif ($action === 'set_management_path') {
         $enabled = (string) ($_POST['enabled'] ?? '0') === '1';
-        app_mgs_set_runtime_setting('monitor_management_vlan_connected', $enabled ? '1' : '0', $user);
-        $result = app_mgs_refresh_device_reachability($db, false);
-        app_mgs_record_operation_action([
-            'action_type' => 'management_path_toggle',
-            'entity_type' => 'management_network',
-            'entity_id' => 'vlan550',
-            'status' => 'executed',
-            'actor' => $user,
-            'summary' => $enabled ? 'VLAN 550 management path enabled' : 'VLAN 550 management path disabled',
-            'payload' => $result,
-        ]);
+        $result = app_mgs_set_management_path($enabled, $user, $db);
         $flash = [
             'type' => !empty($result['ok']) ? 'success' : 'error',
             'message' => $enabled
@@ -99,7 +106,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 : 'VLAN 550 monitorinq yolu passiv edildi. Internal cihaz offline alarmlari bloklanir.',
         ];
     } elseif ($action === 'probe_devices') {
-        $result = app_mgs_refresh_device_reachability($db, true);
+        $result = app_mgs_refresh_device_reachability($db, true, $user);
         app_mgs_record_operation_action([
             'action_type' => 'device_probe',
             'entity_type' => 'device_learning_profiles',
@@ -117,7 +124,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $apply = isset($_POST['apply_backup']) && app_portal_is_admin($user);
         $backupType = clean_text((string) ($_POST['backup_type'] ?? 'profile_snapshot'));
         $limit = (int) ($_POST['limit'] ?? 5);
-        $backupWorkerResult = app_mgs_run_backup_worker($db, $apply, $limit, $backupType);
+        $backupWorkerResult = app_mgs_run_backup_worker($db, $apply, $limit, $backupType, $user);
         $flash = [
             'type' => !empty($backupWorkerResult['ok']) ? 'success' : 'error',
             'message' => !empty($backupWorkerResult['ok'])
@@ -126,7 +133,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ];
     } elseif ($action === 'probe_single_device') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
-        $deviceActionResult = app_mgs_probe_single_device($deviceKey, $db);
+        $deviceActionResult = app_mgs_probe_single_device($deviceKey, $db, $user);
         $flash = [
             'type' => !empty($deviceActionResult['ok']) && (($deviceActionResult['mode'] ?? '') !== 'probe' || !empty($deviceActionResult['reachable'])) ? 'success' : ((!empty($deviceActionResult['ok'])) ? 'warning' : 'error'),
             'message' => !empty($deviceActionResult['ok'])
@@ -141,11 +148,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
         $backupType = clean_text((string) ($_POST['backup_type'] ?? 'profile_snapshot'));
         $apply = isset($_POST['apply_backup']) && app_portal_is_admin($user);
-        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
         if (!is_array($device)) {
             $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
         } else {
-            $deviceActionResult = app_mgs_store_device_backup($device, $backupType, $apply);
+            $deviceActionResult = app_mgs_store_device_backup($device, $backupType, $apply, $user, $db);
             $flash = [
                 'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
                 'message' => !empty($deviceActionResult['ok'])
@@ -155,16 +162,21 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     } elseif ($action === 'run_cli_discovery') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
-        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
         if (!is_array($device)) {
             $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
         } else {
-            $deviceActionResult = app_mgs_store_device_backup($device, 'cli_discovery_snapshot', true);
+            $deviceActionResult = app_mgs_store_device_backup($device, 'cli_discovery_snapshot', true, $user, $db);
+            $cliDiscoveryErrorMessage = 'CLI discovery xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown');
+            if ((string) ($deviceActionResult['reason'] ?? '') === 'cli_discovery_not_supported') {
+                $supportedVendors = implode(', ', (array) ($deviceActionResult['supported_vendors'] ?? []));
+                $cliDiscoveryErrorMessage = 'Bu vendor ucun "ogren" (CLI discovery) helelik yoxdur. Hazirda deste olunanlar: ' . ($supportedVendors !== '' ? $supportedVendors : '-') . '. Yeni vendor elave etmek ucun app_mgs_cli_discovery_handler_registry()-e bir qeyd elave edin.';
+            }
             $flash = [
                 'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
                 'message' => !empty($deviceActionResult['ok'])
                     ? ((string) ($device['device_name'] ?? $deviceKey)) . ': CLI discovery ' . (string) ($deviceActionResult['mode'] ?? 'done')
-                    : 'CLI discovery xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
+                    : $cliDiscoveryErrorMessage,
             ];
         }
     } elseif ($action === 'set_device_monitoring_mode') {
@@ -203,7 +215,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $flash = ['type' => 'error', 'message' => 'Command map ucun admin icazesi lazimdir.'];
         } else {
             $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
-            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
             $commandMapText = trim((string) ($_POST['command_map_text'] ?? ''));
             $commandMap = [];
             foreach (preg_split('/\R/', $commandMapText) ?: [] as $line) {
@@ -223,32 +235,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             } elseif ($commandMap === []) {
                 $flash = ['type' => 'error', 'message' => 'Command map bosdur. key=command formatinda yazin.'];
             } else {
-                $statement = $db->prepare(
-                    'UPDATE device_learning_profiles
-                     SET command_map_json = :command_map_json, updated_at = NOW()
-                     WHERE device_key = :device_key'
-                );
-                $statement->execute([
-                    'command_map_json' => app_db_json_encode($commandMap),
-                    'device_key' => $deviceKey,
-                ]);
-                app_mgs_record_operation_action([
-                    'action_type' => 'device_command_map_update',
-                    'entity_type' => 'device_learning',
-                    'entity_id' => $deviceKey,
-                    'status' => 'executed',
-                    'actor' => $user,
-                    'summary' => 'Device command map updated: ' . (string) ($device['device_name'] ?? $deviceKey),
-                    'payload' => ['keys' => array_keys($commandMap)],
-                ]);
-                $flash = ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': command map yadda saxlandi.'];
+                $deviceActionResult = app_mgs_sync_device_command_map($deviceKey, $commandMap, $user, $db);
+                $flash = !empty($deviceActionResult['ok'])
+                    ? ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': command map yadda saxlandi.']
+                    : ['type' => 'error', 'message' => 'Command map xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown')];
             }
         }
     } elseif ($action === 'apply_vendor_access_defaults') {
         $vendor = clean_text((string) ($_POST['vendor'] ?? 'HSGQ'));
         $deviceActionResult = app_mgs_apply_vendor_access_defaults($vendor, $user, $db);
         if (!empty($deviceActionResult['ok'])) {
-            app_mgs_refresh_device_reachability($db, true);
+            app_mgs_refresh_device_reachability($db, true, $user);
         }
         $flash = [
             'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
@@ -261,11 +258,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $pon = clean_text((string) ($_POST['pon'] ?? ''));
         $ontId = clean_text((string) ($_POST['ont_id'] ?? ''));
         $accountId = (int) ($_POST['account_id'] ?? 0);
-        $device = app_mgs_hsgq_device_by_olt_name($oltName, $db);
+        $device = app_mgs_hsgq_device_by_olt_name($oltName, $db, $user);
         if (!is_array($device)) {
             $flash = ['type' => 'error', 'message' => 'Live OLT query ucun HSGQ cihaz profili tapilmadi.'];
         } else {
-            $liveOntResult = app_mgs_hsgq_live_ont_snapshot($device, $pon, $ontId, $db);
+            $liveOntResult = app_mgs_hsgq_live_ont_snapshot($device, $pon, $ontId, $user, $db);
             if (!empty($liveOntResult['ok'])) {
                 $liveOntResult['account_id'] = $accountId;
                 $liveOntResult['olt'] = $oltName;
@@ -292,7 +289,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
             $commandText = trim((string) ($_POST['commands'] ?? ''));
             $allowDangerous = isset($_POST['allow_dangerous']);
-            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+            $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
             if (!is_array($device)) {
                 $flash = ['type' => 'error', 'message' => 'Real command ucun cihaz profili tapilmadi.'];
             } elseif ($commandText === '') {
@@ -307,15 +304,45 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                         'allow_dangerous' => $allowDangerous,
                         'action_type' => 'device_manual_cli_command',
                         'timeout_ms' => 12000,
+                        'reason' => clean_text((string) ($_POST['command_reason'] ?? '')),
                     ]
                 );
-                $flash = [
-                    'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
-                    'message' => !empty($deviceActionResult['ok'])
-                        ? ((string) ($device['device_name'] ?? $deviceKey)) . ': real SSH command icra olundu, audit yazildi.'
-                        : ((string) ($device['device_name'] ?? $deviceKey)) . ': command xetasi - ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
-                ];
+                if (!empty($deviceActionResult['ok'])) {
+                    $flash = ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': real SSH command icra olundu, audit yazildi.'];
+                } elseif ((string) ($deviceActionResult['reason'] ?? '') === 'dangerous_command_staged_for_approval') {
+                    $flash = ['type' => 'success', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': write emr sorgusu qeyde alindi (#' . (int) ($deviceActionResult['request_id'] ?? 0) . ') - BASQA admin tesdiqleyene qeder icra olunmayacaq.'];
+                } elseif ((string) ($deviceActionResult['reason'] ?? '') === 'reason_required') {
+                    $flash = ['type' => 'error', 'message' => 'Write emrleri ucun sebeb sahesi mecburidir.'];
+                } else {
+                    $flash = ['type' => 'error', 'message' => ((string) ($device['device_name'] ?? $deviceKey)) . ': command xetasi - ' . (string) ($deviceActionResult['reason'] ?? 'unknown')];
+                }
             }
+        }
+    } elseif ($action === 'resolve_device_command_request') {
+        if (!app_portal_is_admin($user)) {
+            $flash = ['type' => 'error', 'message' => 'Sorgunu yalniz admin heli ede biler.'];
+        } else {
+            $resolveResult = app_mgs_resolve_device_command_request(
+                $db,
+                (int) ($_POST['request_id'] ?? 0),
+                clean_text((string) ($_POST['decision'] ?? '')),
+                clean_text((string) ($_POST['resolution_note'] ?? '')),
+                $user
+            );
+            $resolveErrorMessages = [
+                'invalid_decision' => 'Qerar "approved" ve ya "rejected" olmalidir.',
+                'request_not_found' => 'Sorgu tapilmadi.',
+                'request_already_resolved' => 'Bu sorgu artiq helli olunub.',
+                'requester_cannot_approve_own_request' => 'Sorgu eden sexs oz sorgusunu tesdiqleye bilmez - basqa admin lazimdir.',
+                'device_not_found' => 'Cihaz profili tapilmadi.',
+                'device_command_execution_failed' => 'Tesdiqlendi, amma real icra ugursuz oldu (sorgu hele pending qalir, yeniden cehd edile biler).',
+            ];
+            $flash = [
+                'type' => !empty($resolveResult['ok']) ? 'success' : 'error',
+                'message' => !empty($resolveResult['ok'])
+                    ? ('Cihaz emri sorgusu helli olundu: ' . (string) ($resolveResult['status'] ?? ''))
+                    : ($resolveErrorMessages[(string) ($resolveResult['error'] ?? '')] ?? ('Sorgu helli olunmadi: ' . ((string) ($resolveResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
+            ];
         }
     }
 }
@@ -333,11 +360,11 @@ $selectedDeviceKey = clean_text((string) ($_GET['device'] ?? ''));
 $needsDeviceRows = in_array($activeNocView, ['monitor', 'devices'], true);
 $needsBackupRows = $activeNocView === 'backups';
 
-$summary = $db instanceof PDO ? app_mgs_summary($db, false) : ['db' => false];
-$devices = ($db instanceof PDO && $needsDeviceRows) ? app_mgs_device_learning_rows($db) : [];
+$summary = $db instanceof PDO ? app_mgs_summary($db, false, $user) : ['db' => false];
+$devices = ($db instanceof PDO && $needsDeviceRows) ? app_mgs_device_learning_rows($db, $user) : [];
 $bridge = app_mgs_bridge_status();
-$backups = $needsBackupRows ? app_mgs_recent_rows('device_config_backups', 10) : [];
-$dedupRows = $needsBackupRows ? app_mgs_recent_rows('mgs_dedup_registry', 8) : [];
+$backups = $needsBackupRows ? app_mgs_noc_recent_rows('device_config_backups', 10, $user) : [];
+$dedupRows = $needsBackupRows ? app_mgs_noc_recent_rows('mgs_dedup_registry', 8, $user) : [];
 $managementPathReady = app_mgs_management_path_ready();
 $snmpDefaults = app_mgs_snmp_defaults();
 $scanResults = app_noc_scan_results_from_state($scanState);
@@ -997,13 +1024,13 @@ function noc_enrich_ont_results(PDO $db, array $rows): array
     return $rows;
 }
 
-function noc_attach_device_context(PDO $db, array $rows): array
+function noc_attach_device_context(PDO $db, array $rows, array $user): array
 {
     foreach ($rows as &$row) {
         if (!is_array($row)) {
             continue;
         }
-        $device = app_mgs_hsgq_device_by_olt_name((string) ($row['olt'] ?? ''), $db);
+        $device = app_mgs_hsgq_device_by_olt_name((string) ($row['olt'] ?? ''), $db, $user);
         $row['device_key'] = (string) ($device['device_key'] ?? '');
         $row['device_ip'] = (string) ($device['ip_address'] ?? '');
         $row['live_capable'] = is_array($device) && app_mgs_management_path_ready();
@@ -1020,10 +1047,10 @@ if ($ontQuery !== '') {
     $ontResults = noc_collect_ont_matches($ontAccounts, $ontQuery, $db instanceof PDO, 24);
     if ($db instanceof PDO && $ontResults !== []) {
         $ontResults = noc_enrich_ont_results($db, $ontResults);
-        $ontResults = noc_attach_device_context($db, $ontResults);
+        $ontResults = noc_attach_device_context($db, $ontResults, $user);
     }
     if ($db instanceof PDO) {
-        $modemBotPreview = app_mgs_build_modem_search_reply($ontQuery, true, $db);
+        $modemBotPreview = app_mgs_build_modem_search_reply($ontQuery, true, $db, $user);
     }
 }
 $monitorPoints = $needsDeviceRows ? noc_monitor_points($devices) : [];
@@ -1046,6 +1073,7 @@ if ($needsDeviceRows) {
     <title>NOC cihaz paneli</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/operations-modules.css')); ?>">
     <style>
         .noc-device-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
         .noc-device-card{display:grid;gap:12px;min-width:0;max-width:100%;padding:16px;border:1px solid rgba(148,163,184,.24);border-radius:24px;background:rgba(255,255,255,.9);box-shadow:0 18px 42px rgba(17,38,63,.08)}
@@ -1073,10 +1101,11 @@ if ($needsDeviceRows) {
         .noc-native-grid .wide{grid-column:1/-1}
         .noc-scan-dialog{grid-column:1/-1;display:grid;gap:14px;padding:16px;border:1px solid rgba(11,123,135,.18);border-radius:22px;background:linear-gradient(135deg,rgba(238,248,247,.95),rgba(255,255,255,.96))}
         .noc-scan-dialog.is-empty[hidden]{display:none!important}
-        .noc-scan-dialog.is-open{position:fixed;z-index:620;inset:0;display:grid;align-content:center;justify-items:center;gap:0;margin:0;padding:24px;border:0;border-radius:0;background:rgba(15,23,42,.48);backdrop-filter:blur(7px);overflow:auto}
+        body:has(.noc-scan-dialog.is-open),body:has(.noc-device-detail[open]){overflow:hidden}
+        .noc-scan-dialog.is-open{position:fixed;z-index:620;inset:0;display:grid;grid-template-columns:minmax(0,1100px);grid-template-rows:auto minmax(0,min(68vh,720px));align-content:center;justify-content:center;gap:0;margin:0;padding:24px;border:0;border-radius:0;background:rgba(15,23,42,.48);backdrop-filter:blur(7px);overflow:hidden}
         .noc-scan-dialog.is-open>.noc-scan-head,.noc-scan-dialog.is-open>.noc-scan-results{width:min(1100px,calc(100vw - 32px));box-sizing:border-box}
         .noc-scan-dialog.is-open>.noc-scan-head{padding:18px 20px;border:1px solid rgba(148,163,184,.28);border-bottom:0;border-radius:22px 22px 0 0;background:linear-gradient(180deg,#fff,rgba(248,250,252,.98))}
-        .noc-scan-dialog.is-open>.noc-scan-results{max-height:min(68vh,720px);overflow:auto;padding:0 20px 20px;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 22px 22px;background:rgba(248,250,252,.98)}
+        .noc-scan-dialog.is-open>.noc-scan-results{min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:0 20px 20px;border:1px solid rgba(148,163,184,.28);border-top:0;border-radius:0 0 22px 22px;background:rgba(248,250,252,.98)}
         .noc-scan-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
         .noc-scan-head h3{margin:4px 0;color:#10233f}
         .noc-scan-head small{color:#64748b}
@@ -1167,6 +1196,16 @@ if ($needsDeviceRows) {
         .noc-device-detail-head h3{margin:0;color:#10233f}
         .noc-device-detail-head small{display:block;margin-top:4px;color:#64748b}
         .noc-device-detail-close{border:0;border-radius:999px;background:#e5eaf0;color:#10233f;font-weight:900;padding:10px 14px;cursor:pointer}
+        .noc-command-hero{padding:20px 22px;align-items:center}
+        .noc-command-hero h1{max-width:860px;font-size:clamp(1.8rem,3vw,2.7rem);line-height:1.05}
+        .noc-command-hero p{max-width:900px}
+        .noc-secondary-summary{border:1px solid rgba(148,163,184,.22);border-radius:18px;background:rgba(255,255,255,.78)}
+        .noc-secondary-summary>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;padding:10px 16px;list-style:none;cursor:pointer;color:#10233f;font-weight:900}
+        .noc-secondary-summary>summary::-webkit-details-marker{display:none}
+        .noc-secondary-summary>summary::after{content:"+";display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#e6f2f4;color:#087b83;font-size:1.1rem}
+        .noc-secondary-summary[open]>summary::after{content:"-"}
+        .noc-secondary-summary>summary span{color:#64748b;font-size:.82rem;font-weight:800}
+        .noc-secondary-summary>.mgs-stat-grid{padding:0 14px 14px}
         .noc-access-panel{display:grid;gap:12px;padding:14px;border-radius:22px;background:rgba(238,248,247,.72);border:1px solid rgba(11,123,135,.16)}
         .noc-access-panel h4{margin:0;color:#0b7b87}
         .noc-access-panel p{margin:0;color:#64748b;line-height:1.45}
@@ -1195,6 +1234,13 @@ if ($needsDeviceRows) {
         .portal-noc-report .portal-table td{overflow-wrap:anywhere}
         @media (max-width:1100px){.noc-device-grid,.noc-two-col,.noc-native-actions,.noc-monitor-shell{grid-template-columns:1fr}.monitor-node{width:min(82vw,260px)}.native-monitor-board{min-height:min(72vh,680px)}}
         @media (max-width:760px){
+            .noc-command-hero{padding:16px}
+            .noc-command-hero h1{font-size:1.65rem}
+            .noc-command-hero p{display:none}
+            .noc-scan-dialog.is-open{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);align-content:stretch;padding:10px}
+            .noc-scan-dialog.is-open>.noc-scan-head,.noc-scan-dialog.is-open>.noc-scan-results{width:100%}
+            .noc-scan-dialog.is-open>.noc-scan-head{padding:14px}
+            .noc-scan-dialog.is-open>.noc-scan-results{padding:0 14px 14px}
             .native-monitor-board{min-height:0;overflow:hidden;touch-action:auto}
             .monitor-toolbar,.monitor-links,.monitor-hub-native{display:none}
             .monitor-stage{position:static;inset:auto;display:grid;grid-template-columns:1fr;gap:12px;transform:none!important}
@@ -1206,7 +1252,7 @@ if ($needsDeviceRows) {
             .noc-device-safe-actions,.noc-device-quick-actions{grid-template-columns:1fr}
             .noc-device-actions form,.noc-device-actions select,.noc-device-actions button{width:100%}
             .noc-action-form select,.noc-action-form input,.noc-action-form button{width:100%;max-width:100%;flex:1 1 100%}
-            .noc-device-detail[open] .noc-device-detail-panel{inset:76px 10px 12px;max-height:calc(100vh - 88px);padding:16px;border-radius:22px}
+            .noc-device-detail[open] .noc-device-detail-panel{inset:76px 10px 12px;left:10px;right:10px;width:auto;max-height:none;transform:none;padding:16px;border-radius:22px}
             .noc-device-detail-head{top:-16px}
             .noc-access-grid{grid-template-columns:1fr}
             .noc-scan-result,.noc-scan-add-form{grid-template-columns:1fr}
@@ -1227,7 +1273,35 @@ if ($needsDeviceRows) {
             </div>
         <?php endif; ?>
 
-        <section class="mgs-command-hero portal-reveal">
+        <?php $pendingDeviceCommands = app_portal_is_admin($user) ? app_mgs_device_command_requests($db, 'pending') : []; ?>
+        <?php if ($pendingDeviceCommands !== []): ?>
+        <section class="portal-card portal-reveal">
+            <div class="portal-card-head"><div><strong>Gozleyen cihaz emri sorgulari</strong><small>Vizyon 19.2: write emrleri BASQA admin tesdiqleyene qeder cihaza gonderilmir.</small></div></div>
+            <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Cihaz</th><th>Emrler</th><th>Sebeb</th><th>Sorgu eden</th><th>Qerar</th></tr></thead><tbody>
+            <?php foreach ($pendingDeviceCommands as $cmdRequest): ?>
+                <?php $cmdList = app_mgs_json_decode_array($cmdRequest['commands_json'] ?? []); ?>
+                <tr>
+                    <td data-label="Cihaz"><?= e((string) ($cmdRequest['device_name'] ?? $cmdRequest['device_key'] ?? '-')); ?></td>
+                    <td data-label="Emrler"><code><?= e(implode(' | ', array_map('strval', $cmdList))); ?></code></td>
+                    <td data-label="Sebeb"><?= e((string) ($cmdRequest['reason'] ?? '-')); ?></td>
+                    <td data-label="Sorgu eden"><?= e((string) ($cmdRequest['requested_by_name'] ?? '-')); ?></td>
+                    <td data-label="Qerar">
+                        <form class="portal-inline-form" method="post">
+                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                            <input type="hidden" name="action" value="resolve_device_command_request">
+                            <input type="hidden" name="request_id" value="<?= e((string) ($cmdRequest['id'] ?? 0)); ?>">
+                            <input type="text" name="resolution_note" placeholder="Qeyd" style="width:140px">
+                            <select name="decision"><option value="approved">Tesdiqle ve icra et</option><option value="rejected">Redd et</option></select>
+                            <button class="portal-ghost-btn" type="submit">Qerar ver</button>
+                        </form>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody></table></div>
+        </section>
+        <?php endif; ?>
+
+        <section class="mgs-command-hero noc-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">NOC native panel</span>
                 <h1>Cihaz oyrenme, reachability, OLT/ONT ve backup nezareti</h1>
@@ -1265,19 +1339,25 @@ if ($needsDeviceRows) {
             </section>
         <?php endif; ?>
 
-        <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('Cihaz profili', (string) ($summary['device_profiles'] ?? count($devices)), 'auto-learning rows', 'fa-network-wired', 'blue'); ?>
-            <?php billing_render_stat_card('Reachable', (string) ($summary['devices_reachable'] ?? 0), 'son probe', 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('Mgmt path wait', (string) ($summary['devices_waiting_path'] ?? 0), 'offline spam blok', 'fa-route', 'orange'); ?>
-            <?php billing_render_stat_card('Unknown', (string) ($summary['devices_unknown'] ?? 0), 'probe gozleyir', 'fa-circle-question', 'navy'); ?>
-            <?php billing_render_stat_card('Not monitored', (string) ($summary['devices_not_monitored'] ?? 0), 'alias ve maintenance', 'fa-eye-slash', 'navy'); ?>
-            <?php billing_render_stat_card('SSH port ok', (string) ($summary['devices_ssh_confirmed'] ?? 0), '22/tcp cavab verir', 'fa-terminal', 'green'); ?>
-            <?php billing_render_stat_card('SSH auth ok', (string) ($summary['devices_ssh_auth_confirmed'] ?? 0), 'credential ile login', 'fa-user-shield', 'green'); ?>
-            <?php billing_render_stat_card('SNMP ok', (string) ($summary['devices_snmp_confirmed'] ?? 0), 'effective community probe', 'fa-wave-square', 'green'); ?>
-            <?php billing_render_stat_card('Access override', (string) ($summary['device_access_overrides'] ?? 0), 'per-device auth', 'fa-key', 'orange'); ?>
-            <?php billing_render_stat_card('Backup versiya', (string) ($summary['device_backup_versions'] ?? 0), 'hash dedup', 'fa-box-archive', 'blue'); ?>
-            <?php billing_render_stat_card('Alarm dedup', (string) ($summary['dedup_keys'] ?? 0), 'tekrar mesaj blok', 'fa-clone', 'green'); ?>
+        <section class="mgs-stat-grid portal-reveal" data-noc-primary-stats>
+            <?php billing_render_stat_card('Cihaz profili', (string) ($summary['device_profiles'] ?? count($devices)), 'öyrənilmiş cihazlar', 'fa-network-wired', 'blue'); ?>
+            <?php billing_render_stat_card('Əlçatan', (string) ($summary['devices_reachable'] ?? 0), 'son yoxlama', 'fa-circle-check', 'green'); ?>
+            <?php billing_render_stat_card('Şəbəkə yolu gözləyir', (string) ($summary['devices_waiting_path'] ?? 0), 'yanlış offline bildirişi bloklanır', 'fa-route', 'orange'); ?>
+            <?php billing_render_stat_card('Yoxlanılmayıb', (string) ($summary['devices_unknown'] ?? 0), 'yoxlama gözləyir', 'fa-circle-question', 'navy'); ?>
         </section>
+
+        <details class="noc-secondary-summary portal-reveal" data-noc-secondary-stats>
+            <summary>Ətraflı NOC göstəriciləri <span>7 texniki göstərici</span></summary>
+            <section class="mgs-stat-grid">
+                <?php billing_render_stat_card('Monitorinqdən kənar', (string) ($summary['devices_not_monitored'] ?? 0), 'alias və texniki fasilə', 'fa-eye-slash', 'navy'); ?>
+                <?php billing_render_stat_card('SSH portu açıqdır', (string) ($summary['devices_ssh_confirmed'] ?? 0), '22/tcp cavab verir', 'fa-terminal', 'green'); ?>
+                <?php billing_render_stat_card('SSH giriş uğurludur', (string) ($summary['devices_ssh_auth_confirmed'] ?? 0), 'hesab məlumatları təsdiqlənib', 'fa-user-shield', 'green'); ?>
+                <?php billing_render_stat_card('SNMP işləyir', (string) ($summary['devices_snmp_confirmed'] ?? 0), 'aktiv community yoxlaması', 'fa-wave-square', 'green'); ?>
+                <?php billing_render_stat_card('Fərdi giriş profili', (string) ($summary['device_access_overrides'] ?? 0), 'cihaza xüsusi giriş', 'fa-key', 'orange'); ?>
+                <?php billing_render_stat_card('Backup versiyası', (string) ($summary['device_backup_versions'] ?? 0), 'təkrar nüsxələr ayrılır', 'fa-box-archive', 'blue'); ?>
+                <?php billing_render_stat_card('Təkrar alarm bloku', (string) ($summary['dedup_keys'] ?? 0), 'təkrar mesaj göndərilmir', 'fa-clone', 'green'); ?>
+            </section>
+        </details>
 
         <div class="noc-ajax-status" data-noc-status aria-live="polite"></div>
         <div data-noc-content>
@@ -1328,7 +1408,7 @@ if ($needsDeviceRows) {
                                 <span class="monitor-node-status" data-monitor-status-text><?= e((string) $tooltip['label']); ?></span>
                                 <span class="monitor-node-type"><?= e(strtoupper((string) ($device['device_type'] ?? 'DEV'))); ?></span>
                                 <strong class="monitor-node-name"><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
-                                <span class="monitor-node-meta"><?= e((string) ($device['vendor'] ?? '-')); ?> / <?= e((string) ($device['reachability_state'] ?? $device['status'] ?? 'unknown')); ?></span>
+                                <span class="monitor-node-meta"><?= e((string) ($device['vendor'] ?? '-')); ?> / <?= e(app_ui_status((string) ($device['reachability_state'] ?? $device['status'] ?? 'unknown'))); ?></span>
                                 <span class="monitor-node-ip"><?= e((string) ($device['ip_address'] ?? '-')); ?></span>
                                 <textarea class="monitor-node-note" data-monitor-note placeholder="Qeyd..."><?= e($nodeNote); ?></textarea>
                                 <div class="monitor-node-tools" data-monitor-node-tools>
@@ -1349,7 +1429,7 @@ if ($needsDeviceRows) {
                         <?php if (!is_array($device)) { continue; } ?>
                         <?php $tone = noc_monitor_tone($device); ?>
                         <div class="noc-monitor-side-card">
-                            <span class="noc-pill noc-pill-<?= e($tone === 'up' ? 'success' : ($tone === 'down' ? 'danger' : ($tone === 'maintenance' ? 'muted' : 'warning'))); ?>"><?= e($tone); ?></span>
+                            <span class="noc-pill noc-pill-<?= e($tone === 'up' ? 'success' : ($tone === 'down' ? 'danger' : ($tone === 'maintenance' ? 'muted' : 'warning'))); ?>"><?= e(app_ui_status($tone)); ?></span>
                             <strong><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
                             <small><?= e((string) ($device['ip_address'] ?? '-')); ?> / <?= e((string) ($device['last_probe_error'] ?? $device['status'] ?? '-')); ?></small>
                         </div>
@@ -1522,8 +1602,8 @@ if ($needsDeviceRows) {
                         $tone = noc_state_tone($state);
                         $features = noc_device_feature_list($device);
                         $serviceItems = noc_service_summary($device);
-                        $accessProfile = app_mgs_device_access_profile($device, $db);
-                        $cliDiscovery = app_mgs_latest_cli_discovery_summary($device, $db);
+                        $accessProfile = app_mgs_device_access_profile($device, $db, $user);
+                        $cliDiscovery = app_mgs_latest_cli_discovery_summary($device, $db, $user);
                         $learnedCommandMap = is_array($cliDiscovery['derived_command_map'] ?? null) ? $cliDiscovery['derived_command_map'] : [];
                         $savedPasswordState = noc_secret_status((string) ($accessProfile['ssh_password'] ?? ''));
                         $deviceKey = (string) ($device['device_key'] ?? '');
@@ -1540,7 +1620,7 @@ if ($needsDeviceRows) {
                                     <small><?= e(strtoupper((string) ($device['device_type'] ?? 'unknown'))); ?></small>
                                     <strong><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
                                 </div>
-                                <span class="noc-pill noc-pill-<?= e($tone); ?>"><?= e($state); ?></span>
+                                <span class="noc-pill noc-pill-<?= e($tone); ?>"><?= e(app_ui_status($state)); ?></span>
                             </div>
                             <div class="noc-device-meta is-summary">
                                 <span>IP<b><?= e((string) ($device['ip_address'] ?? '-')); ?></b></span>
@@ -1667,14 +1747,16 @@ if ($needsDeviceRows) {
                                         <strong>Real CLI command</strong>
                                         <small>Bu emrler SSH ile cihazda icra olunur ve audit yazilir. VLAN 550 bu komputerde yoxdursa internal cihazlar management_path_down qaytaracaq.</small>
                                         <textarea name="commands" placeholder="show version&#10;show interfaces status"></textarea>
+                                        <input type="text" name="command_reason" placeholder="Sebeb (yalniz write emrleri ucun mecburidir)">
                                         <div class="noc-command-console-actions">
                                             <label><input type="checkbox" name="allow_dangerous" value="1"> shutdown/delete/restart kimi write emrlerine icaze ver</label>
                                             <button class="portal-primary-btn" type="submit">Real command icra et</button>
                                         </div>
+                                        <small>Write (dangerous) emrleri deryal icra olunmur - BASQA admin tesdiqleyene qeder sorgu kimi qalir (vizyon 19.2).</small>
                                     </form>
                                     <?php
                                     $commandMapLines = [];
-                                    foreach (app_mgs_device_command_map($device, $db) as $mapKey => $mapCommand) {
+                                    foreach (app_mgs_device_command_map($device, $db, $user) as $mapKey => $mapCommand) {
                                         $commandMapLines[] = (string) $mapKey . '=' . (string) $mapCommand;
                                     }
                                     ?>
@@ -1788,7 +1870,7 @@ if ($needsDeviceRows) {
                 <h2>ONT/SN/MAC native axtarisi</h2>
                 <small>Stored customer snapshot uzerinden SN, MAC, subscriber code, PPPoE/IPoE username, OLT/PON/ONT ve optik sahelere gore axtaris. VLAN 550 passiv olsa da saxlanmis profil gorunur.</small>
             </div>
-            <form method="get" class="portal-stacked-form">
+            <form method="get" class="portal-stacked-form" data-noc-auto-filter>
                 <input type="hidden" name="view" value="ont-search">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
@@ -2132,6 +2214,7 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
         const shell = document.querySelector('[data-noc-shell]');
         if (!shell || !window.fetch || !window.DOMParser) return;
         let controller = null;
+        let filterTimer = null;
         const viewFromUrl = url => {
             const target = new URL(url, window.location.href);
             if ((target.searchParams.get('ont_q') || '').trim() !== '') return 'ont-search';
@@ -2170,7 +2253,8 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
                 const response = await fetch(target, {headers: {'X-Requested-With': 'fetch'}, signal: controller.signal});
                 if (!response.ok) throw new Error('NOC panel yenilenmedi');
                 updateShell(target, await response.text());
-                if (push) history.pushState({noc: true}, '', target);
+                if (push === 'replace') history.replaceState({noc: true}, '', target);
+                else if (push) history.pushState({noc: true}, '', target);
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     const status = shell.querySelector('[data-noc-status]');
@@ -2194,7 +2278,22 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
             event.preventDefault();
             const target = new URL(form.action || window.location.href, window.location.href);
             new FormData(form).forEach((value, key) => target.searchParams.set(key, value));
-            loadNoc(target);
+            const historyMode = form.dataset.filterHistory === 'replace' ? 'replace' : true;
+            delete form.dataset.filterHistory;
+            loadNoc(target, historyMode);
+        });
+        shell.addEventListener('input', event => {
+            const field = event.target.closest('[data-noc-auto-filter] input[name="ont_q"]');
+            if (!field) return;
+            const form = field.closest('form');
+            const query = field.value.trim();
+            window.clearTimeout(filterTimer);
+            if (query.length === 1) return;
+            filterTimer = window.setTimeout(() => {
+                if (!form?.isConnected) return;
+                form.dataset.filterHistory = 'replace';
+                form.requestSubmit();
+            }, query === '' ? 0 : 400);
         });
         window.addEventListener('popstate', () => loadNoc(window.location.href, false));
         window.addEventListener('superoptic:noc-refresh', () => loadNoc(window.location.href, false));

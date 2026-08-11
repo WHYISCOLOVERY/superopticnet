@@ -68,7 +68,7 @@ if ($db instanceof PDO) {
             $where[] = '(l.source_port = :port OR l.nat_port = :port OR l.destination_port = :port)';
             $params['port'] = (int) $port;
         } else {
-            $filterError = 'Port yalnÄ±z rÉ™qÉ™m olmalÄ±dÄ±r.';
+            $filterError = 'Port yalnız rəqəm olmalıdır.';
         }
     }
     if ($date !== '') {
@@ -78,7 +78,7 @@ if ($db instanceof PDO) {
             $params['date_from'] = $parsedDate;
             $params['date_to'] = $parsedDate;
         } else {
-            $filterError = 'Tarix formatÄ± dÃ¼zgÃ¼n deyil.';
+            $filterError = 'Tarix formatı düzgün deyil.';
         }
     }
 
@@ -106,7 +106,7 @@ if ($db instanceof PDO) {
     $statement->execute($params);
     $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } else {
-    $filterError = 'MySQL baÄŸlantÄ±sÄ± hazÄ±r deyil. NAT log axtarÄ±ÅŸÄ± Ã¼Ã§Ã¼n radius_nat_logs cÉ™dvÉ™li aktiv olmalÄ±dÄ±r.';
+    $filterError = 'MySQL bağlantısı hazır deyil. NAT log axtarışı üçün radius_nat_logs cədvəli aktiv olmalıdır.';
 }
 
 $nodeOptions = array_values(array_unique(array_filter(array_map(static fn (array $row): string => (string) ($row['node_name'] ?? ''), $nodes))));
@@ -120,7 +120,7 @@ unset($queryBase['page']);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NAT log axtarÄ±ÅŸÄ±</title>
+    <title>NAT log axtarışı</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <style>
@@ -232,59 +232,59 @@ unset($queryBase['page']);
     </style>
 </head>
 <body class="portal-body">
-    <?php billing_render_header('NAT log axtarÄ±ÅŸÄ±', 'radius-natlog', $lang); ?>
+    <?php billing_render_header('NAT log axtarışı', 'radius-natlog', $lang); ?>
 
     <main class="portal-layout">
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">FreeRADIUS / NAT LOG</span>
-                <h1>NAT log axtarÄ±ÅŸÄ± vÉ™ mÃ¼ÅŸtÉ™ri izi</h1>
-                <p>MÉ™nbÉ™ IP, hÉ™dÉ™f IP, port, tarix, istifadÉ™Ã§i vÉ™ log node Ã¼zrÉ™ indexed axtarÄ±ÅŸ. MÉ™lumat syslog/parser tÉ™rÉ™findÉ™n radius_nat_logs cÉ™dvÉ™linÉ™ yazÄ±ldÄ±qdan sonra burada gÃ¶rÃ¼nÉ™cÉ™k.</p>
+                <h1>NAT log axtarışı və müştəri izi</h1>
+                <p>Mənbə IP, hədəf IP, port, tarix, istifadəçi və log node üzrə indexed axtarış. Məlumat syslog/parser tərəfindən radius_nat_logs cədvəlinə yazıldıqdan sonra burada görünəcək.</p>
                 <div class="mgs-command-actions">
                     <a class="portal-primary-btn portal-inline-link" href="radius-active.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Online sessiyalar</a>
-                    <a class="portal-ghost-btn portal-inline-link" href="billing-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>#radius-logs">RADIUS loglarÄ±</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="billing-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>#radius-logs">RADIUS logları</a>
                 </div>
             </div>
             <div class="mgs-command-panel">
-                <span>Bu gÃ¼n</span>
+                <span>Bu gün</span>
                 <strong><?= e((string) $stats['today']); ?></strong>
                 <small>NAT log qeydi</small>
-                <span>NÉ™ticÉ™</span>
+                <span>Nəticə</span>
                 <strong><?= e((string) $stats['results']); ?></strong>
             </div>
         </section>
 
-        <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('CÉ™mi NAT log', (string) $stats['total'], 'radius_nat_logs', 'fa-database', 'blue'); ?>
-            <?php billing_render_stat_card('BugÃ¼nkÃ¼ log', (string) $stats['today'], 'logged_at >= today', 'fa-clock-rotate-left', 'green'); ?>
+        <section class="mgs-stat-grid portal-reveal" data-auto-filter-results="radius-nat-kpis" data-auto-filter-form="radius-nat-filter">
+            <?php billing_render_stat_card('Cəmi NAT log', (string) $stats['total'], 'radius_nat_logs', 'fa-database', 'blue'); ?>
+            <?php billing_render_stat_card('Bugünkü log', (string) $stats['today'], 'logged_at >= today', 'fa-clock-rotate-left', 'green'); ?>
             <?php billing_render_stat_card('Log node', (string) $stats['nodes'], 'radius_nat_log_nodes', 'fa-server', 'orange'); ?>
-            <?php billing_render_stat_card('Filtr nÉ™ticÉ™si', (string) $stats['results'], 'maksimum 200 sÉ™tir gÃ¶stÉ™rilir', 'fa-magnifying-glass-chart', 'navy'); ?>
+            <?php billing_render_stat_card('Filtr nəticəsi', (string) $stats['results'], 'maksimum 200 sətir göstərilir', 'fa-magnifying-glass-chart', 'navy'); ?>
         </section>
 
         <section class="mgs-filter-panel portal-reveal">
             <div class="mgs-section-head">
                 <div>
-                    <h2>AxtarÄ±ÅŸ filtri</h2>
-                    <p>MÉ™nbÉ™ IP, hÉ™dÉ™f IP vÉ™ port kombinasiyasÄ± hÃ¼quqi sorÄŸular vÉ™ problem araÅŸdÄ±rmasÄ± Ã¼Ã§Ã¼n É™sas axtarÄ±ÅŸ yoludur.</p>
+                    <h2>Axtarış filtri</h2>
+                    <p>Mənbə IP, hədəf IP və port kombinasiyası hüquqi sorğular və problem araşdırması üçün əsas axtarış yoludur.</p>
                 </div>
             </div>
             <?php if ($filterError !== ''): ?>
                 <div class="portal-alert is-warning"><?= e($filterError); ?></div>
             <?php endif; ?>
-            <form method="get" class="portal-stacked-form">
+            <form method="get" class="portal-stacked-form" id="radius-nat-filter" data-auto-filter data-auto-filter-targets="radius-nat-kpis,radius-nat-results">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
                     <div class="portal-form-row">
-                        <label>Ãœmumi axtarÄ±ÅŸ</label>
+                        <label>Ümumi axtarış</label>
                         <input type="text" name="q" value="<?= e($query); ?>" placeholder="username, abonent kodu, IP, raw log">
                     </div>
                     <div class="portal-form-row">
-                        <label>MÉ™nbÉ™ IP</label>
-                        <input type="text" name="source_ip" value="<?= e($sourceIp); ?>" placeholder="mÉ™sÉ™lÉ™n: 10.11.16.35">
+                        <label>Mənbə IP</label>
+                        <input type="text" name="source_ip" value="<?= e($sourceIp); ?>" placeholder="məsələn: 10.11.16.35">
                     </div>
                     <div class="portal-form-row">
-                        <label>HÉ™dÉ™f IP</label>
-                        <input type="text" name="destination_ip" value="<?= e($destinationIp); ?>" placeholder="mÉ™sÉ™lÉ™n: 8.8.8.8">
+                        <label>Hədəf IP</label>
+                        <input type="text" name="destination_ip" value="<?= e($destinationIp); ?>" placeholder="məsələn: 8.8.8.8">
                     </div>
                     <div class="portal-form-row">
                         <label>Port</label>
@@ -297,7 +297,7 @@ unset($queryBase['page']);
                     <div class="portal-form-row">
                         <label>Protokol</label>
                         <select name="protocol">
-                            <option value="">HamÄ±sÄ±</option>
+                            <option value="">Hamısı</option>
                             <?php foreach ($protocolOptions as $option): ?>
                                 <option value="<?= e($option); ?>" <?= strtoupper($protocol) === $option ? 'selected' : ''; ?>><?= e($option); ?></option>
                             <?php endforeach; ?>
@@ -306,7 +306,7 @@ unset($queryBase['page']);
                     <div class="portal-form-row">
                         <label>Log node</label>
                         <select name="node">
-                            <option value="">BÃ¼tÃ¼n node-lar</option>
+                            <option value="">Bütün node-lar</option>
                             <?php foreach ($nodeOptions as $option): ?>
                                 <option value="<?= e($option); ?>" <?= $node === $option ? 'selected' : ''; ?>><?= e($option); ?></option>
                             <?php endforeach; ?>
@@ -315,18 +315,19 @@ unset($queryBase['page']);
                 </div>
                 <div class="portal-form-actions">
                     <button class="portal-primary-btn" type="submit">Axtar</button>
-                    <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">SÄ±fÄ±rla</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="radius-natlog.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sıfırla</a>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
         <section class="mgs-dashboard-grid portal-reveal">
             <article class="mgs-chart-card">
                 <div class="mgs-chart-head">
-                    <div><h2>Log serverlÉ™ri</h2><p>Parser vÉ™ ya syslog agentinin son vÉ™ziyyÉ™ti.</p></div>
+                    <div><h2>Log serverləri</h2><p>Parser və ya syslog agentinin son vəziyyəti.</p></div>
                 </div>
                 <?php if ($nodes === []): ?>
-                    <?php billing_render_empty_state('Log node É™lavÉ™ edilmÉ™yib', 'NAT log toplayÄ±cÄ± iÅŸÉ™ dÃ¼ÅŸÉ™ndÉ™ node-lar burada gÃ¶rÃ¼nÉ™cÉ™k.', 'fa-server'); ?>
+                    <?php billing_render_empty_state('Log node əlavə edilməyib', 'NAT log toplayıcı işə düşəndə node-lar burada görünəcək.', 'fa-server'); ?>
                 <?php else: ?>
                     <div class="nat-node-grid">
                         <?php foreach ($nodes as $nodeRow): ?>
@@ -337,7 +338,7 @@ unset($queryBase['page']);
                                 <div class="nat-progress"><span style="width: <?= e((string) max(2, $usedPercent)); ?>%"></span></div>
                                 <div class="nat-node-meta">
                                     <span>Disk: <?= e($usedPercent > 0 ? number_format($usedPercent, 1, '.', '') . '%' : '-'); ?></span>
-                                    <span>Son É™laqÉ™: <?= e(billing_datetime($nodeRow['last_seen_at'] ?? '')); ?></span>
+                                    <span>Son əlaqə: <?= e(billing_datetime($nodeRow['last_seen_at'] ?? '')); ?></span>
                                 </div>
                             </article>
                         <?php endforeach; ?>
@@ -346,36 +347,36 @@ unset($queryBase['page']);
             </article>
             <article class="mgs-chart-card">
                 <div class="mgs-chart-head">
-                    <div><h2>Ä°ngest qaydasÄ±</h2><p>Bu sÉ™hifÉ™ log yaratmÄ±r, yalnÄ±z indexed axtarÄ±ÅŸ edir.</p></div>
+                    <div><h2>İngest qaydası</h2><p>Bu səhifə log yaratmır, yalnız indexed axtarış edir.</p></div>
                 </div>
                 <div class="portal-timeline">
-                    <div><strong>1. Toplama</strong><span>Router/syslog vÉ™ ya NAT log server fayllarÄ± parserÉ™ dÃ¼ÅŸÃ¼r.</span></div>
-                    <div><strong>2. Normalize</strong><span>IP, port, protokol, username vÉ™ abonent kodu ayrÄ±lÄ±r.</span></div>
-                    <div><strong>3. Saxlama</strong><span>Hash ilÉ™ dublikatlar bloklanÄ±r, tarix/IP/port indekslÉ™ri axtarÄ±ÅŸÄ± sÃ¼rÉ™tlÉ™ndirir.</span></div>
-                    <div><strong>4. Ä°z tapma</strong><span>NÉ™ticÉ™ mÃ¼mkÃ¼n olduqda mÃ¼ÅŸtÉ™ri profili vÉ™ RADIUS sessiyasÄ± ilÉ™ baÄŸlanÄ±r.</span></div>
+                    <div><strong>1. Toplama</strong><span>Router/syslog və ya NAT log server faylları parserə düşür.</span></div>
+                    <div><strong>2. Normalize</strong><span>IP, port, protokol, username və abonent kodu ayrılır.</span></div>
+                    <div><strong>3. Saxlama</strong><span>Hash ilə dublikatlar bloklanır, tarix/IP/port indeksləri axtarışı sürətləndirir.</span></div>
+                    <div><strong>4. İz tapma</strong><span>Nəticə mümkün olduqda müştəri profili və RADIUS sessiyası ilə bağlanır.</span></div>
                 </div>
             </article>
         </section>
 
-        <section class="mgs-table-card portal-reveal">
+        <section class="mgs-table-card portal-reveal" data-auto-filter-results="radius-nat-results" data-auto-filter-form="radius-nat-filter">
             <div class="mgs-section-head">
                 <div>
-                    <h2>AxtarÄ±ÅŸ nÉ™ticÉ™lÉ™ri</h2>
-                    <p><?= $hasFilters ? 'FiltrÉ™ uyÄŸun son 200 NAT log qeydi.' : 'Filtr seÃ§ilmÉ™yib. BÃ¶yÃ¼k log bazasÄ±nÄ± yÃ¼klÉ™mÉ™mÉ™k Ã¼Ã§Ã¼n yalnÄ±z son 200 qeyd gÃ¶stÉ™rilir.'; ?></p>
+                    <h2>Axtarış nəticələri</h2>
+                    <p><?= $hasFilters ? 'Filtrə uyğun son 200 NAT log qeydi.' : 'Filtr seçilməyib. Böyük log bazasını yükləməmək üçün yalnız son 200 qeyd göstərilir.'; ?></p>
                 </div>
             </div>
             <?php if ($rows === []): ?>
-                <?php billing_render_empty_state('NÉ™ticÉ™ tapÄ±lmadÄ±', 'Log ingest iÅŸÉ™ dÃ¼ÅŸmÉ™yibsÉ™ bu normaldÄ±r. Syslog/parser qoÅŸulduqdan sonra real NAT qeydlÉ™ri burada gÃ¶rÃ¼nÉ™cÉ™k.', 'fa-magnifying-glass'); ?>
+                <?php billing_render_empty_state('Nəticə tapılmadı', 'Log ingest işə düşməyibsə bu normaldır. Syslog/parser qoşulduqdan sonra real NAT qeydləri burada görünəcək.', 'fa-magnifying-glass'); ?>
             <?php else: ?>
                 <div class="portal-table-wrap nat-results-wrap">
                     <table class="portal-table nat-results-table">
                         <thead>
                             <tr>
                                 <th>Tarix</th>
-                                <th>AxÄ±n</th>
-                                <th>Ä°stifadÉ™Ã§i</th>
+                                <th>Axın</th>
+                                <th>İstifadəçi</th>
                                 <th>Node</th>
-                                <th>ÆmÉ™liyyat</th>
+                                <th>Əməliyyat</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -390,7 +391,7 @@ unset($queryBase['page']);
                                     <td>
                                         <div class="nat-flow">
                                             <div class="nat-flow-card">
-                                                <small>MÉ™nbÉ™</small>
+                                                <small>Mənbə</small>
                                                 <strong><?= e((string) ($row['source_ip'] ?? '-')); ?><?= isset($row['source_port']) && $row['source_port'] !== null ? ':' . e((string) $row['source_port']) : ''; ?></strong>
                                             </div>
                                             <i class="fa-solid fa-arrow-right nat-flow-arrow"></i>
@@ -400,7 +401,7 @@ unset($queryBase['page']);
                                             </div>
                                             <i class="fa-solid fa-arrow-right nat-flow-arrow"></i>
                                             <div class="nat-flow-card">
-                                                <small>HÉ™dÉ™f</small>
+                                                <small>Hədəf</small>
                                                 <strong><?= e((string) ($row['destination_ip'] ?? '-')); ?><?= isset($row['destination_port']) && $row['destination_port'] !== null ? ':' . e((string) $row['destination_port']) : ''; ?></strong>
                                             </div>
                                         </div>
@@ -416,7 +417,7 @@ unset($queryBase['page']);
                                         <?php if ($profileHref !== ''): ?>
                                             <a class="portal-ghost-btn portal-inline-link" href="<?= e($profileHref); ?>">Profil</a>
                                         <?php else: ?>
-                                            <span class="portal-mini-badge">Profil tapÄ±lmadÄ±</span>
+                                            <span class="portal-mini-badge">Profil tapılmadı</span>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -438,5 +439,6 @@ unset($queryBase['page']);
             <?php endif; ?>
         </section>
     </main>
+    <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
 </body>
 </html>

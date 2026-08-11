@@ -11,53 +11,53 @@ if (PHP_SAPI !== 'cli') {
     ob_start(static function (string $html): string {
         return str_replace(
             [
-                'Sessiya yoxlamasÃ„Â± uÃ„Å¸ursuz oldu.',
-                'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri kodu yazÃ„Â±lmalÃ„Â±dÃ„Â±r.',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸ qÃ‰â„¢bul edildi, xidmÃ‰â„¢t aktivlÃ‰â„¢Ã…Å¸dirildi vÃ‰â„¢ Radius sync yenilÃ‰â„¢ndi.',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸i tÃ‰â„¢tbiq etmÃ‰â„¢k alÃ„Â±nmadÃ„Â±. MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri kodunu, tarif qiymÃ‰â„¢tini vÃ‰â„¢ DB/RADIUS sync-i yoxla.',
-                'NaÃ„Å¸d ÃƒÂ¶dÃ‰â„¢niÃ…Å¸',
-                'Kassa Ã‰â„¢mÃ‰â„¢liyyatÃ„Â±',
-                'NaÃ„Å¸d/manual ÃƒÂ¶dÃ‰â„¢niÃ…Å¸ qÃ‰â„¢bul et',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸ mÃƒÂ¼Ã…Å¸tÃ‰â„¢ri koduna yazÃ„Â±lÃ„Â±r, bitmÃ‰â„¢ tarixi uzadÃ„Â±lÃ„Â±r, servis aktiv edilir vÃ‰â„¢ FreeRADIUS SQL cavabÃ„Â± yenilÃ‰â„¢nir.',
-                'SeÃƒÂ§ilmiÃ…Å¸ mÃƒÂ¼Ã…Å¸tÃ‰â„¢ri',
-                'SeÃƒÂ§ilmÃ‰â„¢yib',
-                'Kod yazÃ„Â±b yoxla',
-                'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri yoxlamasÃ„Â±',
-                'Kod yazÃ„Â±ldÃ„Â±qda balans, paket vÃ‰â„¢ bitmÃ‰â„¢ tarixi preview olur.',
-                'Kassa Ã‰â„¢mÃ‰â„¢liyyatÃ„Â±',
-                'NaÃ„Å¸d, manual vÃ‰â„¢ terminal qeydi eyni axÃ„Â±na dÃƒÂ¼Ã…Å¸ÃƒÂ¼r.',
-                'GÃƒÂ¼n artÃ„Â±rma',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸dÃ‰â„¢n sonra xidmÃ‰â„¢t mÃƒÂ¼ddÃ‰â„¢ti seÃƒÂ§ilÃ‰â„¢n gÃƒÂ¼n qÃ‰â„¢dÃ‰â„¢r uzadÃ„Â±lÃ„Â±r.',
-                'Aktiv servis radcheck/radreply cavablarÃ„Â±na hazÃ„Â±rlanÃ„Â±r.',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸ formu',
-                'Referans sistemdÃ‰â„¢ki Ã¢â‚¬Å“NaÃ„Å¸d ÃƒÂ¶dÃ‰â„¢niÃ…Å¸Ã¢â‚¬Â axÃ„Â±nÃ„Â±na uyÃ„Å¸un sadÃ‰â„¢ kassa formu.',
-                'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri kodu',
-                'MÃ‰â„¢blÃ‰â„¢Ã„Å¸',
-                'boÃ…Å¸ = aylÃ„Â±q toplam',
-                'boÃ…Å¸ = tarif + xidmÃ‰â„¢t cÃ‰â„¢mi',
-                'BoÃ…Å¸ vÃ‰â„¢ ya 0 saxlanarsa internet paketi vÃ‰â„¢ aktiv Ã‰â„¢lavÃ‰â„¢ xidmÃ‰â„¢tlÃ‰â„¢rin toplamÃ„Â± yazÃ„Â±lÃ„Â±r.',
-                'GÃƒÂ¼n',
-                '0 vÃ‰â„¢ ya boÃ…Å¸ = mÃƒÂ¼Ã…Å¸tÃ‰â„¢ri/tarif gÃƒÂ¼nÃƒÂ¼, default 30 gÃƒÂ¼n.',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸ÃƒÂ§i/metod',
-                'NaÃ„Å¸d',
-                'Transaction / qÃ‰â„¢bz',
-                'qÃ‰â„¢bz nÃƒÂ¶mrÃ‰â„¢si',
-                'Ãƒâ€“dÃ‰â„¢niÃ…Å¸i yadda saxla vÃ‰â„¢ aktiv et',
-                'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri xÃƒÂ¼lasÃ‰â„¢si',
-                'Kod yazÃ„Â±lÃ„Â±bsa cari balans vÃ‰â„¢ bitmÃ‰â„¢ mÃ‰â„¢lumatÃ„Â±.',
-                'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri seÃƒÂ§ilmÃ‰â„¢yib. Formda mÃƒÂ¼Ã…Å¸tÃ‰â„¢ri kodunu yaz.',
-                'Internet qiymÃ‰â„¢ti',
-                'Ã†ÂlavÃ‰â„¢ xidmÃ‰â„¢tlÃ‰â„¢r',
-                'AylÃ„Â±q toplam',
-                'Default gÃƒÂ¼n',
-                'BitmÃ‰â„¢',
-                'Qalan gÃƒÂ¼n',
-                'ProfilÃ‰â„¢ keÃƒÂ§',
-                'Son yenilÃ‰â„¢nÃ‰â„¢n mÃƒÂ¼Ã…Å¸tÃ‰â„¢rilÃ‰â„¢r',
-                'Tez seÃƒÂ§im ÃƒÂ¼ÃƒÂ§ÃƒÂ¼n son 25 mÃƒÂ¼Ã…Å¸tÃ‰â„¢ri.',
-                'MÃƒÂ¼Ã…Å¸tÃ‰â„¢ri',
-                'Ã†Ârazi',
-                'SeÃƒÂ§',
+                'Sessiya yoxlaması uğursuz oldu.',
+                'Müştəri kodu yazılmalıdır.',
+                'Ödəniş qəbul edildi, xidmət aktivləşdirildi və Radius sync yeniləndi.',
+                'Ödənişi tətbiq etmək alınmadı. Müştəri kodunu, tarif qiymətini və DB/RADIUS sync-i yoxla.',
+                'Nağd ödəniş',
+                'Kassa əməliyyatı',
+                'Nağd/manual ödəniş qəbul et',
+                'Ödəniş müştəri koduna yazılır, bitmə tarixi uzadılır, servis aktiv edilir və FreeRADIUS SQL cavabı yenilənir.',
+                'Seçilmiş müştəri',
+                'Seçilməyib',
+                'Kod yazıb yoxla',
+                'Müştəri yoxlaması',
+                'Kod yazıldıqda balans, paket və bitmə tarixi preview olur.',
+                'Kassa əməliyyatı',
+                'Nağd, manual və terminal qeydi eyni axına düşür.',
+                'Gün artırma',
+                'Ödənişdən sonra xidmət müddəti seçilən gün qədər uzadılır.',
+                'Aktiv servis radcheck/radreply cavablarına hazırlanır.',
+                'Ödəniş formu',
+                'Referans sistemdəki "Nağd ödəniş" axınına uyğun sadə kassa formu.',
+                'Müştəri kodu',
+                'Məbləğ',
+                'boş = aylıq toplam',
+                'boş = tarif + xidmət cəmi',
+                'Boş və ya 0 saxlanarsa internet paketi və aktiv əlavə xidmətlərin toplamı yazılır.',
+                'Gün',
+                '0 və ya boş = müştəri/tarif günü, default 30 gün.',
+                'Ödənişçi/metod',
+                'Nağd',
+                'Transaction / qəbz',
+                'qəbz nömrəsi',
+                'Ödənişi yadda saxla və aktiv et',
+                'Müştəri xülasəsi',
+                'Kod yazılıbsa cari balans və bitmə məlumatı.',
+                'Müştəri seçilməyib. Formda müştəri kodunu yaz.',
+                'Internet qiyməti',
+                'Əlavə xidmətlər',
+                'Aylıq toplam',
+                'Default gün',
+                'Bitmə',
+                'Qalan gün',
+                'Profilə keç',
+                'Son yenilənən müştərilər',
+                'Tez seçim üçün son 25 müştəri.',
+                'Müştəri',
+                'Ərazi',
+                'Seç',
             ],
             [
                 'Sessiya yoxlamasi ugursuz oldu.',
@@ -116,6 +116,12 @@ $flash = null;
 $lookupCode = clean_text((string) ($_GET['subscriber_code'] ?? ($_POST['subscriber_code'] ?? '')));
 $lookupAccount = $lookupCode !== '' ? app_db_account_by_subscriber_code($lookupCode) : null;
 $recentCustomers = [];
+$billingDataErrorReference = $db instanceof PDO ? '' : app_runtime_error_reference('billing_cash_payment_database_unavailable');
+$cashPaymentIdempotency = (string) ($_SESSION['billing_cash_payment_idempotency'] ?? '');
+if ($cashPaymentIdempotency === '') {
+    $cashPaymentIdempotency = bin2hex(random_bytes(24));
+    $_SESSION['billing_cash_payment_idempotency'] = $cashPaymentIdempotency;
+}
 
 if ($lookupAccount === null && $lookupCode !== '' && !($db instanceof PDO)) {
     foreach (billing_mock_customer_rows() as $mockCustomer) {
@@ -137,19 +143,33 @@ if ($lookupAccount === null && $lookupCode !== '' && !($db instanceof PDO)) {
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $csrfToken = $_POST['csrf_token'] ?? '';
     if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
-        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasÄ± uÄŸursuz oldu.'];
+        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlaması uğursuz oldu.'];
     } elseif ($db instanceof PDO) {
         $amount = app_billing_parse_money_amount($_POST['amount'] ?? 0);
         $days = max(0, (int) ($_POST['days'] ?? 0));
         $method = clean_text((string) ($_POST['method'] ?? 'cash'));
         $transactionId = clean_text((string) ($_POST['transaction_id'] ?? ''));
+        $submittedIdempotency = trim((string) ($_POST['idempotency_key'] ?? ''));
         if ($lookupCode === '') {
-            $flash = ['type' => 'error', 'message' => 'MÃ¼ÅŸtÉ™ri kodu yazÄ±lmalÄ±dÄ±r.'];
-        } elseif (app_billing_apply_customer_payment($lookupCode, $amount, $method, $days, $transactionId)) {
+            $flash = ['type' => 'error', 'message' => 'Müştəri kodu yazılmalıdır.'];
+        } elseif ($submittedIdempotency === '' || !hash_equals($cashPaymentIdempotency, $submittedIdempotency)) {
+            $flash = ['type' => 'error', 'message' => 'Odenis sorğusunun tesdiq acarini yenileyib tekrar cehd edin.'];
+        } elseif (app_billing_apply_customer_payment(
+            $lookupCode,
+            $amount,
+            $method,
+            $days,
+            $transactionId,
+            '',
+            null,
+            $submittedIdempotency
+        )) {
             $lookupAccount = app_db_account_by_subscriber_code($lookupCode);
-            $flash = ['type' => 'success', 'message' => 'Ã–dÉ™niÅŸ qÉ™bul edildi, xidmÉ™t aktivlÉ™ÅŸdirildi vÉ™ Radius sync yenilÉ™ndi.'];
+            $cashPaymentIdempotency = bin2hex(random_bytes(24));
+            $_SESSION['billing_cash_payment_idempotency'] = $cashPaymentIdempotency;
+            $flash = ['type' => 'success', 'message' => 'Ödəniş qəbul edildi, xidmət aktivləşdirildi və Radius sync yeniləndi.'];
         } else {
-            $flash = ['type' => 'error', 'message' => 'Ã–dÉ™niÅŸi tÉ™tbiq etmÉ™k alÄ±nmadÄ±. MÃ¼ÅŸtÉ™ri kodunu, tarif qiymÉ™tini vÉ™ DB/RADIUS sync-i yoxla.'];
+            $flash = ['type' => 'error', 'message' => 'Ödənişi tətbiq etmək alınmadı. Müştəri kodunu, tarif qiymətini və DB/RADIUS sync-i yoxla.'];
         }
     }
 }
@@ -180,14 +200,20 @@ $lookupRemainingDays = $lookupExpiresAt !== '' ? app_billing_remaining_days_text
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NaÄŸd Ã¶dÉ™niÅŸ</title>
+    <title>Nağd ödəniş</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
 </head>
 <body class="portal-body">
-    <?php billing_render_header('NaÄŸd Ã¶dÉ™niÅŸ', 'cash', $lang); ?>
+    <?php billing_render_header('Nağd ödəniş', 'cash', $lang); ?>
 
     <main class="portal-layout">
+        <?php if ($billingDataErrorReference !== ''): ?>
+            <div class="portal-alert portal-alert-error">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <span>Odenis melumatlari yuklenmedi. Xeta arayisi: <?= e($billingDataErrorReference); ?></span>
+            </div>
+        <?php endif; ?>
         <?php if ($flash !== null): ?>
             <div class="portal-alert portal-alert-<?= e($flash['type']); ?>">
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
@@ -197,87 +223,88 @@ $lookupRemainingDays = $lookupExpiresAt !== '' ? app_billing_remaining_days_text
 
         <section class="portal-hero portal-reveal">
             <div>
-                <span class="portal-kicker">Kassa É™mÉ™liyyatÄ±</span>
-                <h1>NaÄŸd/manual Ã¶dÉ™niÅŸ qÉ™bul et</h1>
-                <p>Ã–dÉ™niÅŸ mÃ¼ÅŸtÉ™ri koduna yazÄ±lÄ±r, bitmÉ™ tarixi uzadÄ±lÄ±r, servis aktiv edilir vÉ™ FreeRADIUS SQL cavabÄ± yenilÉ™nir.</p>
+                <span class="portal-kicker">Kassa əməliyyatı</span>
+                <h1>Nağd/manual ödəniş qəbul et</h1>
+                <p>Ödəniş müştəri koduna yazılır, bitmə tarixi uzadılır, servis aktiv edilir və FreeRADIUS SQL cavabı yenilənir.</p>
             </div>
             <div class="portal-status-card">
-                <span>SeÃ§ilmiÅŸ mÃ¼ÅŸtÉ™ri</span>
-                <strong><?= e(is_array($lookupAccount) ? (string) ($lookupAccount['subscriber_code'] ?? '-') : 'SeÃ§ilmÉ™yib'); ?></strong>
-                <small><?= e(is_array($lookupAccount) ? (string) ($lookupAccount['full_name'] ?? '-') : 'Kod yazÄ±b yoxla'); ?></small>
+                <span>Seçilmiş müştəri</span>
+                <strong><?= e(is_array($lookupAccount) ? (string) ($lookupAccount['subscriber_code'] ?? '-') : 'Seçilməyib'); ?></strong>
+                <small><?= e(is_array($lookupAccount) ? (string) ($lookupAccount['full_name'] ?? '-') : 'Kod yazıb yoxla'); ?></small>
             </div>
         </section>
 
         <section class="mgs-action-strip portal-reveal">
-            <article class="mgs-action-tile"><i class="fa-solid fa-magnifying-glass"></i><strong>MÃ¼ÅŸtÉ™ri yoxlamasÄ±</strong><small>Kod yazÄ±ldÄ±qda balans, paket vÉ™ bitmÉ™ tarixi preview olur.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-cash-register"></i><strong>Kassa É™mÉ™liyyatÄ±</strong><small>NaÄŸd, manual vÉ™ terminal qeydi eyni axÄ±na dÃ¼ÅŸÃ¼r.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-calendar-plus"></i><strong>GÃ¼n artÄ±rma</strong><small>Ã–dÉ™niÅŸdÉ™n sonra xidmÉ™t mÃ¼ddÉ™ti seÃ§ilÉ™n gÃ¼n qÉ™dÉ™r uzadÄ±lÄ±r.</small></article>
-            <article class="mgs-action-tile"><i class="fa-solid fa-satellite-dish"></i><strong>Radius sync</strong><small>Aktiv servis radcheck/radreply cavablarÄ±na hazÄ±rlanÄ±r.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-magnifying-glass"></i><strong>Müştəri yoxlaması</strong><small>Kod yazıldıqda balans, paket və bitmə tarixi preview olur.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-cash-register"></i><strong>Kassa əməliyyatı</strong><small>Nağd, manual və terminal qeydi eyni axına düşür.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-calendar-plus"></i><strong>Gün artırma</strong><small>Ödənişdən sonra xidmət müddəti seçilən gün qədər uzadılır.</small></article>
+            <article class="mgs-action-tile"><i class="fa-solid fa-satellite-dish"></i><strong>Radius sync</strong><small>Aktiv servis radcheck/radreply cavablarına hazırlanır.</small></article>
         </section>
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Ã–dÉ™niÅŸ formu</h2><small>Referans sistemdÉ™ki â€œNaÄŸd Ã¶dÉ™niÅŸâ€ axÄ±nÄ±na uyÄŸun sadÉ™ kassa formu.</small></div>
+                <div class="portal-card-head"><h2>Ödəniş formu</h2><small>Referans sistemdəki "Nağd ödəniş" axınına uyğun sadə kassa formu.</small></div>
                 <form method="post" class="portal-stacked-form">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="idempotency_key" value="<?= e($cashPaymentIdempotency); ?>">
                     <div class="portal-form-row">
-                        <label>MÃ¼ÅŸtÉ™ri kodu</label>
+                        <label>Müştəri kodu</label>
                         <input type="text" name="subscriber_code" value="<?= e($lookupCode); ?>" placeholder="1100000" required>
                     </div>
                     <div class="portal-form-row">
-                        <label>MÉ™blÉ™ÄŸ</label>
-                        <input type="number" name="amount" min="0" step="0.01" placeholder="<?= e($lookupDefaultAmount > 0 ? number_format($lookupDefaultAmount, 2, '.', '') . ' / boÅŸ = aylÄ±q toplam' : 'boÅŸ = tarif + xidmÉ™t cÉ™mi'); ?>">
-                        <small>BoÅŸ vÉ™ ya 0 saxlanarsa internet paketi vÉ™ aktiv É™lavÉ™ xidmÉ™tlÉ™rin toplamÄ± yazÄ±lÄ±r.</small>
+                        <label>Məbləğ</label>
+                        <input type="number" name="amount" min="0" step="0.01" placeholder="<?= e($lookupDefaultAmount > 0 ? number_format($lookupDefaultAmount, 2, '.', '') . ' / boş = aylıq toplam' : 'boş = tarif + xidmət cəmi'); ?>">
+                        <small>Boş və ya 0 saxlanarsa internet paketi və aktiv əlavə xidmətlərin toplamı yazılır.</small>
                     </div>
                     <div class="portal-form-row">
-                        <label>GÃ¼n</label>
+                        <label>Gün</label>
                         <input type="number" name="days" min="0" max="366" step="1" value="<?= e((string) $lookupDefaultDays); ?>">
-                        <small>0 vÉ™ ya boÅŸ = mÃ¼ÅŸtÉ™ri/tarif gÃ¼nÃ¼, default 30 gÃ¼n.</small>
+                        <small>0 və ya boş = müştəri/tarif günü, default 30 gün.</small>
                     </div>
                     <div class="portal-form-row">
-                        <label>Ã–dÉ™niÅŸÃ§i/metod</label>
+                        <label>Ödənişçi/metod</label>
                         <select name="method">
-                            <option value="cash">NaÄŸd</option>
+                            <option value="cash">Nağd</option>
                             <option value="manual">Manual</option>
                             <option value="terminal">Terminal</option>
                         </select>
                     </div>
                     <div class="portal-form-row">
-                        <label>Transaction / qÉ™bz</label>
-                        <input type="text" name="transaction_id" placeholder="qÉ™bz nÃ¶mrÉ™si">
+                        <label>Transaction / qəbz</label>
+                        <input type="text" name="transaction_id" placeholder="qəbz nömrəsi">
                     </div>
-                    <button type="submit" class="portal-primary-btn">Ã–dÉ™niÅŸi yadda saxla vÉ™ aktiv et</button>
+                    <button type="submit" class="portal-primary-btn">Ödənişi yadda saxla və aktiv et</button>
                 </form>
             </article>
 
             <article class="portal-card">
-                <div class="portal-card-head"><h2>MÃ¼ÅŸtÉ™ri xÃ¼lasÉ™si</h2><small>Kod yazÄ±lÄ±bsa cari balans vÉ™ bitmÉ™ mÉ™lumatÄ±.</small></div>
+                <div class="portal-card-head"><h2>Müştəri xülasəsi</h2><small>Kod yazılıbsa cari balans və bitmə məlumatı.</small></div>
                 <?php if (!is_array($lookupAccount)): ?>
-                    <p>MÃ¼ÅŸtÉ™ri seÃ§ilmÉ™yib. Formda mÃ¼ÅŸtÉ™ri kodunu yaz.</p>
+                    <p>Müştəri seçilməyib. Formda müştəri kodunu yaz.</p>
                 <?php else: ?>
                     <div class="portal-profile-list">
                         <div><span>Ad</span><strong><?= e((string) ($lookupAccount['full_name'] ?? '-')); ?></strong></div>
                         <div><span>Telefon</span><strong><?= e((string) ($lookupAccount['phone'] ?? '-')); ?></strong></div>
                         <div><span>Tarif</span><strong><?= e((string) ($lookupBilling['tariff'] ?? $lookupAccount['plan'] ?? '-')); ?></strong></div>
-                        <div><span>Internet qiymÉ™ti</span><strong><?= e(number_format((float) ($lookupMonthlyBreakdown['internet'] ?? 0), 2, '.', '')); ?> AZN</strong></div>
-                        <div><span>ÆlavÉ™ xidmÉ™tlÉ™r</span><strong><?= e(number_format((float) ($lookupMonthlyBreakdown['extra'] ?? 0), 2, '.', '')); ?> AZN</strong></div>
-                        <div><span>AylÄ±q toplam</span><strong><?= e($lookupDefaultAmount > 0 ? number_format($lookupDefaultAmount, 2, '.', '') . ' AZN' : '-'); ?></strong></div>
-                        <div><span>Default gÃ¼n</span><strong><?= e((string) $lookupDefaultDays); ?> gÃ¼n</strong></div>
+                        <div><span>Internet qiyməti</span><strong><?= e(number_format((float) ($lookupMonthlyBreakdown['internet'] ?? 0), 2, '.', '')); ?> AZN</strong></div>
+                        <div><span>Əlavə xidmətlər</span><strong><?= e(number_format((float) ($lookupMonthlyBreakdown['extra'] ?? 0), 2, '.', '')); ?> AZN</strong></div>
+                        <div><span>Aylıq toplam</span><strong><?= e($lookupDefaultAmount > 0 ? number_format($lookupDefaultAmount, 2, '.', '') . ' AZN' : '-'); ?></strong></div>
+                        <div><span>Default gün</span><strong><?= e((string) $lookupDefaultDays); ?> gün</strong></div>
                         <div><span>Status</span><strong><?= e((string) ($lookupBilling['status'] ?? $lookupAccount['status'] ?? '-')); ?></strong></div>
-                        <div><span>BitmÉ™</span><strong><?= e(billing_datetime($lookupBilling['expires_at'] ?? null)); ?></strong></div>
-                        <div><span>Qalan gÃ¼n</span><strong><?= e($lookupRemainingDays); ?></strong></div>
+                        <div><span>Bitmə</span><strong><?= e(billing_datetime($lookupBilling['expires_at'] ?? null)); ?></strong></div>
+                        <div><span>Qalan gün</span><strong><?= e($lookupRemainingDays); ?></strong></div>
                         <div><span>Balans</span><strong><?= e((string) ($lookupBilling['balance'] ?? '-')); ?></strong></div>
                     </div>
-                    <a class="portal-ghost-btn portal-inline-link portal-section-gap" href="billing-customer-profile.php?id=<?= e((string) ($lookupAccount['id'] ?? 0)); ?>#profile-payments">ProfilÉ™ keÃ§</a>
+                    <a class="portal-ghost-btn portal-inline-link portal-section-gap" href="billing-customer-profile.php?id=<?= e((string) ($lookupAccount['id'] ?? 0)); ?>#profile-payments">Profilə keç</a>
                 <?php endif; ?>
             </article>
         </section>
 
         <section class="portal-card portal-reveal">
-            <div class="portal-card-head"><h2>Son yenilÉ™nÉ™n mÃ¼ÅŸtÉ™rilÉ™r</h2><small>Tez seÃ§im Ã¼Ã§Ã¼n son 25 mÃ¼ÅŸtÉ™ri.</small></div>
+            <div class="portal-card-head"><h2>Son yenilənən müştərilər</h2><small>Tez seçim üçün son 25 müştəri.</small></div>
             <div class="portal-table-wrap">
                 <table class="portal-table">
-                    <thead><tr><th>Kod</th><th>MÃ¼ÅŸtÉ™ri</th><th>Telefon</th><th>Ærazi</th><th>Status</th><th>SeÃ§</th></tr></thead>
+                    <thead><tr><th>Kod</th><th>Müştəri</th><th>Telefon</th><th>Ərazi</th><th>Status</th><th>Seç</th></tr></thead>
                     <tbody>
                         <?php foreach ($recentCustomers as $customer): ?>
                             <tr>
@@ -286,7 +313,7 @@ $lookupRemainingDays = $lookupExpiresAt !== '' ? app_billing_remaining_days_text
                                 <td><?= e((string) ($customer['phone'] ?? '-')); ?></td>
                                 <td><?= e((string) ($customer['area'] ?? '-')); ?></td>
                                 <td><span class="portal-pill <?= e(billing_status_class((string) ($customer['status'] ?? ''))); ?>"><?= e((string) ($customer['status'] ?? '-')); ?></span></td>
-                                <td><a class="portal-ghost-btn portal-inline-link" href="billing-cash-payment.php?subscriber_code=<?= rawurlencode((string) ($customer['subscriber_code'] ?? '')); ?>">SeÃ§</a></td>
+                                <td><a class="portal-ghost-btn portal-inline-link" href="billing-cash-payment.php?subscriber_code=<?= rawurlencode((string) ($customer['subscriber_code'] ?? '')); ?>">Seç</a></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

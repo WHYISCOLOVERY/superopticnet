@@ -214,7 +214,7 @@ function network_def_device_for_hop(array $hop, ?PDO $db = null): ?array
     return null;
 }
 
-function network_def_apply_definition(array $definition, array $hops, array $actor, PDO $db, bool $allowDangerous): array
+function network_def_apply_definition(array $definition, array $hops, array $actor, PDO $db, bool $allowDangerous, string $applyReason = ''): array
 {
     $preview = network_def_dry_run_payload($definition, $hops);
     $results = [];
@@ -241,6 +241,7 @@ function network_def_apply_definition(array $definition, array $hops, array $act
                 'allow_dangerous' => $allowDangerous,
                 'action_type' => 'mpls_vlan_apply',
                 'timeout_ms' => 15000,
+                'reason' => $applyReason,
             ]
         );
         if (empty($result['ok'])) {
@@ -296,7 +297,7 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $csrfToken = $_POST['csrf_token'] ?? '';
     $action = clean_text((string) ($_POST['action'] ?? ''));
     if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
-        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasÄ± uÄŸursuz oldu.'];
+        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlaması uğursuz oldu.'];
     } elseif ($action === 'create_definition') {
         $name = clean_text((string) ($_POST['name'] ?? ''));
         $vlanId = (int) ($_POST['vlan_id'] ?? 0);
@@ -307,7 +308,7 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $validModes = ['access', 'trunk', 'hybrid', 'routed'];
 
         if ($name === '' || $vlanId < 1 || $vlanId > 4094) {
-            $flash = ['type' => 'error', 'message' => 'Ad vÉ™ VLAN ID (1-4094) mÃ¼tlÉ™q dÃ¼zgÃ¼n yazÄ±lmalÄ±dÄ±r.'];
+            $flash = ['type' => 'error', 'message' => 'Ad və VLAN ID (1-4094) mütləq düzgün yazılmalıdır.'];
         } else {
             $definition = [
                 'name' => $name,
@@ -381,14 +382,14 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 }
             }
 
-            $flash = ['type' => 'success', 'message' => 'VLAN/MPLS tÉ™rifi plan kimi saxlanÄ±ldÄ±. Cihazlara komanda gÃ¶ndÉ™rilmÉ™di.'];
+            $flash = ['type' => 'success', 'message' => 'VLAN/MPLS tərifi plan kimi saxlanıldı. Cihazlara komanda göndərilmədi.'];
         }
     } elseif ($action === 'mark_removed') {
         $id = (int) ($_POST['definition_id'] ?? 0);
         if ($id > 0) {
             $statement = $db->prepare('UPDATE network_vlan_definitions SET status = "removed", updated_at = NOW() WHERE id = :id');
             $statement->execute(['id' => $id]);
-            $flash = ['type' => 'success', 'message' => 'TÉ™rif removed statusuna keÃ§irildi. Real cihazlarda silmÉ™ komandasÄ± icra edilmÉ™di.'];
+            $flash = ['type' => 'success', 'message' => 'Tərif removed statusuna keçirildi. Real cihazlarda silmə komandası icra edilmədi.'];
         }
     } elseif ($action === 'dry_run_definition') {
         $id = (int) ($_POST['definition_id'] ?? 0);
@@ -435,12 +436,15 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } elseif ($action === 'apply_definition') {
         $id = (int) ($_POST['definition_id'] ?? 0);
         $allowDangerous = isset($_POST['allow_dangerous']);
+        $applyReason = clean_text((string) ($_POST['apply_reason'] ?? ''));
         if (!app_portal_is_admin($user)) {
             $flash = ['type' => 'error', 'message' => 'Real cihaz apply ucun admin icazesi lazimdir.'];
         } elseif ($id <= 0) {
             $flash = ['type' => 'error', 'message' => 'Apply ucun VLAN plan ID tapilmadi.'];
         } elseif (!$allowDangerous) {
             $flash = ['type' => 'error', 'message' => 'Real cihazlara yazmaq ucun risk tesdiqi secilmelidir.'];
+        } elseif ($applyReason === '') {
+            $flash = ['type' => 'error', 'message' => 'Real cihaz apply ucun sebeb yazilmalidir.'];
         } else {
             $statement = $db->prepare(
                 'SELECT d.*, p.name AS pool_name, p.range_start, p.range_end, p.gateway AS pool_gateway
@@ -461,15 +465,17 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 );
                 $hopStatement->execute(['id' => $id]);
                 $hops = $hopStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-                $applyResult = network_def_apply_definition($definition, $hops, $user, $db, true);
+                $applyResult = network_def_apply_definition($definition, $hops, $user, $db, true, $applyReason);
                 $dryRunPreview = $applyResult['preview'] ?? null;
                 $failed = array_values(array_filter((array) ($applyResult['results'] ?? []), static fn (array $row): bool => empty($row['ok'])));
-                $flash = [
-                    'type' => !empty($applyResult['ok']) ? 'success' : 'error',
-                    'message' => !empty($applyResult['ok'])
-                        ? 'Real MPLS/VLAN apply tamamlandi ve audit yazildi.'
-                        : ('Real apply tamamlanmadi: ' . (string) ($failed[0]['reason'] ?? $applyResult['reason'] ?? 'unknown')),
-                ];
+                $stagedCount = count(array_filter($failed, static fn (array $row): bool => (string) ($row['reason'] ?? '') === 'dangerous_command_staged_for_approval'));
+                if (!empty($applyResult['ok'])) {
+                    $flash = ['type' => 'success', 'message' => 'Real MPLS/VLAN apply tamamlandi ve audit yazildi.'];
+                } elseif ($stagedCount > 0 && $stagedCount === count($failed)) {
+                    $flash = ['type' => 'success', 'message' => $stagedCount . ' hop ucun konfiqurasiya sorgusu qeyde alindi - BASQA admin NOC panelinde tesdiqleyene qeder cihazlara yazilmayacaq.'];
+                } else {
+                    $flash = ['type' => 'error', 'message' => 'Real apply tamamlanmadi: ' . (string) ($failed[0]['reason'] ?? $applyResult['reason'] ?? 'unknown')];
+                }
             }
         }
     }
@@ -656,27 +662,27 @@ if ($db instanceof PDO) {
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">NETWORK / MPLS</span>
-                <h1>VLAN, IP pool vÉ™ hop planlama</h1>
-                <p>Core router, switch vÉ™ OLT Ã¼zÉ™rindÉ™n keÃ§É™n VLAN xidmÉ™tlÉ™rini bir yerdÉ™ saxlayÄ±rÄ±q. Bu mÉ™rhÉ™lÉ™ real cihazlara toxunmadan plan, port mode vÉ™ command preview yaradÄ±r.</p>
+                <h1>VLAN, IP pool və hop planlama</h1>
+                <p>Core router, switch və OLT üzərindən keçən VLAN xidmətlərini bir yerdə saxlayırıq. Bu mərhələ real cihazlara toxunmadan plan, port mode və command preview yaradır.</p>
                 <div class="mgs-command-actions">
-                    <a class="portal-primary-btn portal-inline-link" href="#create-definition">Yeni VLAN planÄ±</a>
+                    <a class="portal-primary-btn portal-inline-link" href="#create-definition">Yeni VLAN planı</a>
                     <a class="portal-ghost-btn portal-inline-link" href="radius-billing.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>#pools">IP poollar</a>
                 </div>
             </div>
             <div class="mgs-command-panel">
                 <span>Plan</span>
                 <strong><?= e((string) $stats['planned']); ?></strong>
-                <small>draft/planned tÉ™rif</small>
+                <small>draft/planned tərif</small>
                 <span>Aktiv</span>
                 <strong><?= e((string) $stats['active']); ?></strong>
             </div>
         </section>
 
         <section class="mgs-stat-grid portal-reveal">
-            <?php billing_render_stat_card('CÉ™mi tÉ™rif', (string) $stats['total'], 'network_vlan_definitions', 'fa-diagram-project', 'blue'); ?>
-            <?php billing_render_stat_card('Planlanan', (string) $stats['planned'], 'icra gÃ¶zlÉ™yir', 'fa-list-check', 'orange'); ?>
-            <?php billing_render_stat_card('Aktiv', (string) $stats['active'], 'manual tÉ™sdiq edilmiÅŸ', 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('Unikal VLAN', (string) $stats['unique_vlan'], 'VLAN ID sayÄ±', 'fa-hashtag', 'navy'); ?>
+            <?php billing_render_stat_card('Cəmi tərif', (string) $stats['total'], 'network_vlan_definitions', 'fa-diagram-project', 'blue'); ?>
+            <?php billing_render_stat_card('Planlanan', (string) $stats['planned'], 'icra gözləyir', 'fa-list-check', 'orange'); ?>
+            <?php billing_render_stat_card('Aktiv', (string) $stats['active'], 'manual təsdiq edilmiş', 'fa-circle-check', 'green'); ?>
+            <?php billing_render_stat_card('Unikal VLAN', (string) $stats['unique_vlan'], 'VLAN ID sayı', 'fa-hashtag', 'navy'); ?>
         </section>
 
         <section class="portal-card portal-reveal" id="mpls-vlan-dry-run">
@@ -730,28 +736,28 @@ if ($db instanceof PDO) {
 
         <section class="portal-card portal-reveal" id="create-definition">
             <div class="portal-card-head">
-                <h2>Yeni VLAN/MPLS tÉ™rifi</h2>
-                <small>Bu forma yalnÄ±z plan saxlayÄ±r. Real SSH/SNMP provisioning ayrÄ±ca auditli icra mÉ™rhÉ™lÉ™sindÉ™ aktiv edilÉ™cÉ™k.</small>
+                <h2>Yeni VLAN/MPLS tərifi</h2>
+                <small>Bu forma yalnız plan saxlayır. Real SSH/SNMP provisioning ayrıca auditli icra mərhələsində aktiv ediləcək.</small>
             </div>
             <?php if (!$db instanceof PDO): ?>
-                <?php billing_render_empty_state('DB hazÄ±r deyil', 'VLAN tÉ™rifi yaratmaq Ã¼Ã§Ã¼n MySQL baÄŸlantÄ±sÄ± aktiv olmalÄ±dÄ±r.', 'fa-database'); ?>
+                <?php billing_render_empty_state('DB hazır deyil', 'VLAN tərifi yaratmaq üçün MySQL bağlantısı aktiv olmalıdır.', 'fa-database'); ?>
             <?php else: ?>
                 <form method="post" class="portal-stacked-form">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <input type="hidden" name="action" value="create_definition">
-                    <div class="definition-warning">TÉ™hlÃ¼kÉ™sizlik qaydasÄ±: bu sÉ™hifÉ™ hÉ™lÉ™ cihazlara komanda gÃ¶ndÉ™rmir. Komanda preview yalnÄ±z mÃ¼hÉ™ndis yoxlamasÄ± Ã¼Ã§Ã¼ndÃ¼r.</div>
+                    <div class="definition-warning">Təhlükəsizlik qaydası: bu səhifə hələ cihazlara komanda göndərmir. Komanda preview yalnız mühəndis yoxlaması üçündür.</div>
                     <div class="billing-filter-grid">
-                        <div class="portal-form-row"><label>XidmÉ™t adÄ±</label><input type="text" name="name" required placeholder="KÃ¼rdÉ™xanÄ± ayrÄ±lmÄ±ÅŸ internet"></div>
+                        <div class="portal-form-row"><label>Xidmət adı</label><input type="text" name="name" required placeholder="Kürdəxanı ayrılmış internet"></div>
                         <div class="portal-form-row"><label>VLAN ID</label><input type="number" name="vlan_id" min="1" max="4094" required placeholder="1100"></div>
                         <div class="portal-form-row">
-                            <label>NÃ¶v</label>
+                            <label>Növ</label>
                             <select name="definition_type">
                                 <option value="internet">Internet</option>
                                 <option value="management">Management</option>
                                 <option value="transport">Transport/MPLS</option>
                                 <option value="iptv">IPTV</option>
                                 <option value="voice">Voice</option>
-                                <option value="other">DigÉ™r</option>
+                                <option value="other">Digər</option>
                             </select>
                         </div>
                         <div class="portal-form-row">
@@ -763,18 +769,18 @@ if ($db instanceof PDO) {
                                 <option value="routed">Routed sub-interface</option>
                             </select>
                         </div>
-                        <div class="portal-form-row"><label>Filial/É™razi</label><input type="text" name="branch" placeholder="KÃ¼rdÉ™xanÄ±"></div>
-                        <div class="portal-form-row"><label>MÃ¼ÅŸtÉ™ri adÄ± / ÅŸirkÉ™t</label><input type="text" name="customer_name" placeholder="ÅirkÉ™t vÉ™ ya ad soyad"></div>
-                        <div class="portal-form-row"><label>MÃ¼ÅŸtÉ™ri kodu</label><input type="text" name="customer_code" placeholder="mÉ™s: 2320025"></div>
-                        <div class="portal-form-row"><label>VÃ–EN</label><input type="text" name="customer_voen" placeholder="varsa"></div>
-                        <div class="portal-form-row"><label>Æsas cihaz</label><input type="text" name="device_name" placeholder="Kurdexani 21 OLT"></div>
+                        <div class="portal-form-row"><label>Filial/ərazi</label><input type="text" name="branch" placeholder="Kürdəxanı"></div>
+                        <div class="portal-form-row"><label>Müştəri adı / şirkət</label><input type="text" name="customer_name" placeholder="Şirkət və ya ad soyad"></div>
+                        <div class="portal-form-row"><label>Müştəri kodu</label><input type="text" name="customer_code" placeholder="məs: 2320025"></div>
+                        <div class="portal-form-row"><label>VÖEN</label><input type="text" name="customer_voen" placeholder="varsa"></div>
+                        <div class="portal-form-row"><label>Əsas cihaz</label><input type="text" name="device_name" placeholder="Kurdexani 21 OLT"></div>
                         <div class="portal-form-row"><label>Cihaz IP</label><input type="text" name="device_ip" placeholder="172.16.5.21"></div>
                         <div class="portal-form-row"><label>Router/uplink port</label><input type="text" name="upstream_port" placeholder="XGE01 / Te1/2/0.1100"></div>
-                        <div class="portal-form-row"><label>MÃ¼ÅŸtÉ™ri portu</label><input type="text" name="customer_port" placeholder="GE02"></div>
+                        <div class="portal-form-row"><label>Müştəri portu</label><input type="text" name="customer_port" placeholder="GE02"></div>
                         <div class="portal-form-row">
                             <label>IP pool</label>
                             <select name="ip_pool_id">
-                                <option value="0">Pool seÃ§ilmÉ™yib</option>
+                                <option value="0">Pool seçilməyib</option>
                                 <?php foreach ($pools as $pool): ?>
                                     <option value="<?= e((string) $pool['id']); ?>"><?= e((string) $pool['service_type']); ?> / <?= e((string) $pool['name']); ?> / <?= e((string) $pool['range_start']); ?>-<?= e((string) $pool['range_end']); ?></option>
                                 <?php endforeach; ?>
@@ -782,33 +788,33 @@ if ($db instanceof PDO) {
                         </div>
                         <div class="portal-form-row"><label>Subnet CIDR</label><input type="text" name="subnet_cidr" placeholder="94.20.46.60/30"></div>
                         <div class="portal-form-row"><label>Gateway IP</label><input type="text" name="gateway_ip" placeholder="/30 birinci IP"></div>
-                        <div class="portal-form-row"><label>MÃ¼ÅŸtÉ™ri IP</label><input type="text" name="customer_ip" placeholder="/30 ikinci IP"></div>
+                        <div class="portal-form-row"><label>Müştəri IP</label><input type="text" name="customer_ip" placeholder="/30 ikinci IP"></div>
                     </div>
                     <div class="portal-form-row">
-                        <label>Hop xÉ™tti</label>
-                        <textarea name="hops" rows="4" placeholder="HÉ™r sÉ™tir: cihaz adÄ± | IP | giriÅŸ portu | Ã§Ä±xÄ±ÅŸ portu | trunk/access/hybrid/routed"></textarea>
+                        <label>Hop xətti</label>
+                        <textarea name="hops" rows="4" placeholder="Hər sətir: cihaz adı | IP | giriş portu | çıxış portu | trunk/access/hybrid/routed"></textarea>
                     </div>
                     <div class="portal-form-row">
                         <label>Qeyd</label>
-                        <textarea name="notes" rows="3" placeholder="MÃ¼hÉ™ndis qeydi, mÃ¼ÅŸtÉ™ri ÅŸÉ™rti, silinmÉ™ zamanÄ± nÉ™zÉ™rÉ™ alÄ±nacaq detal"></textarea>
+                        <textarea name="notes" rows="3" placeholder="Mühəndis qeydi, müştəri şərti, silinmə zamanı nəzərə alınacaq detal"></textarea>
                     </div>
                     <div class="portal-form-actions">
-                        <button class="portal-primary-btn" type="submit">PlanÄ± saxla</button>
+                        <button class="portal-primary-btn" type="submit">Planı saxla</button>
                     </div>
                 </form>
             <?php endif; ?>
         </section>
 
         <section class="mgs-filter-panel portal-reveal">
-            <div class="mgs-section-head"><div><h2>AxtarÄ±ÅŸ</h2><p>VLAN ID, mÃ¼ÅŸtÉ™ri, cihaz, IP vÉ™ status Ã¼zrÉ™ filter.</p></div></div>
-            <form method="get" class="portal-stacked-form">
+            <div class="mgs-section-head"><div><h2>Axtarış</h2><p>VLAN ID, müştəri, cihaz, IP və status üzrə filter.</p></div></div>
+            <form method="get" class="portal-stacked-form" id="network-definitions-filter" data-auto-filter data-auto-filter-targets="network-definitions-results">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
-                    <div class="portal-form-row"><label>AxtarÄ±ÅŸ</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="VLAN, mÃ¼ÅŸtÉ™ri, cihaz, IP"></div>
+                    <div class="portal-form-row"><label>Axtarış</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="VLAN, müştəri, cihaz, IP"></div>
                     <div class="portal-form-row">
                         <label>Status</label>
                         <select name="status">
-                            <option value="">HamÄ±sÄ±</option>
+                            <option value="">Hamısı</option>
                             <?php foreach (['draft', 'planned', 'active', 'removing', 'removed', 'failed'] as $option): ?>
                                 <option value="<?= e($option); ?>" <?= $status === $option ? 'selected' : ''; ?>><?= e($option); ?></option>
                             <?php endforeach; ?>
@@ -816,21 +822,22 @@ if ($db instanceof PDO) {
                     </div>
                 </div>
                 <div class="portal-form-actions">
-                    <button class="portal-primary-btn" type="submit">FiltrlÉ™</button>
-                    <a class="portal-ghost-btn portal-inline-link" href="network-definitions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">SÄ±fÄ±rla</a>
+                    <button class="portal-primary-btn" type="submit">Filtrlə</button>
+                    <a class="portal-ghost-btn portal-inline-link" href="network-definitions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sıfırla</a>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
-        <section class="portal-reveal">
+        <section class="portal-reveal" data-auto-filter-results="network-definitions-results" data-auto-filter-form="network-definitions-filter">
             <div class="mgs-section-head">
                 <div>
-                    <h2>VLAN/MPLS planlarÄ±</h2>
-                    <p>Son 100 plan. HÉ™r planÄ±n hop-larÄ± vÉ™ command preview-lÉ™ri ayrÄ±ca saxlanÄ±lÄ±r.</p>
+                    <h2>VLAN/MPLS planları</h2>
+                    <p>Son 100 plan. Hər planın hop-ları və command preview-ləri ayrıca saxlanılır.</p>
                 </div>
             </div>
             <?php if ($definitions === []): ?>
-                <?php billing_render_empty_state('VLAN tÉ™rifi yoxdur', 'Ä°lk VLAN/MPLS planÄ±nÄ± yuxarÄ±dakÄ± formadan É™lavÉ™ edin.', 'fa-diagram-project'); ?>
+                <?php billing_render_empty_state('VLAN tərifi yoxdur', 'İlk VLAN/MPLS planını yuxarıdakı formadan əlavə edin.', 'fa-diagram-project'); ?>
             <?php else: ?>
                 <div class="definition-card-grid">
                     <?php foreach ($definitions as $definition): ?>
@@ -848,20 +855,20 @@ if ($db instanceof PDO) {
                                 <span>IP: <?= e((string) ($definition['device_ip'] ?: '-')); ?></span>
                                 <span>Mode: <?= e((string) $definition['port_mode']); ?></span>
                                 <span>Pool: <?= e((string) ($definition['pool_name'] ?: '-')); ?></span>
-                                <span>MÃ¼ÅŸtÉ™ri: <?= e((string) (($definition['customer_code'] ?: '') . ($definition['customer_name'] ? ' / ' . $definition['customer_name'] : '')) ?: '-'); ?></span>
+                                <span>Müştəri: <?= e((string) (($definition['customer_code'] ?: '') . ($definition['customer_name'] ? ' / ' . $definition['customer_name'] : '')) ?: '-'); ?></span>
                             </div>
-                            <p><strong>IP plan:</strong> <?= e((string) ($definition['subnet_cidr'] ?: '-')); ?> | Gateway: <?= e((string) ($definition['gateway_ip'] ?: '-')); ?> | MÃ¼ÅŸtÉ™ri: <?= e((string) ($definition['customer_ip'] ?: '-')); ?></p>
+                            <p><strong>IP plan:</strong> <?= e((string) ($definition['subnet_cidr'] ?: '-')); ?> | Gateway: <?= e((string) ($definition['gateway_ip'] ?: '-')); ?> | Müştəri: <?= e((string) ($definition['customer_ip'] ?: '-')); ?></p>
                             <?php if (trim((string) ($definition['notes'] ?? '')) !== ''): ?>
                                 <p><?= e((string) $definition['notes']); ?></p>
                             <?php endif; ?>
                             <div class="hop-list">
                                 <?php if ($definitionHops === []): ?>
-                                    <div class="hop-card">Hop É™lavÉ™ edilmÉ™yib.</div>
+                                    <div class="hop-card">Hop əlavə edilməyib.</div>
                                 <?php endif; ?>
                                 <?php foreach ($definitionHops as $hop): ?>
                                     <div class="hop-card">
                                         <strong>#<?= e((string) $hop['hop_order']); ?> <?= e((string) ($hop['device_name'] ?: '-')); ?> <?= e((string) ($hop['device_ip'] ?: '')); ?></strong>
-                                        <span><?= e((string) ($hop['ingress_port'] ?: '-')); ?> â†’ <?= e((string) ($hop['egress_port'] ?: '-')); ?> / <?= e((string) $hop['port_mode']); ?></span>
+                                        <span><?= e((string) ($hop['ingress_port'] ?: '-')); ?> → <?= e((string) ($hop['egress_port'] ?: '-')); ?> / <?= e((string) $hop['port_mode']); ?></span>
                                         <code><?= e((string) ($hop['command_preview'] ?? '')); ?></code>
                                     </div>
                                 <?php endforeach; ?>
@@ -874,10 +881,11 @@ if ($db instanceof PDO) {
                                     <button class="portal-primary-btn" type="submit">Dry-run diff yarat</button>
                                 </form>
                                 <?php if (app_portal_is_admin($user)): ?>
-                                    <form method="post" class="portal-inline-form" onsubmit="return confirm('Real cihazlara VLAN/MPLS command yazilsin? VLAN 550 yoxdursa internal cihazlar failure qaytaracaq.');">
+                                    <form method="post" class="portal-inline-form" data-ui-confirm="Real cihazlara VLAN/MPLS command yazilsin? VLAN 550 yoxdursa internal cihazlar failure qaytaracaq." data-ui-confirm-title="Real cihaza apply">
                                         <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                         <input type="hidden" name="action" value="apply_definition">
                                         <input type="hidden" name="definition_id" value="<?= e((string) $definition['id']); ?>">
+                                        <input type="text" name="apply_reason" placeholder="Sebeb (mecburidir)" required style="width:180px">
                                         <label class="portal-inline-check"><input type="checkbox" name="allow_dangerous" value="1" required> real cihaz apply tesdiq</label>
                                         <button class="portal-ghost-btn" type="submit">Real apply et</button>
                                     </form>
@@ -888,7 +896,7 @@ if ($db instanceof PDO) {
                                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                     <input type="hidden" name="action" value="mark_removed">
                                     <input type="hidden" name="definition_id" value="<?= e((string) $definition['id']); ?>">
-                                    <button class="portal-ghost-btn" type="submit">PlanÄ± removed et</button>
+                                    <button class="portal-ghost-btn" type="submit">Planı removed et</button>
                                 </form>
                             <?php endif; ?>
                         </article>
@@ -897,5 +905,7 @@ if ($db instanceof PDO) {
             <?php endif; ?>
         </section>
     </main>
+    <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
 </body>
 </html>

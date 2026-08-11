@@ -136,7 +136,7 @@ http_response_code($overallStatus === 'down' ? 503 : 200);
                     <span class="portal-pill"><?= e((string) $summary['degraded']); ?> Degraded</span>
                     <span class="portal-pill portal-pill-danger"><?= e((string) $summary['down']); ?> Down</span>
                 </div>
-                <small>YenilÉ™nmÉ™: <?= e(date('d.m.Y H:i:s')); ?></small>
+                <small>Yenilənmə: <?= e(date('d.m.Y H:i:s')); ?></small>
             </article>
         </section>
 

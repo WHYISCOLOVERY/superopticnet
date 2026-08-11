@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
+require_once __DIR__ . '/portal-security-lib.php';
+require_once __DIR__ . '/hr-position-service.php';
+require_once __DIR__ . '/communication-consent-lib.php';
+require_once __DIR__ . '/admin-privilege-lib.php';
 
 app_session_boot();
 $user = app_portal_current_user();
@@ -86,6 +90,39 @@ if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
     exit;
 }
 
+if (!empty($user['must_change_password']) && $action !== 'update_password') {
+    header('Location: ' . portal_redirect_url('change-password.php', 'password_change_required'));
+    exit;
+}
+
+if ($action === 'save_hr_position' && ($user['role'] ?? '') === 'employee' && app_portal_is_admin($user)) {
+    $positionDb = app_db();
+    $result = $positionDb instanceof PDO
+        ? app_hr_save_position($positionDb, [
+            'position_id' => (int) ($_POST['position_id'] ?? 0),
+            'title' => (string) ($_POST['title'] ?? ''),
+            'description' => (string) ($_POST['description'] ?? ''),
+            'recommended_account_type' => (string) ($_POST['recommended_account_type'] ?? 'operator'),
+            'recommended_employee_role' => (string) ($_POST['recommended_employee_role'] ?? ''),
+            'module_keys' => (array) ($_POST['module_keys'] ?? []),
+            'is_active' => isset($_POST['is_active']) ? 1 : 0,
+            'change_reason' => (string) ($_POST['change_reason'] ?? ''),
+        ], $user)
+        : ['ok' => false, 'error' => 'schema_not_ready'];
+    $status = !empty($result['ok'])
+        ? 'position_saved'
+        : 'position_' . clean_text((string) ($result['error'] ?? 'save_failed'));
+    $params = ['status' => $status];
+    if (!empty($result['position_id'])) {
+        $params['edit'] = (int) $result['position_id'];
+    }
+    if ($lang !== 'az') {
+        $params['lang'] = $lang;
+    }
+    header('Location: admin-positions.php?' . http_build_query($params));
+    exit;
+}
+
 if ($action === 'update_phone' && $user['role'] === 'customer') {
     $phone = clean_text($_POST['phone'] ?? '');
     $success = app_portal_update_customer_phone($user, $phone);
@@ -93,12 +130,34 @@ if ($action === 'update_phone' && $user['role'] === 'customer') {
     exit;
 }
 
-if ($action === 'update_password' && $user['role'] === 'customer') {
+if ($action === 'update_marketing_consent' && $user['role'] === 'customer') {
+    $db = app_db();
+    $account = $db instanceof PDO ? app_db_account_by_id((int) ($user['id'] ?? 0)) : null;
+    $phone = is_array($account) ? (string) ($account['phone'] ?? '') : '';
+    $wantsMarketing = !empty($_POST['marketing_consent']);
+    $success = false;
+    if ($db instanceof PDO && $phone !== '') {
+        $success = $wantsMarketing
+            ? app_communication_opt_in($db, $phone, 'sms')
+            : app_communication_opt_out($db, $phone, 'sms', 'customer_portal', $user, 'Musteri portaldan bildirisleri bagladi');
+    }
+    header('Location: ' . portal_redirect_url('portal.php', $success ? 'portal_consent_updated' : 'portal_consent_failed') . '#customer-messages');
+    exit;
+}
+
+if ($action === 'update_password') {
     $currentPassword = (string) ($_POST['current_password'] ?? '');
     $newPassword = (string) ($_POST['new_password'] ?? '');
     $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
     $success = app_portal_update_customer_password($user, $currentPassword, $newPassword, $confirmPassword);
-    header('Location: ' . portal_redirect_url('portal.php', $success ? 'portal_password_updated' : 'portal_password_failed'));
+    if ($success && app_db_available()) {
+        $refreshed = app_db_session_user_from_legacy($user);
+        if (is_array($refreshed)) {
+            app_portal_sign_in($refreshed);
+        }
+    }
+    $target = $success ? 'portal.php' : (!empty($user['must_change_password']) ? 'change-password.php' : 'portal.php');
+    header('Location: ' . portal_redirect_url($target, $success ? 'portal_password_updated' : 'portal_password_failed'));
     exit;
 }
 
@@ -124,7 +183,9 @@ if ($action === 'create_ticket' && $user['role'] === 'customer') {
     exit;
 }
 
-if ($action === 'create_operator_ticket' && $user['role'] === 'employee') {
+if ($action === 'create_operator_ticket'
+    && $user['role'] === 'employee'
+    && app_portal_can_access_module($user, 'crm')) {
     $returnTo = (string) ($_POST['return_to'] ?? '');
     $success = app_portal_create_operator_ticket($user, [
         'customer_account_id' => $_POST['customer_account_id'] ?? '',
@@ -160,6 +221,49 @@ if ($action === 'create_operator_ticket' && $user['role'] === 'employee') {
     exit;
 }
 
+if ($action === 'set_ticket_waiting_state'
+    && $user['role'] === 'employee'
+    && app_portal_can_access_module($user, 'crm')) {
+    $ticketNo = clean_text((string) ($_POST['ticket_no'] ?? ''));
+    $waitType = clean_text((string) ($_POST['wait_type'] ?? ''));
+    $waitReason = clean_text((string) ($_POST['wait_reason'] ?? ''));
+    $result = match ($waitType) {
+        'customer' => app_db_set_ticket_awaiting_customer($ticketNo, $user, $waitReason),
+        'department' => app_db_set_ticket_dept_blocked($ticketNo, clean_text((string) ($_POST['wait_department'] ?? '')), $waitReason, $user),
+        'clear_customer' => app_db_clear_ticket_awaiting_customer($ticketNo, $user, $waitReason),
+        'clear_department' => app_db_clear_ticket_dept_blocked($ticketNo, $user, $waitReason),
+        default => ['ok' => false, 'error' => 'invalid_wait_type'],
+    };
+    header('Location: ' . portal_redirect_url('crm.php', !empty($result['ok']) ? 'ticket_wait_state_updated' : 'ticket_wait_state_failed'));
+    exit;
+}
+
+if ($action === 'reset_staff_password' && $user['role'] === 'employee' && app_portal_is_admin($user)) {
+    $targetId = (int) ($_POST['account_id'] ?? 0);
+    $reason = clean_text((string) ($_POST['reset_reason'] ?? ''));
+    $target = $targetId > 0 ? app_db_account_by_id($targetId) : null;
+    $result = is_array($target)
+        ? app_portal_privileged_password_reset($target, $user, $reason, 'staff_admin')
+        : ['ok' => false, 'reason' => 'target_missing'];
+    if (!empty($result['ok'])) {
+        $_SESSION['admin_staff_temporary_password'] = [
+            'account_id' => $targetId,
+            'login' => (string) ($result['login'] ?? $target['login'] ?? ''),
+            'password' => (string) ($result['password'] ?? ''),
+        ];
+    }
+    $resultReason = (string) ($result['reason'] ?? '');
+    $status = !empty($result['ok'])
+        ? 'staff_password_reset'
+        : ($resultReason === 'reason_required' ? 'staff_password_reason_required' : 'staff_password_reset_failed');
+    $params = ['status' => $status, 'edit' => $targetId];
+    if ($lang !== 'az') {
+        $params['lang'] = $lang;
+    }
+    header('Location: admin-users.php?' . http_build_query($params));
+    exit;
+}
+
 if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_admin($user)) {
     $accountId = (int) ($_POST['account_id'] ?? 0);
     $employeeOnly = clean_text((string) ($_POST['account_scope'] ?? '')) === 'employee';
@@ -192,24 +296,38 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
     $isProtectedDefaultSuperAdmin = $targetLogin === 's.abdullayev@superoptic.net'
         || strtolower(trim((string) ($existingAccount['login'] ?? ''))) === 's.abdullayev@superoptic.net';
     $willBeActive = isset($_POST['is_active']) ? 1 : 0;
-    if ($isProtectedDefaultSuperAdmin
-        && !app_portal_is_super_admin($user)
-        && ($role !== 'employee' || $accountType !== 'admin' || $employeeRole !== 'super_admin' || $willBeActive !== 1)
-    ) {
+    $protectedShapeChanged = $isProtectedDefaultSuperAdmin
+        && ($targetLogin !== 's.abdullayev@superoptic.net'
+            || $role !== 'employee'
+            || $accountType !== 'admin'
+            || $employeeRole !== 'super_admin'
+            || $willBeActive !== 1);
+    if ($isProtectedDefaultSuperAdmin && ($protectedShapeChanged || !app_portal_is_super_admin($user))) {
         header('Location: ' . portal_redirect_url('admin-users.php', 'protected_account'));
         exit;
     }
+    $existingAccess = is_array($accountPayload['access'] ?? null) ? $accountPayload['access'] : [];
+    $allowedModuleKeys = array_keys(app_portal_module_catalog());
+    $submittedModuleKeys = array_values(array_intersect(
+        $allowedModuleKeys,
+        array_values(array_unique(array_map(
+            static fn (mixed $key): string => strtolower(clean_text((string) $key)),
+            (array) ($_POST['module_keys'] ?? [])
+        )))
+    ));
     $previousPrivileges = [
         'role' => $existingAccount['role'] ?? null,
         'account_type' => $existingAccount['account_type'] ?? null,
         'employee_role' => $existingAccount['employee_role'] ?? null,
         'is_active' => isset($existingAccount['is_active']) ? (int) $existingAccount['is_active'] : null,
+        'module_keys' => is_array($existingAccess['module_keys'] ?? null) ? array_values($existingAccess['module_keys']) : null,
     ];
     $newPrivileges = [
         'role' => $role,
         'account_type' => $accountType,
         'employee_role' => $role === 'employee' ? $employeeRole : '',
         'is_active' => $willBeActive,
+        'module_keys' => $employeeOnly ? $submittedModuleKeys : [],
     ];
     $privilegeChanged = $existingAccount !== null && $previousPrivileges !== $newPrivileges;
     $privilegeReason = clean_text((string) ($_POST['privilege_change_reason'] ?? ''));
@@ -236,12 +354,22 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
         $employeeMeta['superpilot_enabled'] = true;
         $employeeMeta['updated_at'] = app_db_now();
         $accountPayload['employee'] = $employeeMeta;
+        $accountPayload['access'] = [
+            'module_keys' => $submittedModuleKeys,
+            'assigned_by_account_id' => (int) ($user['id'] ?? 0),
+            'assigned_at' => app_db_now(),
+        ];
     }
 
-    $saved = app_db_upsert_account([
+    $submittedPassword = $accountId > 0 && $employeeOnly ? '' : (string) ($_POST['password'] ?? '');
+    if ($accountId <= 0 && $employeeOnly && !app_portal_recovery_password_valid($submittedPassword)) {
+        header('Location: ' . portal_redirect_url('admin-users.php', 'staff_password_policy_failed'));
+        exit;
+    }
+    $upsertPayload = [
         'id' => $accountId,
         'login' => $_POST['login'] ?? '',
-        'password' => $_POST['password'] ?? '',
+        'password' => $submittedPassword,
         'role' => $role,
         'account_type' => $accountType,
         'employee_role' => $employeeRole,
@@ -261,7 +389,24 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
         'responsible_areas' => $_POST['responsible_areas'] ?? [],
         'payload' => $accountPayload,
         'is_active' => isset($_POST['is_active']) ? 1 : 0,
-    ]);
+    ];
+
+    // Maker-checker (vision 19.2 "rol dəyişikliyi"): an ESCALATING privilege
+    // change on an EXISTING account (granting admin tier, reactivating a
+    // disabled account, or adding module access it did not already have) is
+    // staged for a different admin to approve rather than applied here.
+    // De-escalating changes (removing admin rights, deactivating, removing
+    // modules) still apply immediately -- that is the safe direction.
+    if ($privilegeChanged && app_admin_privilege_change_is_escalation($previousPrivileges, $newPrivileges)) {
+        $escalationDb = app_db();
+        if ($escalationDb instanceof PDO) {
+            app_admin_privilege_change_request_create($escalationDb, $upsertPayload, $previousPrivileges, $newPrivileges, $privilegeReason, $user);
+        }
+        header('Location: ' . portal_redirect_url('admin-users.php', 'privilege_escalation_pending'));
+        exit;
+    }
+
+    $saved = app_db_upsert_account($upsertPayload);
 
     if ($saved !== null && $employeeOnly) {
         $salaryMode = clean_text((string) ($_POST['employee_salary_mode'] ?? 'gross'));
@@ -305,6 +450,7 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
                         'account_type' => $saved['account_type'] ?? null,
                         'employee_role' => $saved['employee_role'] ?? null,
                         'is_active' => isset($saved['is_active']) ? (int) $saved['is_active'] : null,
+                        'module_keys' => $submittedModuleKeys,
                     ],
                     'sensitivity' => $privilegeChanged ? 'critical' : 'normal',
                 ]);
@@ -318,6 +464,21 @@ if ($action === 'save_account' && $user['role'] === 'employee' && app_portal_is_
     }
 
     header('Location: ' . portal_redirect_url('admin-users.php', $saved !== null ? 'account_saved' : 'account_failed'));
+    exit;
+}
+
+if ($action === 'resolve_privilege_escalation' && $user['role'] === 'employee' && app_portal_is_admin($user)) {
+    $escalationDb = app_db();
+    $result = $escalationDb instanceof PDO
+        ? app_admin_privilege_change_request_resolve(
+            $escalationDb,
+            (int) ($_POST['request_id'] ?? 0),
+            clean_text((string) ($_POST['decision'] ?? '')),
+            clean_text((string) ($_POST['resolution_note'] ?? '')),
+            $user
+        )
+        : ['ok' => false, 'error' => 'db_unavailable'];
+    header('Location: ' . portal_redirect_url('admin-users.php', !empty($result['ok']) ? 'privilege_escalation_resolved' : 'privilege_escalation_failed'));
     exit;
 }
 

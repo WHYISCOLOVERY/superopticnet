@@ -17,13 +17,13 @@ $lang = app_lang();
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Statistika - SuperOptik</title>
+    <title>Sirket statistikasi - SuperOptik</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <link rel="stylesheet" href="<?= e(app_asset('css/statistics-center.css')); ?>">
 </head>
 <body class="portal-body">
-<?php billing_render_header('Statistika', 'statistics', $lang); ?>
+<?php billing_render_header('Sirket statistikasi', 'company-statistics', $lang); ?>
 <main class="portal-layout"><?php require __DIR__ . '/views/statistics/module.php'; ?></main>
 <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
 <script src="<?= e(app_asset('script/statistics-center.js')); ?>"></script>

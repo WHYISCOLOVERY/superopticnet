@@ -19,7 +19,7 @@ if (is_array($headers)) {
         }
     }
 }
-$expectedToken = app_config('copilot_api_token');
+$expectedToken = app_environment_secret('COPILOT_API_TOKEN');
 $tokenAllowed = $expectedToken !== '' && $token !== '' && hash_equals($expectedToken, $token);
 
 if (!(is_array($user) && ($user['role'] ?? '') === 'employee') && !$tokenAllowed) {

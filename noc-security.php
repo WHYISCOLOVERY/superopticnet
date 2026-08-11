@@ -29,7 +29,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'traffic_window_hours' => max(1, min(168, (int) ($_POST['traffic_window_hours'] ?? 24))),
             'nat_window_minutes' => max(1, min(1440, (int) ($_POST['nat_window_minutes'] ?? 15))),
         ];
-        $scan = app_security_anomaly_run($db, $scanOptions);
+        $scan = app_security_anomaly_run($db, $scanOptions, $user);
         $flash = [
             'type' => !empty($scan['ok']) ? 'success' : 'error',
             'message' => !empty($scan['ok'])
@@ -39,7 +39,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$scanResult = $db instanceof PDO ? app_security_anomaly_run($db, $scanOptions) : ['ok' => false, 'findings' => [], 'summary' => []];
+$scanResult = $db instanceof PDO ? app_security_anomaly_run($db, $scanOptions, $user) : ['ok' => false, 'findings' => [], 'summary' => []];
 $findings = array_values(array_filter((array) ($scanResult['findings'] ?? []), 'is_array'));
 $summary = is_array($scanResult['summary'] ?? null) ? $scanResult['summary'] : [];
 $events = [];

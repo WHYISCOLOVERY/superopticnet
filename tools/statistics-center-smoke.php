@@ -49,12 +49,12 @@ $admin = ['id' => 1, 'role' => 'employee', 'account_type' => 'admin', 'employee_
 $adminContext = app_statistics_center_context($db, $admin, [
     'metric' => 'terminals',
     'range' => 'custom',
-    'start_date' => '2026-07-13',
-    'end_date' => '2026-07-01',
+    'start_date' => '2026-07-01',
+    'end_date' => '2026-07-13',
 ]);
 $expect(($adminContext['selected_metric'] ?? '') === 'terminals', 'admin_metric_not_preserved');
-$expect(($adminContext['start_date'] ?? '') === '2026-07-01', 'custom_start_not_normalized');
-$expect(($adminContext['end_date'] ?? '') === '2026-07-13', 'custom_end_not_normalized');
+$expect(($adminContext['start_date'] ?? '') === '2026-07-01', 'custom_start_not_preserved');
+$expect(($adminContext['end_date'] ?? '') === '2026-07-13', 'custom_end_not_preserved');
 foreach (array_keys(app_statistics_metric_catalog()) as $metric) {
     $expect(isset($adminContext['available_metrics'][$metric]), 'admin_metric_missing:' . $metric);
     $expect(isset($adminContext['datasets'][$metric]), 'admin_dataset_missing:' . $metric);
@@ -64,6 +64,18 @@ foreach (array_keys(app_statistics_metric_catalog()) as $metric) {
         }
     }
 }
+$reversedContext = app_statistics_center_context($db, $admin, [
+    'metric' => 'terminals',
+    'range' => 'custom',
+    'start_date' => '2026-07-13',
+    'end_date' => '2026-07-01',
+]);
+$expect(($reversedContext['status'] ?? '') === 'error', 'reversed_range_not_rejected');
+$expect(
+    ($reversedContext['error'] ?? '') === 'reversed_custom_date_range',
+    'reversed_range_error_not_explicit'
+);
+$expect(($reversedContext['datasets'] ?? null) === [], 'reversed_range_exposes_datasets');
 
 $operator = ['role' => 'employee', 'account_type' => 'operator', 'employee_role' => 'operator'];
 $operatorMetrics = array_keys(app_statistics_allowed_metrics($operator));

@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/customer-intelligence-lib.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
+require_once __DIR__ . '/router-registry-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
@@ -235,6 +236,8 @@ function billing_profile_tab_url(array $account, string $lang, string $tab, stri
 }
 
 $db = app_db();
+$routerRegistryReady = $db instanceof PDO && router_registry_ensure_schema($db);
+$canManageRouterBindings = router_registry_actor_can_manage_bindings($user);
 $account = null;
 $mockSnapshot = null;
 $flash = null;
@@ -289,6 +292,34 @@ if ($account === null && !$db instanceof PDO && ($code !== '' || $id > 0)) {
 if ($account === null || (string) ($account['role'] ?? '') !== 'customer') {
     header('Location: billing-customers.php?status=customer_not_found' . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''));
     exit;
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
+    && clean_text((string) ($_POST['action'] ?? '')) === 'bind_customer_router') {
+    $csrfToken = $_POST['csrf_token'] ?? '';
+    if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
+        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu.'];
+    } elseif (!$db instanceof PDO || !$routerRegistryReady) {
+        $flash = ['type' => 'error', 'message' => 'Router registry hazir deyil.'];
+    } elseif (!$canManageRouterBindings) {
+        $flash = ['type' => 'error', 'message' => 'Router binding deyisikliyi ucun admin ve ya NOC icazesi lazimdir.'];
+    } else {
+        $bindingResult = router_registry_bind_customer(
+            $db,
+            (int) ($account['id'] ?? 0),
+            (int) ($_POST['router_id'] ?? 0),
+            $user,
+            'Customer profile router binding change'
+        );
+        $bindingError = (string) ($bindingResult['error'] ?? 'binding_persistence_failed');
+        $flash = !empty($bindingResult['ok'])
+            ? ['type' => 'success', 'message' => 'Musteri router binding yenilendi.']
+            : ['type' => 'error', 'message' => match ($bindingError) {
+                'binding_authorization_required' => 'Router binding deyisikliyi ucun admin ve ya NOC icazesi lazimdir.',
+                'router_inactive_or_missing' => 'Secilen router aktiv deyil ve ya tapilmadi. Siyahini yenileyib yeniden secin.',
+                default => 'Router binding saxlanmadi. Hech bir deyisiklik tetbiq edilmedi.',
+            }];
+    }
 }
 
 $basePayload = app_db_account_payload($account);
@@ -654,6 +685,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && clean_text((string) ($_P
         ];
     }
 }
+
+$activeRouters = $routerRegistryReady && $db instanceof PDO && $canManageRouterBindings
+    ? router_registry_list($db, true, $user)
+    : [];
+$customerRouter = $routerRegistryReady && $db instanceof PDO
+    ? router_registry_customer_router($db, (int) ($account['id'] ?? 0), $user)
+    : null;
 
 $customerUser = $mockSnapshot !== null ? $account : app_db_user_session_payload($account);
 $snapshot = $mockSnapshot ?? app_db_customer_snapshot($customerUser);
@@ -1046,6 +1084,36 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                         <div><span>Qalan gun</span><strong><?= e($displayDaysLeft); ?></strong></div>
                         <div><span>Balans</span><strong><?= e($displayBalance); ?></strong></div>
                     </div>
+                </article>
+                <article class="mgs-profile-card">
+                    <h2>Router binding</h2>
+                    <?php if ($customerRouter !== null): ?>
+                        <div class="mgs-profile-kv">
+                            <div><span>Router</span><strong><?= e((string) ($customerRouter['router_name'] ?? '-')); ?></strong></div>
+                            <div><span>Management</span><strong><?= e((string) ($customerRouter['management_ip'] ?? '-')); ?></strong></div>
+                            <div><span>NAS</span><strong><?= e((string) ($customerRouter['nas_identity'] ?? '-')); ?></strong></div>
+                            <div><span>Status</span><strong><?= (int) ($customerRouter['is_active'] ?? 0) === 1 ? 'Aktiv' : 'Passiv'; ?></strong></div>
+                        </div>
+                    <?php else: ?>
+                        <p>Router teyin edilmeyib.</p>
+                    <?php endif; ?>
+                    <?php if ($activeRouters !== []): ?>
+                        <form class="portal-stacked-form portal-section-gap" method="post">
+                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                            <input type="hidden" name="action" value="bind_customer_router">
+                            <select name="router_id" aria-label="Router" required>
+                                <option value="">Router secin</option>
+                                <?php foreach ($activeRouters as $router): ?>
+                                    <option value="<?= e((string) ((int) ($router['id'] ?? 0))); ?>" <?= (int) ($customerRouter['id'] ?? 0) === (int) ($router['id'] ?? 0) ? 'selected' : ''; ?>>
+                                        <?= e((string) ($router['router_name'] ?? '-')); ?> / <?= e((string) ($router['management_ip'] ?? '-')); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button class="portal-ghost-btn" type="submit">Binding saxla</button>
+                        </form>
+                    <?php elseif (!$canManageRouterBindings): ?>
+                        <p>Binding deyisikliyi yalniz admin ve NOC ucun aktivdir.</p>
+                    <?php endif; ?>
                 </article>
                 <article class="mgs-profile-card">
                     <h2>Saglamliq</h2>

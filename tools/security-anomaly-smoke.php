@@ -102,6 +102,7 @@ try {
         ]);
     }
 
+    $securityActor = app_noc_system_actor('security-anomaly-worker');
     $result = app_security_anomaly_run($db, [
         'high_total_gb' => 10.0,
         'high_upload_gb' => 5.0,
@@ -111,8 +112,8 @@ try {
         'max_findings' => 250,
         'record' => true,
         'test_mode' => true,
-    ]);
-    $answer = app_security_anomaly_answer('sebeke doludur kim doldurur virus ola biler?', $db);
+    ], $securityActor);
+    $answer = app_security_anomaly_answer('sebeke doludur kim doldurur virus ola biler?', $db, $securityActor);
 
     $findingTypes = array_values(array_unique(array_map(
         static fn (array $finding): string => (string) ($finding['signal_type'] ?? ''),

@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/billing-ui.php';
+require_once __DIR__ . '/design-system-lib.php';
+require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/communication-consent-lib.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -24,24 +27,24 @@ if (PHP_SAPI !== 'cli') {
     ob_start(static function (string $html): string {
         return str_replace(
             [
-                'MÃ¼ÅŸtÉ™ri paneli',
-                'ÆmÉ™kdaÅŸ paneli',
-                'Ã‡Ä±xÄ±ÅŸ',
-                'Telefon nÃ¶mrÉ™sini yenilÉ™',
-                'MÃ¼raciÉ™t mÃ¶vzusu',
-                'MÃ¼raciÉ™t mÉ™tni',
-                'MÃ¼raciÉ™ti gÃ¶ndÉ™r',
-                'Ã–dÉ™niÅŸlÉ™r',
-                'Hesab Ã§Ä±xarÄ±ÅŸlarÄ±',
-                'MÃ¼raciÉ™tlÉ™r',
-                'NÃ¶vbÉ™',
-                'Tez É™mÉ™liyyatlar',
-                'BillingÉ™ keÃ§',
-                'OLT idarÉ™etmÉ™sini aÃ§',
-                'Kritik nÃ¶vbÉ™ni yoxla',
-                'MÃ¼qavilÉ™',
-                'Buradan iÅŸÉ™ daha sÃ¼rÉ™tli baÅŸlamaq Ã¼Ã§Ã¼n billing vÉ™ OLT keÃ§idlÉ™rini aÃ§Ä±n, prioritet nÃ¶vbÉ™ni gÃ¶rÃ¼n vÉ™ rolunuza uyÄŸun É™mÉ™liyyatlara keÃ§in.',
-                'DiqqÉ™t tÉ™lÉ™b edÉ™n iÅŸlÉ™ri vÉ™ É™sas keÃ§idlÉ™ri Ã¶nÉ™ Ã§Ä±xarÄ±r.',
+                'Müştəri paneli',
+                'Əməkdaş paneli',
+                'Çıxış',
+                'Telefon nömrəsini yenilə',
+                'Müraciət mövzusu',
+                'Müraciət mətni',
+                'Müraciəti göndər',
+                'Ödənişlər',
+                'Hesab çıxarışları',
+                'Müraciətlər',
+                'Növbə',
+                'Tez əməliyyatlar',
+                'Billingə keç',
+                'OLT idarəetməsini aç',
+                'Kritik növbəni yoxla',
+                'Müqavilə',
+                'Buradan işə daha sürətli başlamaq üçün billing və OLT keçidlərini açın, prioritet növbəni görün və rolunuza uyğun əməliyyatlara keçin.',
+                'Diqqət tələb edən işləri və əsas keçidləri önə çıxarır.',
             ],
             [
                 'Musteri paneli',
@@ -70,57 +73,57 @@ if (PHP_SAPI !== 'cli') {
 
 $texts = [
     'az' => [
-        'dashboard_customer' => 'MÃ¼ÅŸtÉ™ri paneli',
-        'dashboard_employee' => 'ÆmÉ™kdaÅŸ paneli',
+        'dashboard_customer' => 'Müştəri paneli',
+        'dashboard_employee' => 'Əməkdaş paneli',
         'status' => 'Status',
         'role' => 'Rol',
-        'logout' => 'Ã‡Ä±xÄ±ÅŸ',
-        'customer_text' => '%s paketi Ã¼zrÉ™ É™sas mÉ™lumatlar, Ã¶dÉ™niÅŸlÉ™r vÉ™ dÉ™stÉ™k mÃ¼raciÉ™tlÉ™ri burada toplanÄ±r.',
-        'employee_text' => 'Buradan iÅŸÉ™ daha sÃ¼rÉ™tli baÅŸlamaq Ã¼Ã§Ã¼n billing vÉ™ OLT keÃ§idlÉ™rini aÃ§Ä±n, prioritet nÃ¶vbÉ™ni gÃ¶rÃ¼n vÉ™ rolunuza uyÄŸun É™mÉ™liyyatlara keÃ§in.',
+        'logout' => 'Çıxış',
+        'customer_text' => '%s paketi üzrə əsas məlumatlar, ödənişlər və dəstək müraciətləri burada toplanır.',
+        'employee_text' => 'Buradan işə daha sürətli başlamaq üçün billing və OLT keçidlərini açın, prioritet növbəni görün və rolunuza uyğun əməliyyatlara keçin.',
         'subscriber_code' => 'Abonent kodu',
-        'download_speed' => 'YÃ¼klÉ™mÉ™ sÃ¼rÉ™ti',
-        'upload_speed' => 'GÃ¶ndÉ™rmÉ™ sÃ¼rÉ™ti',
-        'download_used' => 'YÃ¼klÉ™mÉ™ istifadÉ™si',
-        'upload_used' => 'GÃ¶ndÉ™rmÉ™ istifadÉ™si',
+        'download_speed' => 'Yükləmə sürəti',
+        'upload_speed' => 'Göndərmə sürəti',
+        'download_used' => 'Yükləmə istifadəsi',
+        'upload_used' => 'Göndərmə istifadəsi',
         'active_profile' => 'Aktiv paket',
         'last_online' => 'Son aktivlik',
-        'profile_block' => 'Profil mÉ™lumatlarÄ±',
-        'new_request' => 'DÉ™stÉ™yÉ™ yaz',
+        'profile_block' => 'Profil məlumatları',
+        'new_request' => 'Dəstəyə yaz',
         'name' => 'Ad soyad',
         'category' => 'Kateqoriya',
-        'contract' => 'MÃ¼qavilÉ™',
-        'address' => 'Ãœnvan',
+        'contract' => 'Müqavilə',
+        'address' => 'Ünvan',
         'email' => 'E-mail',
         'phone' => 'Telefon',
-        'phone_update' => 'Telefon nÃ¶mrÉ™sini yenilÉ™',
-        'phone_button' => 'NÃ¶mrÉ™ni dÉ™yiÅŸ',
-        'ticket_subject' => 'MÃ¼raciÉ™t mÃ¶vzusu',
-        'ticket_message' => 'MÃ¼raciÉ™t mÉ™tni',
-        'ticket_send' => 'MÃ¼raciÉ™ti gÃ¶ndÉ™r',
-        'payments' => 'Ã–dÉ™niÅŸlÉ™r',
-        'statements' => 'Hesab Ã§Ä±xarÄ±ÅŸlarÄ±',
-        'tickets' => 'MÃ¼raciÉ™tlÉ™r',
-        'table_payment' => ['Tarix', 'MÉ™blÉ™ÄŸ', 'Ãœsul', 'Status'],
-        'table_statement' => ['Period', 'AylÄ±q borc', 'Ã–dÉ™nib', 'QalÄ±q'],
-        'employee_summary' => ['Billing', 'NÃ¶vbÉ™', 'Sizin rol', 'OLT keÃ§idlÉ™ri'],
-        'employee_summary_small' => ['Abonent vÉ™ Ã¶dÉ™niÅŸ baxÄ±ÅŸÄ±', 'HazÄ±rda diqqÉ™t tÉ™lÉ™b edÉ™n iÅŸlÉ™r', 'SÉ™lahiyyÉ™t sÉ™viyyÉ™si', 'AÃ§maÄŸa hazÄ±r panellÉ™r'],
-        'permissions' => 'Bu hesabla edÉ™ bildiklÉ™riniz',
-        'handoffs' => 'Ä°ÅŸÉ™ baÅŸlamaq Ã¼Ã§Ã¼n keÃ§idlÉ™r',
+        'phone_update' => 'Telefon nömrəsini yenilə',
+        'phone_button' => 'Nömrəni dəyiş',
+        'ticket_subject' => 'Müraciət mövzusu',
+        'ticket_message' => 'Müraciət mətni',
+        'ticket_send' => 'Müraciəti göndər',
+        'payments' => 'Ödənişlər',
+        'statements' => 'Hesab çıxarışları',
+        'tickets' => 'Müraciətlər',
+        'table_payment' => ['Tarix', 'Məbləğ', 'Üsul', 'Status'],
+        'table_statement' => ['Period', 'Aylıq borc', 'Ödənib', 'Qalıq'],
+        'employee_summary' => ['Billing', 'Növbə', 'Sizin rol', 'OLT keçidləri'],
+        'employee_summary_small' => ['Abonent və ödəniş baxışı', 'Hazırda diqqət tələb edən işlər', 'Səlahiyyət səviyyəsi', 'Açmağa hazır panellər'],
+        'permissions' => 'Bu hesabla edə bildikləriniz',
+        'handoffs' => 'İşə başlamaq üçün keçidlər',
         'billing' => 'Billing paneli',
-        'billing_text' => 'Abonent, Ã¶dÉ™niÅŸ vÉ™ mÃ¼raciÉ™t baxÄ±ÅŸÄ±',
-        'portal_type' => 'keÃ§id',
-        'quick_actions' => 'Tez É™mÉ™liyyatlar',
-        'quick_actions_help' => 'Æn Ã§ox istifadÉ™ olunan iÅŸlÉ™rÉ™ bir kliklÉ™ keÃ§in.',
-        'quick_payments' => 'Ã–dÉ™niÅŸlÉ™rÉ™ bax',
-        'quick_support' => 'DÉ™stÉ™yÉ™ yaz',
-        'quick_phone' => 'NÃ¶mrÉ™ni yenilÉ™',
-        'quick_billing' => 'BillingÉ™ keÃ§',
-        'quick_olt' => 'OLT idarÉ™etmÉ™sini aÃ§',
-        'quick_queue' => 'Kritik nÃ¶vbÉ™ni yoxla',
-        'queue_text' => 'DiqqÉ™t tÉ™lÉ™b edÉ™n iÅŸlÉ™ri vÉ™ É™sas keÃ§idlÉ™ri Ã¶nÉ™ Ã§Ä±xarÄ±r.',
-        'role_summary' => 'HazÄ±rkÄ± sÉ™lahiyyÉ™t',
-        'support_note' => 'QÄ±sa mÃ¶vzu yazÄ±n, komanda geri dÃ¶nÃ¼ÅŸ etsin.',
-        'handoff_note' => 'Rolunuza uyÄŸun panellÉ™r aÅŸaÄŸÄ±da aÃ§Ä±lÄ±r.',
+        'billing_text' => 'Abonent, ödəniş və müraciət baxışı',
+        'portal_type' => 'keçid',
+        'quick_actions' => 'Tez əməliyyatlar',
+        'quick_actions_help' => 'Ən çox istifadə olunan işlərə bir kliklə keçin.',
+        'quick_payments' => 'Ödənişlərə bax',
+        'quick_support' => 'Dəstəyə yaz',
+        'quick_phone' => 'Nömrəni yenilə',
+        'quick_billing' => 'Billingə keç',
+        'quick_olt' => 'OLT idarəetməsini aç',
+        'quick_queue' => 'Kritik növbəni yoxla',
+        'queue_text' => 'Diqqət tələb edən işləri və əsas keçidləri önə çıxarır.',
+        'role_summary' => 'Hazırkı səlahiyyət',
+        'support_note' => 'Qısa mövzu yazın, komanda geri dönüş etsin.',
+        'handoff_note' => 'Rolunuza uyğun panellər aşağıda açılır.',
     ],
     'en' => [
         'dashboard_customer' => 'Customer panel',
@@ -176,57 +179,57 @@ $texts = [
         'handoff_note' => 'Panels available for your role are listed below.',
     ],
     'ru' => [
-        'dashboard_customer' => 'ĞŸĞ°Ğ½ĞµĞ»ÑŒ ĞºĞ»Ğ¸ĞµĞ½Ñ‚Ğ°',
-        'dashboard_employee' => 'ĞŸĞ°Ğ½ĞµĞ»ÑŒ ÑĞ¾Ñ‚Ñ€ÑƒĞ´Ğ½Ğ¸ĞºĞ°',
-        'status' => 'Ğ¡Ñ‚Ğ°Ñ‚ÑƒÑ',
-        'role' => 'Ğ Ğ¾Ğ»ÑŒ',
-        'logout' => 'Ğ’Ñ‹Ñ…Ğ¾Ğ´',
-        'customer_text' => 'Ğ—Ğ´ĞµÑÑŒ ÑĞ¾Ğ±Ñ€Ğ°Ğ½Ñ‹ Ğ¾ÑĞ½Ğ¾Ğ²Ğ½Ñ‹Ğµ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ Ğ¿Ğ¾ Ñ‚Ğ°Ñ€Ğ¸Ñ„Ñƒ %s, Ğ¾Ğ¿Ğ»Ğ°Ñ‚Ñ‹ Ğ¸ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ Ğ² Ğ¿Ğ¾Ğ´Ğ´ĞµÑ€Ğ¶ĞºÑƒ.',
-        'employee_text' => 'ĞĞ°Ñ‡Ğ¸Ğ½Ğ°Ğ¹Ñ‚Ğµ Ñ€Ğ°Ğ±Ğ¾Ñ‚Ñƒ Ğ±Ñ‹ÑÑ‚Ñ€ĞµĞµ: Ğ¾Ñ‚ĞºÑ€Ñ‹Ğ²Ğ°Ğ¹Ñ‚Ğµ billing Ğ¸ OLT, ÑĞ¼Ğ¾Ñ‚Ñ€Ğ¸Ñ‚Ğµ Ğ¿Ñ€Ğ¸Ğ¾Ñ€Ğ¸Ñ‚ĞµÑ‚Ğ½ÑƒÑ Ğ¾Ñ‡ĞµÑ€ĞµĞ´ÑŒ Ğ¸ Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´Ğ¸Ñ‚Ğµ Ğ² Ğ¸Ğ½ÑÑ‚Ñ€ÑƒĞ¼ĞµĞ½Ñ‚Ñ‹ Ğ¿Ğ¾ ÑĞ²Ğ¾ĞµĞ¹ Ñ€Ğ¾Ğ»Ğ¸.',
-        'subscriber_code' => 'ĞšĞ¾Ğ´ Ğ°Ğ±Ğ¾Ğ½ĞµĞ½Ñ‚Ğ°',
-        'download_speed' => 'Ğ¡ĞºĞ¾Ñ€Ğ¾ÑÑ‚ÑŒ Ğ·Ğ°Ğ³Ñ€ÑƒĞ·ĞºĞ¸',
-        'upload_speed' => 'Ğ¡ĞºĞ¾Ñ€Ğ¾ÑÑ‚ÑŒ Ğ¾Ñ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ¸',
-        'download_used' => 'Ğ˜ÑĞ¿Ğ¾Ğ»ÑŒĞ·Ğ¾Ğ²Ğ°Ğ½Ğ¾ Ğ·Ğ°Ğ³Ñ€ÑƒĞ·ĞºĞ¸',
-        'upload_used' => 'Ğ˜ÑĞ¿Ğ¾Ğ»ÑŒĞ·Ğ¾Ğ²Ğ°Ğ½Ğ¾ Ğ¾Ñ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ¸',
-        'active_profile' => 'ĞĞºÑ‚Ğ¸Ğ²Ğ½Ñ‹Ğ¹ Ğ¿Ğ°ĞºĞµÑ‚',
-        'last_online' => 'ĞŸĞ¾ÑĞ»ĞµĞ´Ğ½ÑÑ Ğ°ĞºÑ‚Ğ¸Ğ²Ğ½Ğ¾ÑÑ‚ÑŒ',
-        'profile_block' => 'Ğ”Ğ°Ğ½Ğ½Ñ‹Ğµ Ğ¿Ñ€Ğ¾Ñ„Ğ¸Ğ»Ñ',
-        'new_request' => 'ĞĞ°Ğ¿Ğ¸ÑĞ°Ñ‚ÑŒ Ğ² Ğ¿Ğ¾Ğ´Ğ´ĞµÑ€Ğ¶ĞºÑƒ',
-        'name' => 'Ğ˜Ğ¼Ñ Ğ¸ Ñ„Ğ°Ğ¼Ğ¸Ğ»Ğ¸Ñ',
-        'category' => 'ĞšĞ°Ñ‚ĞµĞ³Ğ¾Ñ€Ğ¸Ñ',
-        'contract' => 'Ğ”Ğ¾Ğ³Ğ¾Ğ²Ğ¾Ñ€',
-        'address' => 'ĞĞ´Ñ€ĞµÑ',
+        'dashboard_customer' => 'Панель клиента',
+        'dashboard_employee' => 'Панель сотрудника',
+        'status' => 'Статус',
+        'role' => 'Роль',
+        'logout' => 'Выход',
+        'customer_text' => 'Здесь собраны основные данные по тарифу %s, оплаты и обращения в поддержку.',
+        'employee_text' => 'Начинайте работу быстрее: открывайте billing и OLT, смотрите приоритетную очередь и переходите в инструменты по своей роли.',
+        'subscriber_code' => 'Код абонента',
+        'download_speed' => 'Скорость загрузки',
+        'upload_speed' => 'Скорость отправки',
+        'download_used' => 'Использовано загрузки',
+        'upload_used' => 'Использовано отправки',
+        'active_profile' => 'Активный пакет',
+        'last_online' => 'Последняя активность',
+        'profile_block' => 'Данные профиля',
+        'new_request' => 'Написать в поддержку',
+        'name' => 'Имя и фамилия',
+        'category' => 'Категория',
+        'contract' => 'Договор',
+        'address' => 'Адрес',
         'email' => 'E-mail',
-        'phone' => 'Ğ¢ĞµĞ»ĞµÑ„Ğ¾Ğ½',
-        'phone_update' => 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ Ğ½Ğ¾Ğ¼ĞµÑ€ Ñ‚ĞµĞ»ĞµÑ„Ğ¾Ğ½Ğ°',
-        'phone_button' => 'Ğ˜Ğ·Ğ¼ĞµĞ½Ğ¸Ñ‚ÑŒ Ğ½Ğ¾Ğ¼ĞµÑ€',
-        'ticket_subject' => 'Ğ¢ĞµĞ¼Ğ° Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ',
-        'ticket_message' => 'Ğ¢ĞµĞºÑÑ‚ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ',
-        'ticket_send' => 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ğµ',
-        'payments' => 'ĞĞ¿Ğ»Ğ°Ñ‚Ñ‹',
-        'statements' => 'Ğ’Ñ‹Ğ¿Ğ¸ÑĞºĞ¸',
-        'tickets' => 'ĞĞ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ',
-        'table_payment' => ['Ğ”Ğ°Ñ‚Ğ°', 'Ğ¡ÑƒĞ¼Ğ¼Ğ°', 'Ğ¡Ğ¿Ğ¾ÑĞ¾Ğ±', 'Ğ¡Ñ‚Ğ°Ñ‚ÑƒÑ'],
-        'table_statement' => ['ĞŸĞµÑ€Ğ¸Ğ¾Ğ´', 'ĞĞ°Ñ‡Ğ¸ÑĞ»ĞµĞ½Ğ¾', 'ĞĞ¿Ğ»Ğ°Ñ‡ĞµĞ½Ğ¾', 'ĞÑÑ‚Ğ°Ñ‚Ğ¾Ğº'],
-        'employee_summary' => ['Billing', 'ĞÑ‡ĞµÑ€ĞµĞ´ÑŒ', 'Ğ’Ğ°ÑˆĞ° Ñ€Ğ¾Ğ»ÑŒ', 'ĞŸĞµÑ€ĞµÑ…Ğ¾Ğ´Ñ‹ OLT'],
-        'employee_summary_small' => ['ĞŸÑ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€ Ğ°Ğ±Ğ¾Ğ½ĞµĞ½Ñ‚Ğ¾Ğ² Ğ¸ Ğ¾Ğ¿Ğ»Ğ°Ñ‚', 'Ğ§Ñ‚Ğ¾ Ñ‚Ñ€ĞµĞ±ÑƒĞµÑ‚ Ğ²Ğ½Ğ¸Ğ¼Ğ°Ğ½Ğ¸Ñ ÑĞµĞ¹Ñ‡Ğ°Ñ', 'Ğ£Ñ€Ğ¾Ğ²ĞµĞ½ÑŒ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ°', 'Ğ“Ğ¾Ñ‚Ğ¾Ğ²Ñ‹Ğµ Ğ¿Ğ°Ğ½ĞµĞ»Ğ¸'],
-        'permissions' => 'Ğ§Ñ‚Ğ¾ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾ ÑÑ‚Ğ¾Ğ¹ ÑƒÑ‡ĞµÑ‚Ğ½Ğ¾Ğ¹ Ğ·Ğ°Ğ¿Ğ¸ÑĞ¸',
-        'handoffs' => 'ĞŸĞµÑ€ĞµÑ…Ğ¾Ğ´Ñ‹ Ğ´Ğ»Ñ Ğ½Ğ°Ñ‡Ğ°Ğ»Ğ° Ñ€Ğ°Ğ±Ğ¾Ñ‚Ñ‹',
-        'billing' => 'ĞŸĞ°Ğ½ĞµĞ»ÑŒ billing',
-        'billing_text' => 'ĞĞ±Ğ¾Ğ½ĞµĞ½Ñ‚Ñ‹, Ğ¾Ğ¿Ğ»Ğ°Ñ‚Ñ‹ Ğ¸ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ',
-        'portal_type' => 'Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´',
-        'quick_actions' => 'Ğ‘Ñ‹ÑÑ‚Ñ€Ñ‹Ğµ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ñ',
-        'quick_actions_help' => 'ĞŸĞµÑ€ĞµÑ…Ğ¾Ğ´Ğ¸Ñ‚Ğµ Ğº ÑĞ°Ğ¼Ñ‹Ğ¼ Ñ‡Ğ°ÑÑ‚Ñ‹Ğ¼ Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ°Ğ¼ Ğ² Ğ¾Ğ´Ğ¸Ğ½ ĞºĞ»Ğ¸Ğº.',
-        'quick_payments' => 'ĞŸĞ¾ÑĞ¼Ğ¾Ñ‚Ñ€ĞµÑ‚ÑŒ Ğ¾Ğ¿Ğ»Ğ°Ñ‚Ñ‹',
-        'quick_support' => 'ĞĞ°Ğ¿Ğ¸ÑĞ°Ñ‚ÑŒ Ğ² Ğ¿Ğ¾Ğ´Ğ´ĞµÑ€Ğ¶ĞºÑƒ',
-        'quick_phone' => 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ Ğ½Ğ¾Ğ¼ĞµÑ€',
-        'quick_billing' => 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ billing',
-        'quick_olt' => 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ OLT',
-        'quick_queue' => 'ĞŸÑ€Ğ¾Ğ²ĞµÑ€Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¸Ğ¾Ñ€Ğ¸Ñ‚ĞµÑ‚Ğ½ÑƒÑ Ğ¾Ñ‡ĞµÑ€ĞµĞ´ÑŒ',
-        'queue_text' => 'ĞŸĞ¾ĞºĞ°Ğ·Ñ‹Ğ²Ğ°ĞµÑ‚ Ğ²Ğ°Ğ¶Ğ½Ñ‹Ğµ Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ¸ Ğ¸ Ğ¾ÑĞ½Ğ¾Ğ²Ğ½Ñ‹Ğµ ÑÑÑ‹Ğ»ĞºĞ¸.',
-        'role_summary' => 'Ğ¢ĞµĞºÑƒÑ‰Ğ¸Ğ¹ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿',
-        'support_note' => 'ĞšÑ€Ğ°Ñ‚ĞºĞ¾ Ğ¾Ğ¿Ğ¸ÑˆĞ¸Ñ‚Ğµ Ñ‚ĞµĞ¼Ñƒ, Ñ‡Ñ‚Ğ¾Ğ±Ñ‹ ĞºĞ¾Ğ¼Ğ°Ğ½Ğ´Ğ° Ğ¾Ñ‚Ğ²ĞµÑ‚Ğ¸Ğ»Ğ° Ğ±Ñ‹ÑÑ‚Ñ€ĞµĞµ.',
-        'handoff_note' => 'ĞĞ¸Ğ¶Ğµ Ğ¿Ğ¾ĞºĞ°Ğ·Ğ°Ğ½Ñ‹ Ğ¿Ğ°Ğ½ĞµĞ»Ğ¸, Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ñ‹Ğµ Ğ²Ğ°ÑˆĞµĞ¹ Ñ€Ğ¾Ğ»Ğ¸.',
+        'phone' => 'Телефон',
+        'phone_update' => 'Обновить номер телефона',
+        'phone_button' => 'Изменить номер',
+        'ticket_subject' => 'Тема обращения',
+        'ticket_message' => 'Текст обращения',
+        'ticket_send' => 'Отправить обращение',
+        'payments' => 'Оплаты',
+        'statements' => 'Выписки',
+        'tickets' => 'Обращения',
+        'table_payment' => ['Дата', 'Сумма', 'Способ', 'Статус'],
+        'table_statement' => ['Период', 'Начислено', 'Оплачено', 'Остаток'],
+        'employee_summary' => ['Billing', 'Очередь', 'Ваша роль', 'Переходы OLT'],
+        'employee_summary_small' => ['Просмотр абонентов и оплат', 'Что требует внимания сейчас', 'Уровень доступа', 'Готовые панели'],
+        'permissions' => 'Что доступно этой учетной записи',
+        'handoffs' => 'Переходы для начала работы',
+        'billing' => 'Панель billing',
+        'billing_text' => 'Абоненты, оплаты и обращения',
+        'portal_type' => 'переход',
+        'quick_actions' => 'Быстрые действия',
+        'quick_actions_help' => 'Переходите к самым частым задачам в один клик.',
+        'quick_payments' => 'Посмотреть оплаты',
+        'quick_support' => 'Написать в поддержку',
+        'quick_phone' => 'Обновить номер',
+        'quick_billing' => 'Открыть billing',
+        'quick_olt' => 'Открыть OLT',
+        'quick_queue' => 'Проверить приоритетную очередь',
+        'queue_text' => 'Показывает важные задачи и основные ссылки.',
+        'role_summary' => 'Текущий доступ',
+        'support_note' => 'Кратко опишите тему, чтобы команда ответила быстрее.',
+        'handoff_note' => 'Ниже показаны панели, доступные вашей роли.',
     ],
 ];
 
@@ -310,6 +313,17 @@ $customerOnts = $isCustomer && is_array($snapshot['ont_profiles'] ?? null)
 $customerMessages = $isCustomer && is_array($snapshot['messages'] ?? null)
     ? array_values(array_filter($snapshot['messages'], 'is_array'))
     : [];
+$customerMarketingOptedOut = false;
+if ($isCustomer && app_db_available()) {
+    $consentDb = app_db();
+    if ($consentDb instanceof PDO) {
+        $consentAccount = app_db_account_by_id((int) ($user['id'] ?? 0));
+        $customerPhoneForConsent = is_array($consentAccount) ? (string) ($consentAccount['phone'] ?? '') : '';
+        if ($customerPhoneForConsent !== '') {
+            $customerMarketingOptedOut = app_communication_is_opted_out($consentDb, $customerPhoneForConsent, 'sms');
+        }
+    }
+}
 $customerServiceState = 'unknown';
 if ($customerServices !== []) {
     $firstServiceStatus = strtolower((string) ($customerServices[0]['status'] ?? ''));
@@ -335,6 +349,8 @@ $flashMap = [
         'technician_ticket_closed' => ['type' => 'success', 'message' => 'Bilet ugurla baglandi.'],
         'technician_ticket_failed' => ['type' => 'error', 'message' => 'Bilet baglanmadi. Linki ve qeydi yoxlayin.'],
         'module_forbidden' => ['type' => 'error', 'message' => 'Bu modul sizin emekdas rolunuz ucun aciq deyil.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Bildiris tercihiniz yenilendi.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Terciheiniz saxlanmadi. Zehmet olmasa yeniden cehd edin.'],
     ],
     'en' => [
         'portal_phone_updated' => ['type' => 'success', 'message' => 'Phone number updated successfully. If billing is active, the change will appear there as well.'],
@@ -352,22 +368,26 @@ $flashMap = [
         'technician_ticket_closed' => ['type' => 'success', 'message' => 'Ticket closed successfully.'],
         'technician_ticket_failed' => ['type' => 'error', 'message' => 'Ticket could not be closed.'],
         'module_forbidden' => ['type' => 'error', 'message' => 'This module is not available for your employee role.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Your notification preference was updated.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Preference could not be saved. Please try again.'],
     ],
     'ru' => [
-        'portal_phone_updated' => ['type' => 'success', 'message' => 'ĞĞ¾Ğ¼ĞµÑ€ ÑƒÑĞ¿ĞµÑˆĞ½Ğ¾ Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ»ĞµĞ½. Ğ•ÑĞ»Ğ¸ billing Ğ°ĞºÑ‚Ğ¸Ğ²ĞµĞ½, Ğ¸Ğ·Ğ¼ĞµĞ½ĞµĞ½Ğ¸Ğµ Ğ¿Ğ¾ÑĞ²Ğ¸Ñ‚ÑÑ Ğ¸ Ñ‚Ğ°Ğ¼.'],
-        'portal_phone_failed' => ['type' => 'error', 'message' => 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ Ğ½Ğ¾Ğ¼ĞµÑ€. ĞŸÑ€Ğ¾Ğ²ĞµÑ€ÑŒÑ‚Ğµ Ñ„Ğ¾Ñ€Ğ¼Ğ°Ñ‚ ĞµÑ‰Ğµ Ñ€Ğ°Ğ·.'],
-        'portal_ticket_created' => ['type' => 'success', 'message' => 'Ğ’Ğ°ÑˆĞµ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ğµ Ğ·Ğ°Ñ€ĞµĞ³Ğ¸ÑÑ‚Ñ€Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ¾.'],
-        'portal_ticket_failed' => ['type' => 'error', 'message' => 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ ÑĞ¾Ğ·Ğ´Ğ°Ñ‚ÑŒ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ğµ. ĞŸĞ¾Ğ¿Ñ€Ğ¾Ğ±ÑƒĞ¹Ñ‚Ğµ ĞµÑ‰Ğµ Ñ€Ğ°Ğ·.'],
-        'csrf_failed' => ['type' => 'error', 'message' => 'ĞŸÑ€Ğ¾Ğ²ĞµÑ€ĞºĞ° ÑĞµÑÑĞ¸Ğ¸ Ğ½Ğµ Ğ¿Ñ€Ğ¾ÑˆĞ»Ğ°. ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚Ğµ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñƒ Ğ¸ Ğ¿Ğ¾Ğ²Ñ‚Ğ¾Ñ€Ğ¸Ñ‚Ğµ Ğ¿Ğ¾Ğ¿Ñ‹Ñ‚ĞºÑƒ.'],
-        'portal_bridge_unavailable' => ['type' => 'error', 'message' => 'Ğ­Ñ‚Ğ¾Ñ‚ Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´ Ğ¿Ğ¾ĞºĞ° Ğ½Ğµ Ğ³Ğ¾Ñ‚Ğ¾Ğ². ĞÑƒĞ¶Ğ½Ğ¾ Ğ·Ğ°Ğ²ĞµÑ€ÑˆĞ¸Ñ‚ÑŒ Ğ½Ğ°ÑÑ‚Ñ€Ğ¾Ğ¹ĞºĞ¸ Ğ²Ñ…Ğ¾Ğ´Ğ° Ğ² OLT.'],
-        'portal_bridge_forbidden' => ['type' => 'error', 'message' => 'Ğ”Ğ»Ñ ÑÑ‚Ğ¾Ğ¹ ÑƒÑ‡ĞµÑ‚Ğ½Ğ¾Ğ¹ Ğ·Ğ°Ğ¿Ğ¸ÑĞ¸ Ğ½Ğµ Ğ½Ğ°Ğ¹Ğ´ĞµĞ½ Ğ¿Ğ¾Ğ´Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğ¹ Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´ Ğ² OLT.'],
-        'portal_billing_unavailable' => ['type' => 'error', 'message' => 'ĞŸĞµÑ€ĞµÑ…Ğ¾Ğ´ Ğ² billing Ğ¿Ğ¾ĞºĞ° Ğ½Ğµ Ğ³Ğ¾Ñ‚Ğ¾Ğ². Ğ—Ğ°Ğ²ĞµÑ€ÑˆĞ¸Ñ‚Ğµ URL Ğ¸Ğ»Ğ¸ SSO Ğ½Ğ°ÑÑ‚Ñ€Ğ¾Ğ¹ĞºĞ¸.'],
-        'portal_password_updated' => ['type' => 'success', 'message' => 'ĞŸĞ°Ñ€Ğ¾Ğ»ÑŒ Ğ¿Ğ¾Ñ€Ñ‚Ğ°Ğ»Ğ° Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ»ĞµĞ½.'],
-        'portal_password_failed' => ['type' => 'error', 'message' => 'ĞŸĞ°Ñ€Ğ¾Ğ»ÑŒ Ğ½Ğµ Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ»ĞµĞ½.'],
-        'operator_ticket_created' => ['type' => 'success', 'message' => 'Ğ‘Ğ¸Ğ»ĞµÑ‚ ÑĞ¾Ğ·Ğ´Ğ°Ğ½ Ğ² CRM.'],
-        'operator_ticket_failed' => ['type' => 'error', 'message' => 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ ÑĞ¾Ğ·Ğ´Ğ°Ñ‚ÑŒ Ğ±Ğ¸Ğ»ĞµÑ‚.'],
-        'technician_ticket_closed' => ['type' => 'success', 'message' => 'Ğ‘Ğ¸Ğ»ĞµÑ‚ Ğ·Ğ°ĞºÑ€Ñ‹Ñ‚.'],
-        'technician_ticket_failed' => ['type' => 'error', 'message' => 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ Ğ·Ğ°ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ±Ğ¸Ğ»ĞµÑ‚.'],
+        'portal_phone_updated' => ['type' => 'success', 'message' => 'Номер успешно обновлен. Если billing активен, изменение появится и там.'],
+        'portal_phone_failed' => ['type' => 'error', 'message' => 'Не удалось обновить номер. Проверьте формат еще раз.'],
+        'portal_ticket_created' => ['type' => 'success', 'message' => 'Ваше обращение зарегистрировано.'],
+        'portal_ticket_failed' => ['type' => 'error', 'message' => 'Не удалось создать обращение. Попробуйте еще раз.'],
+        'csrf_failed' => ['type' => 'error', 'message' => 'Проверка сессии не прошла. Обновите страницу и повторите попытку.'],
+        'portal_bridge_unavailable' => ['type' => 'error', 'message' => 'Этот переход пока не готов. Нужно завершить настройки входа в OLT.'],
+        'portal_bridge_forbidden' => ['type' => 'error', 'message' => 'Для этой учетной записи не найден подходящий переход в OLT.'],
+        'portal_billing_unavailable' => ['type' => 'error', 'message' => 'Переход в billing пока не готов. Завершите URL или SSO настройки.'],
+        'portal_password_updated' => ['type' => 'success', 'message' => 'Пароль портала обновлен.'],
+        'portal_password_failed' => ['type' => 'error', 'message' => 'Пароль не обновлен.'],
+        'operator_ticket_created' => ['type' => 'success', 'message' => 'Билет создан в CRM.'],
+        'operator_ticket_failed' => ['type' => 'error', 'message' => 'Не удалось создать билет.'],
+        'technician_ticket_closed' => ['type' => 'success', 'message' => 'Билет закрыт.'],
+        'technician_ticket_failed' => ['type' => 'error', 'message' => 'Не удалось закрыть билет.'],
+        'portal_consent_updated' => ['type' => 'success', 'message' => 'Ваши настройки уведомлений обновлены.'],
+        'portal_consent_failed' => ['type' => 'error', 'message' => 'Не удалось сохранить настройки. Попробуйте еще раз.'],
     ],
 ];
 
@@ -383,11 +403,12 @@ if (isset($flashMap[$lang][$status])) {
     <title>Super Optik Portal</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/design-system.css')); ?>">
 </head>
-<body class="portal-body">
+<body class="portal-body"<?= app_design_system_body_attribute(); ?>>
     <header class="portal-topbar">
         <div class="portal-topbar-inner">
-            <a href="index.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="portal-brand">
+            <a href="<?= e(app_config('public_site_url', 'https://superoptic.net/')); ?>" class="portal-brand">
                 <img src="images/favicon.png" alt="Super Optik Tech">
                 <span>Super Optik Portal</span>
             </a>
@@ -622,29 +643,37 @@ if (isset($flashMap[$lang][$status])) {
 
                 <article class="portal-card">
                     <div class="portal-card-head">
-                        <h2>ONT / modem melumatlari</h2>
-                        <small>Musteri ucun SN, MAC ve modem temperaturu.</small>
+                        <h2>Sebeke</h2>
+                        <small>Modeminizin qosulma veziyyeti. Texniki detallar (seriya, MAC ve s.) yalniz destek xidmetine gorunur.</small>
                     </div>
                     <div class="portal-table-wrap">
                         <table class="portal-table">
                             <thead>
-                                <tr><th>Modem</th><th>SN / MAC</th><th>Modem temperaturu</th><th>Status</th></tr>
+                                <tr><th>Modem</th><th>Veziyyet</th><th>Son yenilenme</th></tr>
                             </thead>
                             <tbody>
                                 <?php if ($customerOnts === []): ?>
-                                    <tr><td colspan="4">ONT/modem melumati tapilmadi.</td></tr>
+                                    <tr><td colspan="3">Modem melumati tapilmadi.</td></tr>
                                 <?php endif; ?>
-                                <?php foreach ($customerOnts as $ont): ?>
+                                <?php foreach ($customerOnts as $ont):
+                                    $ontStatusRaw = strtolower(trim((string) ($ont['status'] ?? '')));
+                                    $ontIsOnline = in_array($ontStatusRaw, ['online', 'active', 'up', 'run', 'working', 'used_working'], true);
+                                    $ontIsOffline = in_array($ontStatusRaw, ['offline', 'down', 'disabled', 'lost'], true);
+                                    $ontStatusLabel = $ontIsOnline ? 'Onlayn' : ($ontIsOffline ? 'Oflayn' : 'Namelum');
+                                    $ontStatusToneClass = $ontIsOnline ? ' portal-pill-success' : ($ontIsOffline ? ' portal-pill-danger' : '');
+                                ?>
                                     <tr>
                                         <td>ONT / modem</td>
-                                        <td><?= e((string) ($ont['serial'] ?? '-')); ?><br><small><?= e((string) ($ont['mac'] ?? '-')); ?></small></td>
-                                        <td><?= e((string) ($ont['temperature'] ?? '-')); ?> C</td>
-                                        <td><span class="portal-pill"><?= e((string) ($ont['status'] ?? '-')); ?></span></td>
+                                        <td><span class="portal-pill<?= e($ontStatusToneClass); ?>"><?= e($ontStatusLabel); ?></span></td>
+                                        <td><?= e((string) ($ont['optical_synced_at'] ?? '-')); ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
                     </div>
+                    <?php if ($customerOnts !== [] && !array_filter($customerOnts, static fn (array $o): bool => in_array(strtolower(trim((string) ($o['status'] ?? ''))), ['online', 'active', 'up', 'run', 'working', 'used_working'], true))): ?>
+                        <small>Sebeke ile bagli problem oldugunu dusunursunuzse, <a href="#customer-support">destek bolmesinden</a> muraciet aca bilersiniz.</small>
+                    <?php endif; ?>
                 </article>
             </section>
 
@@ -727,6 +756,17 @@ if (isset($flashMap[$lang][$status])) {
                         </tbody>
                     </table>
                 </div>
+                <?php if ($customerPhoneForConsent !== ''): ?>
+                <form method="post" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="portal-stacked-form portal-section-gap">
+                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="action" value="update_marketing_consent">
+                    <div class="portal-form-row">
+                        <label><input type="checkbox" name="marketing_consent" value="1" <?= $customerMarketingOptedOut ? '' : 'checked'; ?>> Kampaniya ve teklif SMS-lerini qebul etmek isteyirem</label>
+                    </div>
+                    <small>Odenis, xidmet ve bilet bildirisleri bu ayardan asili olmayaraq gonderilir.</small>
+                    <button class="portal-ghost-btn" type="submit">Yadda saxla</button>
+                </form>
+                <?php endif; ?>
             </section>
 
             <section class="portal-card portal-reveal" id="customer-tickets">
@@ -813,10 +853,16 @@ if (isset($flashMap[$lang][$status])) {
                         <small>Provider ayarlari ve emeliyyat jurnali ucun birbasa kecidler.</small>
                     </div>
                     <div class="portal-quick-links portal-grid-4">
-                        <a class="portal-link-card" href="message-center.php?view=overview<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>#sms-provider-settings">
+                        <a class="portal-link-card" href="message-center.php?view=settings<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>#sms-provider-settings">
                             <div>
-                                <strong>SMS provider ayari</strong>
-                                <span>Username ve password deyismek ucun</span>
+                                <strong>Mesaj kanallari</strong>
+                                <span>SMS, WhatsApp ve xarici gonderis hazirligini yoxla</span>
+                            </div>
+                        </a>
+                        <a class="portal-link-card" href="mgs-integration.php?view=bots<?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">
+                            <div>
+                                <strong>Telegram botlari ve qruplar</strong>
+                                <span>Bot elave et, yenile, qrup Chat ID-sini ve hazirliq statusunu idare et</span>
                             </div>
                         </a>
                         <a class="portal-link-card" href="operation-logs.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
@@ -831,6 +877,14 @@ if (isset($flashMap[$lang][$status])) {
                                 <span>SMS, WhatsApp, Telegram ve app gonderim cehdleri</span>
                             </div>
                         </a>
+                        <?php if (app_portal_is_super_admin($user)): ?>
+                            <a class="portal-link-card" href="api-integrations.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                                <div>
+                                    <strong>API inteqrasiyalari</strong>
+                                    <span>Emanat, United Payment ve yeni provider acarlarini yarat, rotasiya et ve legv et</span>
+                                </div>
+                            </a>
+                        <?php endif; ?>
                     </div>
                 </section>
             <?php endif; ?>
@@ -998,5 +1052,6 @@ if (isset($flashMap[$lang][$status])) {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
 </body>
 </html>

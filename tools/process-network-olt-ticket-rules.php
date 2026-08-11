@@ -47,7 +47,8 @@ if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
     ], 2);
 }
 
-app_mgs_seed_device_learning_profiles($db);
+$nocActor = app_noc_system_actor('olt-rule-worker');
+app_mgs_seed_device_learning_profiles($db, $nocActor);
 
 $options = [
     'test_mode' => !$apply,
@@ -59,7 +60,7 @@ if ($threshold > 0) {
     $options['olt_mass_pon_min_affected'] = $threshold;
 }
 
-$result = app_mgs_analyze_olt_ticket_rules($options, $db);
+$result = app_mgs_analyze_olt_ticket_rules($options, $db, $nocActor);
 $status = !empty($result['ok']) ? 'ok' : 'failed';
 if (($result['status'] ?? '') === 'skipped') {
     $status = 'skipped';
