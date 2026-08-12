@@ -9,6 +9,9 @@ $sources = (array) ($queue['sources'] ?? []);
 $query = is_array($aiContext['query'] ?? null) ? $aiContext['query'] : [];
 $unavailableSources = array_filter($sources, static fn (array $s): bool => empty($s['available']));
 $queueError = trim((string) ($queue['error'] ?? ''));
+$isSuperAdmin = function_exists('app_portal_is_super_admin') && app_portal_is_super_admin((array) ($aiContext['user'] ?? []));
+$workQueueFlash = $_SESSION['ai_work_queue_flash'] ?? null;
+unset($_SESSION['ai_work_queue_flash']);
 
 $moduleLabels = [
     'billing' => 'Billing', 'finance' => 'Maliyyə', 'hr' => 'HR', 'inventory' => 'Anbar',
@@ -19,6 +22,10 @@ $severityLabels = ['critical' => 'Kritik', 'high' => 'Yüksək', 'medium' => 'Or
 <section class="ai-panel" data-ai-work-queue>
     <h2>Təsdiq Mərkəzi - Birləşdirilmiş iş növbəsi</h2>
     <p>Bütün modullardan icra tələb edən işlərin salt-oxunan proyeksiyası. Bu səhifədən heç bir təsdiq, ödəniş, göndəriş və ya cihaz əməliyyatı icra edilmir - hər sətir öz kanonik modulunda idarə olunur.</p>
+
+    <?php if (is_array($workQueueFlash)): ?>
+        <div class="portal-alert is-<?= e((string) ($workQueueFlash['type'] ?? 'info')); ?>"><?= e((string) ($workQueueFlash['message'] ?? '')); ?></div>
+    <?php endif; ?>
 
     <form class="ai-form" method="get" action="ai-work-queue.php" data-ai-filter>
         <label>Axtarış<input type="search" name="search" value="<?= e((string) ($query['search'] ?? '')); ?>" placeholder="basliq ve ya sebeb"></label>
@@ -89,6 +96,19 @@ $severityLabels = ['critical' => 'Kritik', 'high' => 'Yüksək', 'medium' => 'Or
                         <td data-label="Yenilənib"><?= e((string) ($item['source_timestamp'] ?? '-')); ?></td>
                         <td data-label="Əməliyyat">
                             <a class="portal-ghost-btn portal-inline-link" href="<?= e((string) ($item['deep_link'] ?? '#')); ?>" target="_blank" rel="noopener">Modula keç</a>
+                            <?php if (!empty($item['confirmable']) && $isSuperAdmin): ?>
+                                <details class="ai-queue-preview-details">
+                                    <summary class="portal-ghost-btn portal-inline-link">Önizləmə hazırla</summary>
+                                    <form class="portal-inline-form ai-queue-preview-form" method="post" action="ai-work-queue.php">
+                                        <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                        <input type="hidden" name="action" value="prepare_advisor_preview">
+                                        <input type="hidden" name="proposal_id" value="<?= e((string) ($item['id'] ?? '')); ?>">
+                                        <label>SKU<input type="text" name="sku" placeholder="anbar kodu" maxlength="64"></label>
+                                        <label>Qeyd<input type="text" name="note" placeholder="ixtiyari" maxlength="255"></label>
+                                        <button class="portal-ghost-btn" type="submit">Önizləməni al</button>
+                                    </form>
+                                </details>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endforeach; ?>

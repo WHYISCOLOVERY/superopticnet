@@ -263,3 +263,76 @@ regressions. The single final full-system run passed **203/0**, with 0
 timeouts and the same 4 intentional live-integration skips. Report:
 `tmp/full-system-regression-20260803-150336.json`. No production or live
 integration action was performed.
+
+## Increment - advisor preview bridge wired (2026-08-12)
+
+Closes the first "Out of scope / follow-up" item above: a live, super-admin-
+only "Önizləmə hazırla" (prepare preview) control now exists for
+`confirmable=true` advisor-linked rows, instead of only the informational
+badge. It calls the existing dry-run bridge,
+`app_advisor_prepare_proposal_action()` (advisor-agent-lib.php) - unchanged,
+not touched by this increment - and shows its result inline. Nothing is
+staged, assigned, or executed: the queue's own on-screen promise ("Bu
+səhifədən heç bir təsdiq, ödəniş, göndəriş və ya cihaz əməliyyatı icra
+edilmir") still holds.
+
+In the current data set the only real `confirmable=true` source is the
+`techops` advisor's `critical_stock` proposal, linked to the
+`inventory_movement` action kind. The preview function only consumes
+`payload['sku']` (object label) and `payload['summary']` (business-impact
+text) - `quantity`/`direction` mentioned as an illustrative example in the
+original "Out of scope" note are not read anywhere in
+`agent-workspace-lib.php`, so the form deliberately does not collect them
+(no dead/decorative fields).
+
+Files changed:
+
+- `ai-work-queue.php`: new `prepare_advisor_preview` POST action (CSRF-
+  verified, PRG pattern matching `ai-team.php`). Re-derives the proposal
+  server-side via a fresh `app_advisor_all_briefings()` call matched by id -
+  never trusts a client-submitted envelope. Every denial reason from
+  `app_advisor_prepare_proposal_action()` maps to an Azerbaijani message;
+  success shows label/object/external-impact/reversibility from the real
+  preview object.
+- `views/ai/work-queue.php`: the confirmable-item badge now also renders a
+  `<details>`-collapsed inline form (SKU + optional note) for super-admin
+  actors only (`app_portal_is_super_admin()`); everyone else still sees only
+  the existing informational badge, unchanged.
+- `tools/agent-ops-work-queue-smoke.php`: the two contract checks that
+  asserted the view "never renders a POST form" / "never renders an
+  action-dispatch input" are now scoped to allow exactly the one sanctioned
+  `prepare_advisor_preview` action (still failing if any other action value
+  or an unrelated write label appears). Added a parallel write-marker scan
+  over `ai-work-queue.php` itself (mirroring the existing scan already
+  applied to `agent-ops-queue-lib.php` and the JSON API), asserting the new
+  route calls the preview bridge exactly once and never a real write
+  function (`INSERT`/`UPDATE`/`DELETE`/`app_agent_prepare_action(`/campaign
+  approve calls/its own transaction).
+
+Verified locally (PHP CLI):
+
+- PHP lint clean on all three changed files.
+- `tools/agent-ops-work-queue-smoke.php`: 117 pass / 0 fail (was 107/0
+  before this increment; net new checks cover the route's write-marker scan
+  and the tightened view contract).
+- Functional, in-process (not through a browser session): a real
+  `techops`/`critical_stock`/`inventory_movement` proposal was located via
+  `app_advisor_all_briefings()`. A synthetic super-admin actor received a
+  correctly-shaped preview (`object="SKU QA-SKU-1"`,
+  `label="İnventar hərəkəti"`, `external_impact="Xarici təsir yoxdur; daxili
+  anbar ledgeri."`, `reversible=true`). A synthetic non-super-admin actor was
+  denied (`actor_not_super_admin`). A tampered copy of the same proposal
+  (mutated `summary` after signing) was denied (`proposal_tampered`),
+  confirming the envelope-signature check still holds end to end.
+- View rendered in isolation for both actor types: the preview form (with a
+  real generated CSRF token, SKU/note inputs, and the correct
+  `proposal_id`) renders only for the super-admin actor; completely absent
+  for the non-admin actor.
+- `tools/advisor-agent-foundation-smoke.php`, `tools/ai-team-smoke.php`,
+  `tools/ai-module-separation-smoke.php`,
+  `tools/ai-grouped-navigation-smoke.php`: all `passed`/0 fail, unaffected.
+
+No production deploy, no real SMS/Telegram/WhatsApp send, no RADIUS/OLT/
+router action, no credential read/rotation, no commit/push, no destructive DB
+operation, no schema migration (none needed). `advisor-agent-lib.php` and
+`agent-ops-queue-lib.php` were read but not modified.

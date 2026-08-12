@@ -132,6 +132,20 @@ queue_check('API endpoint is read-only JSON only (no $_POST handling)', !str_con
 queue_check('queue service contains exactly one canonical audit write call', substr_count($queueLibCode, 'app_audit_record(') === 1, $passes, $failures, (string) substr_count($queueLibCode, 'app_audit_record('));
 queue_check('queue service never creates schema during a GET/read access', !str_contains($queueLibCode, 'app_audit_ensure_schema('), $passes, $failures);
 
+// The interactive HTML route (ai-work-queue.php) is allowed exactly ONE
+// write-adjacent call: the sanctioned dry-run preview bridge
+// app_advisor_prepare_proposal_action() (never executes, only returns a
+// preview or a denial - see advisor-agent-lib.php). It must never reach an
+// actual business write, a raw agent-action staging call, or a DB
+// transaction of its own.
+$routeSrc = (string) file_get_contents($root . '/ai-work-queue.php');
+$routeCode = $stripPhpComments($routeSrc);
+foreach (['INSERT INTO', 'UPDATE ', 'DELETE FROM', 'app_agent_prepare_action(', 'app_communication_campaign_approve_and_queue(', 'app_communication_campaign_prepare_long_inactive(', '->beginTransaction', '->exec('] as $writeMarker) {
+    queue_check('work-queue route never calls write marker "' . $writeMarker . '" outside comments', !str_contains($routeCode, $writeMarker), $passes, $failures);
+}
+queue_check('work-queue route calls the sanctioned preview bridge exactly once', substr_count($routeCode, 'app_advisor_prepare_proposal_action(') === 1, $passes, $failures, (string) substr_count($routeCode, 'app_advisor_prepare_proposal_action('));
+queue_check('work-queue route re-derives the proposal server-side by id instead of trusting client-submitted envelope content', str_contains($routeCode, 'app_advisor_all_briefings(') && !str_contains($routeCode, '$_POST[\'proposal\']'), $passes, $failures);
+
 /* ---------------------------------------------------------------------------
  * 6. View/UI contract: mobile stacking data-labels present, both empty and
  *    error design-system states wired, no write/approve form in this view.
@@ -140,8 +154,15 @@ $viewSrc = (string) file_get_contents($root . '/views/ai/work-queue.php');
 queue_check('view uses data-label attributes for mobile stacking', substr_count($viewSrc, 'data-label="') >= 5, $passes, $failures, (string) substr_count($viewSrc, 'data-label="'));
 queue_check('view wires the empty design-system state', str_contains($viewSrc, "app_design_system_state('empty'"), $passes, $failures);
 queue_check('view wires the error design-system state for unavailable sources', str_contains($viewSrc, "app_design_system_state('error'"), $passes, $failures);
-queue_check('view never renders a POST form (no write/approve action)', !preg_match('/method=["\']post["\']/i', $viewSrc), $passes, $failures);
-queue_check('view never renders an action-dispatch hidden input (the write-trigger pattern used elsewhere in this app)', !str_contains($viewSrc, 'name="action"'), $passes, $failures);
+// The view is allowed exactly one POST form: the super-admin-gated,
+// preview-only "prepare_advisor_preview" action (calls
+// app_advisor_prepare_proposal_action(), never a real write - see
+// ai-work-queue.php). No other action-dispatch value may appear, and the
+// form markup itself must be gated behind $isSuperAdmin.
+queue_check('any POST form in the view is gated to super-admin and only for the sanctioned preview action', !preg_match('/method=["\']post["\']/i', $viewSrc) || (str_contains($viewSrc, '$isSuperAdmin') && str_contains($viewSrc, 'value="prepare_advisor_preview"')), $passes, $failures);
+preg_match_all('/name="action"\s+value="([^"]*)"/', $viewSrc, $actionValueMatches);
+$actionValues = array_values(array_unique($actionValueMatches[1] ?? []));
+queue_check('view action-dispatch values are limited to the sanctioned preview-only action', $actionValues === [] || $actionValues === ['prepare_advisor_preview'], $passes, $failures, implode(',', $actionValues));
 queue_check('view uses the Azerbaijani confirmation-center title', str_contains($viewSrc, 'Təsdiq Mərkəzi'), $passes, $failures);
 queue_check('view renders an explicit fail-closed audit error state', str_contains($viewSrc, "\$queueError === 'audit_unavailable'"), $passes, $failures);
 queue_check('view deep-link buttons only ("Modula keç"), no approve/send/pay label', str_contains($viewSrc, 'Modula keç') && !preg_match('/Təsdiq et|Göndər|Ödə/u', $viewSrc), $passes, $failures);
