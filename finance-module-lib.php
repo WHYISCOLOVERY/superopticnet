@@ -713,7 +713,15 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         $context['data']['statistics'] = app_finance_statistics_context($db, $query);
         if (app_portal_is_admin($user)) {
             $budgetPeriodMonth = app_finance_budget_normalize_period_month($query['budget_month'] ?? '');
-            $context['data']['budget_vs_actual'] = app_finance_budget_vs_actual($db, $budgetPeriodMonth);
+            // Budget-vs-actual needs a migration (finance_budgets) that may not
+            // have run yet on a given environment; the rest of the statistics
+            // tab must still render, so this panel just goes empty instead of
+            // taking the whole page down.
+            try {
+                $context['data']['budget_vs_actual'] = app_finance_budget_vs_actual($db, $budgetPeriodMonth);
+            } catch (RuntimeException $exception) {
+                $context['data']['budget_vs_actual'] = [];
+            }
             $context['data']['cashflow_forecast'] = app_finance_cashflow_forecast($db);
         }
     } elseif ($tab === 'payroll') {
@@ -734,8 +742,15 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         ], $legalProfile) : [];
         $context['data']['cost_rows'] = function_exists('app_mgs_hr_cost_report_rows') ? app_mgs_hr_cost_report_rows($db, 12) : [];
     } elseif ($tab === 'ai-assistant') {
-        $context['data']['pending_ai_suggestions'] = app_finance_ai_bot_pending_suggestions($db, 20);
-        $context['data']['recent_ai_conversations'] = app_finance_ai_bot_recent_conversations($db, 10);
+        // Same fail-soft rationale as the statistics tab above: the AI bot
+        // tables may not be migrated yet on a given environment.
+        try {
+            $context['data']['pending_ai_suggestions'] = app_finance_ai_bot_pending_suggestions($db, 20);
+            $context['data']['recent_ai_conversations'] = app_finance_ai_bot_recent_conversations($db, 10);
+        } catch (RuntimeException $exception) {
+            $context['data']['pending_ai_suggestions'] = [];
+            $context['data']['recent_ai_conversations'] = [];
+        }
     }
 
     $context['data']['can_write'] = app_finance_actor_can_write($user);
