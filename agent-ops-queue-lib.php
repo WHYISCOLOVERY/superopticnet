@@ -58,6 +58,7 @@ require_once __DIR__ . '/communication-campaign-lib.php';
 require_once __DIR__ . '/noc-authorization-lib.php';
 require_once __DIR__ . '/ticket-resolution-lib.php';
 require_once __DIR__ . '/audit-log-lib.php';
+require_once __DIR__ . '/crew-proposal-lib.php';
 
 function app_agent_ops_queue_enabled(?PDO $db = null, array $actor = []): bool
 {
@@ -976,6 +977,7 @@ function app_agent_ops_queue_sources_registry(): array
         'messaging_failed_deliveries' => ['label' => 'Mesaj Mərkəzi: uğursuz göndərişlər', 'module' => 'messaging', 'builder' => 'app_agent_ops_queue_source_messaging_failed_deliveries'],
         'crm_inactive_customers' => ['label' => 'CRM: passiv müştəri təklifləri', 'module' => 'crm', 'builder' => 'app_agent_ops_queue_source_crm_inactive_customers'],
         'advisor_proposals' => ['label' => 'Məsləhətçi şurası təklifləri', 'module' => 'ai', 'builder' => 'app_agent_ops_queue_source_advisor_proposals'],
+        'crew_proposals' => ['label' => 'AI Komanda təklifləri', 'module' => 'ai', 'builder' => 'app_agent_ops_queue_source_crew_proposals'],
     ];
 }
 
