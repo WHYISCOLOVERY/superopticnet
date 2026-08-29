@@ -63,4 +63,31 @@ if ($resource === 'work-queue') {
     exit;
 }
 
+if ($resource === 'whatsapp-inbox') {
+    // Son gələn müştəri mesajları — yalnız whatsapp_monitor icazəli servis-hesab.
+    if (!app_portal_can_access_module($actor, 'whatsapp_monitor')) {
+        asuser_fail(403, 'module_denied');
+    }
+    $limit = min(50, max(1, (int) ($_GET['limit'] ?? 20)));
+    try {
+        $stmt = $db->prepare(
+            "SELECT id, chat_id, contact_name, sender_id, message_body, message_type,
+                    has_media, occurred_at
+               FROM whatsapp_monitor_messages
+              WHERE direction = 'inbound'
+           ORDER BY occurred_at DESC
+              LIMIT :lim"
+        );
+        $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        asuser_fail(500, 'whatsapp_unavailable');
+    }
+    echo json_encode(['ok' => true, 'as' => (string) ($actor['login'] ?? ''),
+        'resource' => 'whatsapp-inbox', 'count' => count($rows), 'rows' => $rows],
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 asuser_fail(404, 'unknown_resource');
