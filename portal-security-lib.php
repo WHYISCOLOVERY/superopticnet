@@ -4,19 +4,35 @@ declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/audit-log-lib.php';
 
+function app_portal_internal_login_client(): bool
+{
+    // Google reCAPTCHA is not reachable from some managed subscriber VLANs.
+    // This narrow exception applies only to direct RFC1918 clients; all login
+    // rate limits, CSRF and account lockouts remain in force.
+    $cidrs = preg_split('/\s*,\s*/', (string) app_setting(
+        'portal_internal_login_cidrs',
+        '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+    ), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    foreach ($cidrs as $cidr) {
+        if (app_ip_in_cidr(app_client_ip(), (string) $cidr)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function app_portal_human_verification_mode(): string
 {
-    // Production portal logins always use Google reCAPTCHA.  Do not fall back
-    // to the former arithmetic challenge if configuration is incomplete.
-    return 'google';
+    return app_portal_internal_login_client() ? 'internal_rate_limited' : 'google';
 }
 
 function app_portal_human_challenge(string $scope): array
 {
     $scope = preg_replace('/[^a-z0-9_-]+/i', '-', strtolower(trim($scope))) ?: 'portal';
+    $mode = app_portal_human_verification_mode();
     return [
-        'mode' => 'google',
-        'site_key' => app_config('recaptcha_site_key'),
+        'mode' => $mode,
+        'site_key' => $mode === 'google' ? app_config('recaptcha_site_key') : '',
         'scope' => $scope,
     ];
 }
@@ -27,6 +43,10 @@ function app_portal_human_verify(string $scope, array $input): array
         return ['ok' => false, 'reason' => 'honeypot_filled', 'mode' => 'google'];
     }
 
+    if (app_portal_internal_login_client()) {
+        return ['ok' => true, 'reason' => '', 'mode' => 'internal_rate_limited'];
+    }
+
     return app_portal_google_recaptcha_verify((string) ($input['g-recaptcha-response'] ?? ''));
 }
 
@@ -35,7 +55,11 @@ function app_portal_render_human_challenge(array $challenge): void
     ?>
     <div class="portal-human-check">
         <input class="portal-honeypot" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
-        <div class="g-recaptcha" data-sitekey="<?= e((string) ($challenge['site_key'] ?? '')); ?>"></div>
+        <?php if (($challenge['mode'] ?? '') === 'google'): ?>
+            <div class="g-recaptcha" data-sitekey="<?= e((string) ($challenge['site_key'] ?? '')); ?>"></div>
+        <?php else: ?>
+            <small>Daxili şəbəkə girişi: hesab və IP cəhd limiti aktivdir.</small>
+        <?php endif; ?>
     </div>
     <?php
 }
