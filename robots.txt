@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
+Disallow: /muraciet-gonder.php
 
 Sitemap: https://superoptic.net/sitemap.xml

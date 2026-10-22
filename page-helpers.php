@@ -16,6 +16,7 @@ function page_labels(): array
 {
     return [
         'az' => [
+            'skip' => 'Əsas məzmuna keç',
             'tariffs' => 'Tariflər',
             'services' => 'Xidmət',
             'coverage' => 'Əhatə',
@@ -124,13 +125,29 @@ function page_render_header(string $lang, string $title, string $description, st
     <title><?= e($title); ?></title>
     <meta name="description" content="<?= e($description); ?>">
     <meta name="robots" content="index,follow,max-image-preview:large">
+    <?php
+    $siteUrl = rtrim((string) app_config('site_url', 'https://superoptic.net'), '/');
+    $pagePath = strtok((string) ($_SERVER['REQUEST_URI'] ?? '/'), '?') ?: '/';
+    $pageBase = $siteUrl . $pagePath;
+    $pageAlt = static fn (string $l): string => $l === 'az' ? $pageBase : $pageBase . '?lang=' . $l;
+    ?>
+    <link rel="canonical" href="<?= e($pageBase . ($lang !== 'az' ? '?lang=' . $lang : '')); ?>">
+    <link rel="alternate" hreflang="az" href="<?= e($pageAlt('az')); ?>">
+    <link rel="alternate" hreflang="en" href="<?= e($pageAlt('en')); ?>">
+    <link rel="alternate" hreflang="ru" href="<?= e($pageAlt('ru')); ?>">
+    <link rel="alternate" hreflang="x-default" href="<?= e($pageAlt('az')); ?>">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Super Optik">
+    <meta property="og:title" content="<?= e($title); ?>">
+    <meta property="og:description" content="<?= e($description); ?>">
+    <meta property="og:url" content="<?= e($pageBase); ?>">
+    <meta property="og:image" content="<?= e($siteUrl . '/images/news-network-expansion.png'); ?>">
     <link rel="shortcut icon" href="images/favicon.png">
-    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
-    <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/fiber-site.css')); ?>">
     <script>try{var _t=localStorage.getItem('so-theme');if(_t)document.documentElement.setAttribute('data-theme',_t);}catch(e){}</script>
 </head>
 <body>
+    <a class="skip-link" href="#main"><?= e($labels['skip'] ?? 'Skip to content'); ?></a>
     <canvas id="fiber-bg" aria-hidden="true"></canvas>
     <canvas id="cursor-trail" aria-hidden="true"></canvas>
     <div class="fiber-veil" aria-hidden="true"></div>
@@ -265,4 +282,38 @@ function page_device_schedule(int $basePrice): array
         static fn (float $factor): int => (int) round($basePrice * $factor, 0, PHP_ROUND_HALF_UP),
         $factors
     );
+}
+
+/** Daxili səhifələr üçün sətir ikonları (fontawesome-lite yalnız yer tutucudur). */
+function page_icon(string $name, int $size = 24): string
+{
+    $paths = [
+        'handshake' => '<path d="m11 17 2 2a1 1 0 0 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 0 0 3-3l-3.9-3.9a3 3 0 0 0-4.2 0l-.5.5a2 2 0 0 1-2.8 0"/><path d="m21 3 1 11h-2M3 3 2 14l6.5 6.5a1 1 0 0 0 3-3"/><path d="M3 4h8"/>',
+        'shield' => '<path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3z"/><path d="m9 12 2 2 4-4"/>',
+        'eye' => '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+        'bolt' => '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
+    ];
+    $p = $paths[$name] ?? $paths['shield'];
+
+    return '<svg class="svgi" width="' . $size . '" height="' . $size . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $p . '</svg>';
+}
+
+/** Daxili səhifələrin sonunda qoşulma çağırışı. */
+function page_render_cta(string $lang): void
+{
+    $t = [
+        'az' => ['Qoşulmaq istəyirsiniz?', 'Ünvanı və telefonu yazın, komandamız texniki imkanı yoxlayıb sizinlə əlaqə saxlasın.', 'Müraciət et', 'Zəng et'],
+        'en' => ['Want to connect?', 'Leave your address and phone and our team will check availability and contact you.', 'Apply now', 'Call us'],
+        'ru' => ['Хотите подключиться?', 'Оставьте адрес и телефон, команда проверит возможность подключения и свяжется с вами.', 'Оставить заявку', 'Позвонить'],
+    ][$lang] ?? null;
+    $t ??= ['Qoşulmaq istəyirsiniz?', 'Ünvanı və telefonu yazın, komandamız texniki imkanı yoxlayıb sizinlə əlaqə saxlasın.', 'Müraciət et', 'Zəng et'];
+    ?>
+    <div class="cta-band">
+        <div><h2><?= e($t[0]); ?></h2><p><?= e($t[1]); ?></p></div>
+        <div class="cta-actions">
+            <a class="button button-primary" href="<?= e(page_url('index.php', $lang, 'connection-form')); ?>"><?= e($t[2]); ?></a>
+            <a class="button button-secondary" href="tel:+994125258811">+994 12 525 88 11</a>
+        </div>
+    </div>
+    <?php
 }

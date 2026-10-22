@@ -54,7 +54,7 @@ $page = $copy[$lang] ?? $copy['az'];
 
 page_render_header($lang, $page['title'], $page['description'], 'legal');
 ?>
-<main>
+<main id="main">
     <section class="section inner-page-hero">
         <div class="container inner-page-hero-content">
             <span class="eyebrow"><?= e($page['eyebrow']); ?></span>
@@ -65,6 +65,16 @@ page_render_header($lang, $page['title'], $page['description'], 'legal');
 
     <section class="section">
         <div class="container">
+            <?php $facts = [
+                'az' => [['1 gün', 'standart qoşulma hədəfi'], ['1000 Mb/s', 'qədər sürət'], ['7/24', 'texniki dəstək'], ['Dual-band', 'müasir avadanlıq']],
+                'en' => [['1 day', 'standard connection target'], ['1000 Mb/s', 'maximum speed'], ['24/7', 'technical support'], ['Dual-band', 'modern equipment']],
+                'ru' => [['1 день', 'целевой срок подключения'], ['1000 Мбит/с', 'максимальная скорость'], ['24/7', 'техническая поддержка'], ['Dual-band', 'современное оборудование']],
+            ][$lang] ?? []; ?>
+            <div class="quality-grid" style="margin-bottom:22px">
+                <?php foreach ($facts as $fact): ?>
+                    <div class="quality-card"><b><?= e($fact[0]); ?></b><span><?= e($fact[1]); ?></span></div>
+                <?php endforeach; ?>
+            </div>
             <div class="policy-card">
                 <ul class="policy-list">
                     <?php foreach ($page['items'] as $item): ?>
@@ -72,6 +82,7 @@ page_render_header($lang, $page['title'], $page['description'], 'legal');
                     <?php endforeach; ?>
                 </ul>
             </div>
+            <?php page_render_cta($lang); ?>
         </div>
     </section>
 </main>
