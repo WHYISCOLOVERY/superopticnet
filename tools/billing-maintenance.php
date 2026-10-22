@@ -18,6 +18,7 @@ $options = getopt('', [
     'sync-radius',
     'sync-limit::',
     'apply-balances',
+    'fast',
     'range::',
     'help',
 ]);
@@ -224,6 +225,7 @@ if (!in_array($channel, $allowedChannels, true)) {
 }
 $syncRadius = isset($options['sync-radius']);
 $applyBalances = isset($options['apply-balances']);
+$fast = isset($options['fast']);
 $syncLimit = max(0, min(5000, (int) ($options['sync-limit'] ?? 0)));
 $startedAt = app_db_now();
 $startedFloat = microtime(true);
@@ -293,8 +295,16 @@ if ($apply) {
         ];
     }
 
-    $result['countdown'] = app_billing_refresh_countdowns($limit, true);
-    $result['suspension'] = app_billing_process_due_suspensions();
+    // Fast mode is used by the frequent timer: payment credit and messages
+    // are handled without rewriting every customer record. Full countdown/
+    // suspension work remains available for the scheduled daily audit.
+    if (!$fast) {
+        $result['countdown'] = app_billing_refresh_countdowns($limit, true);
+        $result['suspension'] = app_billing_process_due_suspensions();
+    } else {
+        $result['countdown'] = ['checked' => 0, 'updated' => 0, 'expired' => 0, 'failed' => 0];
+        $result['suspension'] = ['suspended' => 0, 'failed' => 0];
+    }
 
     if ($syncRadius) {
         $result['radius_sync'] = app_billing_sync_radius_accounts($startCode, $endCode, $syncLimit);

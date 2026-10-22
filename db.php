@@ -5859,6 +5859,7 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             $assignedIp = '';
         }
         $ipAssignmentMode = strtolower(trim((string) ($service['ip_assignment_mode'] ?? $billing['ip_assignment_mode'] ?? 'manual')));
+        $legacyQosProfile = trim((string) ($service['legacy_radius_qos_profile'] ?? ($index === 0 ? ($billing['legacy_radius_qos_profile'] ?? '') : '')));
         $expiresAt = trim((string) ($service['expires_at'] ?? $billing['expires_at'] ?? ''));
         $serviceStatus = strtolower((string) ($service['status'] ?? $billing['status'] ?? $account['status'] ?? ''));
         $tariff = app_billing_tariff_for_plan($db, $plan, $serviceType);
@@ -5889,6 +5890,7 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             'tariff' => $tariff,
             'pool' => $pool,
             'pool_name' => $poolName,
+            'legacy_radius_qos_profile' => $legacyQosProfile,
             'assigned_ip' => $assignedIp,
             'nat_public_ip' => $natPublicIp,
             'static_ip' => $staticIp,
@@ -5915,6 +5917,7 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             $tariff = $row['tariff'];
             $pool = $row['pool'];
             $poolName = (string) $row['pool_name'];
+            $legacyQosProfile = (string) ($row['legacy_radius_qos_profile'] ?? '');
             $assignedIp = (string) $row['assigned_ip'];
             $natPublicIp = (string) $row['nat_public_ip'];
             $staticIp = (string) $row['static_ip'];
@@ -5930,9 +5933,10 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             }
 
             if ($active && ($password !== '' || $serviceType === 'ipoe')) {
-                $replyRows = [
-                    ['Service-Type', '=', 'Framed-User'],
-                ];
+                $replyRows = [];
+                if ($legacyQosProfile === '') {
+                    $replyRows[] = ['Service-Type', '=', 'Framed-User'];
+                }
 
                 if ($serviceType === 'ipoe') {
                     $ipoePassword = $password !== '' ? $password : 'ipoe';
@@ -5953,21 +5957,25 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
                     }
                 }
 
-                if ($serviceType === 'pppoe') {
+                if ($serviceType === 'pppoe' && $legacyQosProfile === '') {
                     $replyRows[] = ['Framed-Protocol', '=', 'PPP'];
                 }
                 if ($staticIp !== '') {
-                    $replyRows[] = ['Framed-IP-Address', '=', $staticIp];
-                    if (is_array($pool) && !empty($pool['netmask'])) {
+                    $replyRows[] = ['Framed-IP-Address', $legacyQosProfile !== '' ? ':=' : '=', $staticIp];
+                    if ($legacyQosProfile === '' && is_array($pool) && !empty($pool['netmask'])) {
                         $replyRows[] = ['Framed-IP-Netmask', '=', (string) $pool['netmask']];
                     }
                 } elseif ($assignedIp !== '') {
-                    $replyRows[] = ['Framed-IP-Address', '=', $assignedIp];
-                    if (is_array($pool) && !empty($pool['netmask'])) {
+                    $replyRows[] = ['Framed-IP-Address', $legacyQosProfile !== '' ? ':=' : '=', $assignedIp];
+                    if ($legacyQosProfile === '' && is_array($pool) && !empty($pool['netmask'])) {
                         $replyRows[] = ['Framed-IP-Netmask', '=', (string) $pool['netmask']];
                     }
                 }
-                if ($poolName !== '') {
+                if ($legacyQosProfile !== '') {
+                    $replyRows[] = ['Cisco-AVPair', '+=', 'ip:sub-qos-policy-in=' . $legacyQosProfile];
+                    $replyRows[] = ['Cisco-AVPair', '+=', 'ip:sub-qos-policy-out=' . $legacyQosProfile];
+                    $replyRows[] = ['Session-Timeout', ':=', '172800'];
+                } elseif ($poolName !== '') {
                     $replyRows[] = ['Framed-Pool', '=', $poolName];
                     $replyRows[] = ['Cisco-AVPair', '+=', 'ip:addr-pool=' . $poolName];
                 }
@@ -6261,7 +6269,7 @@ function app_billing_apply_available_balance(array $account, ?PDO $db = null): a
         $expiryTimestamp = $oldExpiresAt !== '' ? strtotime($oldExpiresAt) : false;
         // Stored credit must be charged only when a service is due.  Otherwise a
         // customer who prepaid ahead would lose a future month's credit early.
-        if ((int) ($current['is_active'] ?? 0) === 1 && $expiryTimestamp !== false && $expiryTimestamp > time()) {
+        if ((int) ($current['is_active'] ?? 0) === 1 && ($expiryTimestamp === false || $expiryTimestamp > time())) {
             $db->rollBack();
             return ['ok' => false, 'reason' => 'not_due', 'available' => $available, 'price' => $price];
         }
@@ -6406,10 +6414,20 @@ function app_billing_apply_customer_payment(
     }
 
     $requiredAmount = app_billing_required_payment_amount($account, $payload, $billing, $tariff);
-    $currentBalance = app_billing_parse_money_amount($billing['balance'] ?? 0);
-    $fullPayment = $resolvedAmount + 0.0001 >= $requiredAmount;
-    $remainingBalance = max(0.0, $currentBalance > 0 ? $currentBalance - $resolvedAmount : $requiredAmount - $resolvedAmount);
+    // Balance is prepaid credit. A new terminal payment must activate a due
+    // account immediately when combined credit covers the full monthly charge.
+    // Any surplus stays on the customer balance for the next billing cycle.
+    $currentBalance = max(0.0, app_billing_parse_money_amount($billing['balance'] ?? 0));
+    $creditedBalance = $currentBalance + $resolvedAmount;
     $oldExpiresAt = app_billing_payload_primary_expires_at($payload, $billing);
+    $expiryTimestamp = $oldExpiresAt !== '' ? strtotime($oldExpiresAt) : false;
+    $serviceDue = (int) ($account['is_active'] ?? 0) !== 1
+        || $expiryTimestamp === false
+        || $expiryTimestamp <= time();
+    $fullPayment = $serviceDue && $creditedBalance + 0.0001 >= $requiredAmount;
+    $remainingBalance = $fullPayment
+        ? max(0.0, $creditedBalance - $requiredAmount)
+        : $creditedBalance;
     $newExpiresAt = $fullPayment
         ? app_billing_resolve_next_expires_at($resolvedDays, $stableDueDay, $oldExpiresAt, time())
         : $oldExpiresAt;
@@ -6433,7 +6451,8 @@ function app_billing_apply_customer_payment(
         $billing['last_partial_payment_at'] = $createdAt !== null && strtotime($createdAt) !== false
             ? date('Y-m-d H:i:s', strtotime($createdAt))
             : date('Y-m-d H:i:s');
-        $billing['partial_payment_note'] = 'Qismen odenis qebul edildi; tam aktivlesme ucun qaliq odenilmelidir.';
+        $billing['last_balance_top_up_at'] = $createdAt !== null && strtotime($createdAt) !== false ? date('Y-m-d H:i:s', strtotime($createdAt)) : date('Y-m-d H:i:s');
+        unset($billing['partial_payment_note']);
     }
     $billing['default_days'] = app_billing_account_default_days($account, $billing, $tariff);
     if ($stableDueDay > 0) {
@@ -6468,7 +6487,7 @@ function app_billing_apply_customer_payment(
         'transaction_id' => $transactionId,
         'days_added' => $fullPayment ? $resolvedDays : 0,
         'expires_at' => $newExpiresAt,
-        'effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+        'effect' => 'credit_top_up',
         'borrowed_days_deducted' => $borrowedDaysDeducted,
     ];
     $payments = is_array($payload['payments'] ?? null) ? $payload['payments'] : [];
@@ -6482,7 +6501,7 @@ function app_billing_apply_customer_payment(
         'amount_source' => $amount > 0 ? 'custom' : 'monthly_total',
         'required_amount' => $requiredAmount,
         'remaining_balance' => $remainingBalance,
-        'payment_effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+        'payment_effect' => 'credit_top_up',
         'external_id' => $externalId !== '' ? $externalId : null,
         'provider_created_at' => $createdAtSql,
         'internet_amount' => app_billing_parse_money_amount($billing['internet_monthly_fee'] ?? 0),
@@ -6508,7 +6527,7 @@ function app_billing_apply_customer_payment(
         'transaction_id' => trim($transactionId),
         'external_id' => trim($externalId),
         'created_at' => $createdAtSql,
-        'effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+        'effect' => 'credit_top_up',
     ]);
     $existingOperation = app_billing_payment_operation_by_key($db, $idempotencyKey);
     if (is_array($existingOperation)) {
@@ -6556,7 +6575,7 @@ function app_billing_apply_customer_payment(
             'payment_method' => $method,
             'transaction_id' => $transactionId !== '' ? $transactionId : null,
             'external_id' => $externalId !== '' ? $externalId : null,
-            'payment_effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+            'payment_effect' => 'credit_top_up',
             'before_snapshot_json' => app_db_json_encode($beforeSnapshot),
         ]);
         $operationId = (int) $db->lastInsertId();
@@ -6574,7 +6593,7 @@ function app_billing_apply_customer_payment(
             'transaction_id' => $transactionId !== '' ? $transactionId : null,
             'note' => $fullPayment
                 ? ('Auto activate after payment: +' . $resolvedDays . ' days')
-                : ('Partial payment accepted; remaining balance ' . number_format($remainingBalance, 2, '.', '') . ' AZN'),
+                : ('Prepaid balance topped up; available credit ' . number_format($remainingBalance, 2, '.', '') . ' AZN'),
             'metadata_json' => app_db_json_encode($metadata),
             'created_at' => $createdAtSql,
         ]);

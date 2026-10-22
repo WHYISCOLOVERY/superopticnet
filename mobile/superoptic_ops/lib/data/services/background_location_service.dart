@@ -17,8 +17,8 @@ class BackgroundLocationService {
     await service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: onStart,
-        autoStart: false,
-        autoStartOnBoot: false,
+        autoStart: true,
+        autoStartOnBoot: true,
         isForegroundMode: true,
         initialNotificationTitle: 'SuperOptic Əməliyyat Növbəsi',
         initialNotificationContent: 'GPS xidməti aktivdir (Növbədəyəm)',
@@ -133,10 +133,13 @@ class BackgroundLocationService {
             error is DioException ? (error.response?.statusCode ?? 0) : 0;
         final permanentClientError =
             status >= 400 && status < 500 && status != 408 && status != 429;
-        if (status == 409) {
-          await SecureStorageService.setDutyTrackingEnabled(false);
-          timer.cancel();
-          service.stopSelf();
+        if (status == 409 && service is AndroidServiceInstance) {
+          // A temporary server-side duty-session mismatch must not silently
+          // disable tracking. Keep the foreground service alive and retry.
+          await service.setForegroundNotificationInfo(
+            title: 'Növbə yoxlanılır',
+            content: 'GPS aktivdir; növbə sessiyası ilə yenidən əlaqə qurulur.',
+          );
         }
         if (statusDio != null) {
           try {

@@ -24,6 +24,8 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
   bool _isLoading = true;
   List<dynamic> _fleet = [];
   Map<String, dynamic>? _selectedTechnician;
+  bool _mapReady = false;
+  bool _hasFittedFleet = false;
 
   // Default centered in Baku (lat: 40.409264, lng: 49.867092)
   final LatLng _center = const LatLng(40.409264, 49.867092);
@@ -51,10 +53,36 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
           _fleet = fleetList;
           _isLoading = false;
         });
+        if (_mapReady && !_hasFittedFleet) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _fitFleet());
+        }
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _fitFleet() {
+    final points = _fleet
+        .map(
+            (member) => member['location'] as Map<String, dynamic>? ?? const {})
+        .map((location) => LatLng(
+              (location['latitude'] as num?)?.toDouble() ?? 0,
+              (location['longitude'] as num?)?.toDouble() ?? 0,
+            ))
+        .where((point) => point.latitude != 0 && point.longitude != 0)
+        .toList();
+    if (!_mapReady || points.isEmpty) return;
+    _hasFittedFleet = true;
+    if (points.length == 1) {
+      _mapCtrl.move(points.first, 14);
+      return;
+    }
+    _mapCtrl.fitCamera(CameraFit.bounds(
+      bounds: LatLngBounds.fromPoints(points),
+      padding: const EdgeInsets.all(56),
+      maxZoom: 14,
+    ));
   }
 
   Future<void> _handleLogout() async {
@@ -138,6 +166,8 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
         return const Color(0xFF00BCD4); // Cyan
       case 'busy_working':
         return Colors.amber; // Amber
+      case 'stale_signal':
+        return const Color(0xFFFF7043);
       default:
         return Colors.grey;
     }
@@ -244,6 +274,10 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
       appBar: AppBar(
         title: Text('Canlı Əməliyyat Xəritəsi (${_fleet.length})'),
         actions: [
+          IconButton(
+              tooltip: 'Bütün əməkdaşları göstər',
+              icon: const Icon(Icons.center_focus_strong),
+              onPressed: _fitFleet),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchFleet),
           IconButton(icon: const Icon(Icons.logout), onPressed: _handleLogout),
         ],
@@ -256,6 +290,10 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
             options: MapOptions(
               initialCenter: _center,
               initialZoom: 12.0,
+              onMapReady: () {
+                _mapReady = true;
+                _fitFleet();
+              },
             ),
             children: [
               TileLayer(
