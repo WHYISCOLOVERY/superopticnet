@@ -23,3 +23,11 @@ DirectoryIndex index.php
     RewriteCond %{HTTP_HOST} ^(?:mgt\.superoptic\.net|superoptic\.net|www\.superoptic\.net)(?::[0-9]+)?$ [NC]
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 </IfModule>
+
+# Security headers: public site only
+<IfModule mod_headers.c>
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Header always set Cross-Origin-Opener-Policy "same-origin"
+    Header always set X-Permitted-Cross-Domain-Policies "none"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+</IfModule>
