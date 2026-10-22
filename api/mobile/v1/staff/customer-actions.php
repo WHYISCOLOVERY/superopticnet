@@ -14,9 +14,18 @@ header('Cache-Control: no-store');
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $payload = app_db_account_payload($row);
     $serviceType = strtolower((string) ($payload['billing']['service_type'] ?? $payload['internet_services'][0]['service_type'] ?? 'pppoe'));
+    $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
+    $primaryService = is_array($payload['internet_services'][0] ?? null) ? $payload['internet_services'][0] : [];
+    $pppoeUsername = (string) ($billing['pppoe_username'] ?? $primaryService['username'] ?? $row['subscriber_code'] ?? '');
+    $pppoePassword = (string) ($billing['pppoe_password'] ?? $primaryService['password'] ?? '');
+    try {
+        $pppoePassword = (string) (app_legacy_customer_secret_reveal(app_db(), (int) $row['id'], 'pppoe_password') ?? $pppoePassword);
+    } catch (Throwable) {
+        // The service payload is retained as a backward-compatible fallback.
+    }
     $tariffQuery = app_db()->prepare('SELECT id,name,monthly_fee FROM billing_tariffs WHERE status="active" AND service_type=? ORDER BY download_mbps,monthly_fee,name');
     $tariffQuery->execute([$serviceType]);
-    app_mobile_json_response(['login' => $row['login'], 'phone' => $row['phone'], 'billing' => array_intersect_key($payload['billing'] ?? [], array_flip(['tariff','stable_due_day','default_days','borrowed_days_pending','debt_raw'])), 'tariffs' => $tariffQuery->fetchAll(PDO::FETCH_ASSOC) ?: [], 'history' => array_slice(array_reverse($payload['customer_operator_history'] ?? []), 0, 20)]);
+    app_mobile_json_response(['login' => $row['login'], 'phone' => $row['phone'], 'pppoe_username' => $pppoeUsername, 'pppoe_password' => $pppoePassword, 'billing' => array_intersect_key($payload['billing'] ?? [], array_flip(['tariff','stable_due_day','default_days','borrowed_days_pending','debt_raw'])), 'tariffs' => $tariffQuery->fetchAll(PDO::FETCH_ASSOC) ?: [], 'history' => array_slice(array_reverse($payload['customer_operator_history'] ?? []), 0, 20)]);
 }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') app_mobile_json_response(null, 405, 'Metod dəstəklənmir.');
 if (($body['action'] ?? '') === 'reset_password') {

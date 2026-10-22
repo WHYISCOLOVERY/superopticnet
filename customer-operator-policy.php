@@ -25,7 +25,7 @@ function app_customer_operator_change(PDO $db, int $id, array $actor, array $inp
     $action = (string) ($input['action'] ?? '');
     $requestId = trim((string) ($input['request_id'] ?? ''));
     if (!preg_match('/^[a-zA-Z0-9_-]{16,80}$/', $requestId)) return ['ok' => false, 'error' => 'Sorğu identifikatoru etibarsızdır.'];
-    if (!in_array($action, ['phone', 'cycle', 'debt', 'gift_days', 'borrow_days', 'package'], true)) return ['ok' => false, 'error' => 'Əməliyyat tanınmır.'];
+    if (!in_array($action, ['phone', 'cycle', 'debt', 'gift_days', 'borrow_days', 'package', 'reset_pppoe_password'], true)) return ['ok' => false, 'error' => 'Əməliyyat tanınmır.'];
     app_audit_ensure_schema($db);
     try {
         $db->beginTransaction();
@@ -52,6 +52,29 @@ function app_customer_operator_change(PDO $db, int $id, array $actor, array $inp
             if (!preg_match('/^\+?[0-9]{9,15}$/', $phone)) throw new RuntimeException('Telefon nömrəsi düzgün deyil.');
             $profile['phone'] = $phone;
             $details = ['old_phone' => $row['phone'], 'new_phone' => $phone];
+        } elseif ($action === 'reset_pppoe_password') {
+            $username = trim((string) ($billing['pppoe_username'] ?? ($services[0]['username'] ?? $row['subscriber_code'] ?? '')));
+            if ($username === '') throw new RuntimeException('PPPoE istifadəçi adı tapılmadı.');
+            $password = trim((string) ($input['pppoe_password'] ?? ''));
+            $generated = $password === '';
+            if ($generated) {
+                $password = 'SO' . bin2hex(random_bytes(6));
+            }
+            if (mb_strlen($password) < 8 || mb_strlen($password) > 64) throw new RuntimeException('PPPoE şifrəsi 8–64 simvol olmalıdır.');
+            $billing['pppoe_username'] = $username;
+            $billing['pppoe_password'] = $password;
+            $updated = false;
+            foreach ($services as &$service) {
+                if (!$updated && strcasecmp((string) ($service['username'] ?? ''), $username) === 0) {
+                    $service['password'] = $password;
+                    $updated = true;
+                }
+            }
+            unset($service);
+            if (!$updated) {
+                $services[] = ['service_type' => 'pppoe', 'username' => $username, 'password' => $password];
+            }
+            $details = ['username' => $username, 'generated' => $generated];
         } elseif ($action === 'cycle') {
             $mode = (string) ($input['mode'] ?? '');
             $day = filter_var($input['day'] ?? 0, FILTER_VALIDATE_INT);
@@ -129,6 +152,13 @@ function app_customer_operator_change(PDO $db, int $id, array $actor, array $inp
         }
         $q = $db->prepare('UPDATE portal_accounts SET phone=?,plan=?,payload_json=?,updated_at=NOW() WHERE id=?');
         $q->execute([$phone, $action === 'package' ? (string) $tariff['name'] : (string) ($row['plan'] ?? ''), app_db_json_encode($payload), $id]);
+        if ($action === 'reset_pppoe_password') {
+            if (function_exists('app_legacy_customer_secret_store')) {
+                app_legacy_customer_secret_store($db, (int) $row['id'], 'pppoe_password', $password);
+            }
+            $row['payload_json'] = app_db_json_encode($payload);
+            if (!app_billing_sync_radius_account($row, null, $db)) throw new RuntimeException('RADIUS yenilənmədi; əməliyyat saxlanmadı.');
+        }
         if (in_array($action, ['gift_days', 'borrow_days', 'package'], true)) {
             if (in_array($action, ['gift_days', 'borrow_days'], true)) {
                 $q = $db->prepare('UPDATE portal_accounts SET status="Aktiv",is_active=1 WHERE id=?');
@@ -139,9 +169,15 @@ function app_customer_operator_change(PDO $db, int $id, array $actor, array $inp
             $row['payload_json'] = app_db_json_encode($payload);
             if (!app_billing_sync_radius_account($row, null, $db)) throw new RuntimeException('RADIUS yenilənmədi; əməliyyat saxlanmadı.');
         }
-        app_audit_record($db, ['module_key' => 'billing', 'operation_class' => 'customer_operator', 'action_type' => 'customer_' . $action, 'entity_type' => 'customer', 'entity_id' => (string) $id, 'status' => 'executed', 'actor_account_id' => (int) $actor['id'], 'actor_name' => $actor['full_name'] ?? '', 'summary' => 'Customer operator action', 'reason' => $reason, 'before' => $before, 'after' => $billing, 'payload' => $entry, 'sensitivity' => 'high']);
+        $auditBefore = $before;
+        $auditAfter = $billing;
+        if ($action === 'reset_pppoe_password') {
+            unset($auditBefore['pppoe_password'], $auditAfter['pppoe_password']);
+        }
+        app_audit_record($db, ['module_key' => 'billing', 'operation_class' => 'customer_operator', 'action_type' => 'customer_' . $action, 'entity_type' => 'customer', 'entity_id' => (string) $id, 'status' => 'executed', 'actor_account_id' => (int) $actor['id'], 'actor_name' => $actor['full_name'] ?? '', 'summary' => 'Customer operator action', 'reason' => $reason, 'before' => $auditBefore, 'after' => $auditAfter, 'payload' => $entry, 'sensitivity' => 'high']);
         $db->commit();
-        return ['ok' => true, 'message' => 'Əməliyyat saxlanıldı və tarixçəyə yazıldı.'];
+        return ['ok' => true, 'message' => 'Əməliyyat saxlanıldı və tarixçəyə yazıldı.']
+            + ($action === 'reset_pppoe_password' ? ['pppoe_password' => $password] : []);
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
         return ['ok' => false, 'error' => $e instanceof PDOException ? 'Əməliyyat saxlanmadı.' : $e->getMessage()];
