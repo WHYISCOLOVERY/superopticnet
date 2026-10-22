@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/lib/mobile-auth-lib.php';
 require_once dirname(__DIR__, 4) . '/mgs-integration-lib.php';
 require_once dirname(__DIR__, 4) . '/customer-operator-policy.php';
+require_once dirname(__DIR__, 4) . '/portal-security-lib.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     app_mobile_json_response(null, 405, 'Yalnız POST sorğuları dəstəklənir.');
@@ -54,9 +55,10 @@ $serviceDetails = [];
 $sessionTraffic = [];
 $customerId = (int) ($candidate['account_id'] ?? 0);
 $ticketHistory = [];
+$storedPppoePassword = '';
 if ($customerId > 0) {
     $serviceStmt = $db->prepare(
-        'SELECT p.plan,b.username,b.status,b.assigned_ip,b.static_ip,b.tariff_id
+        'SELECT p.plan,b.username,b.password,b.status,b.assigned_ip,b.static_ip,b.tariff_id
            FROM portal_accounts p
            LEFT JOIN billing_radius_services b ON b.account_id=p.id
           WHERE p.id=? ORDER BY b.id DESC LIMIT 1'
@@ -70,6 +72,14 @@ if ($customerId > 0) {
         );
         $sessionStmt->execute([(string) $serviceDetails['username']]);
         $sessionTraffic = $sessionStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
+    try {
+        $storedPppoePassword = (string) (app_legacy_customer_secret_reveal($db, $customerId, 'pppoe_password') ?? '');
+    } catch (Throwable) {
+        $storedPppoePassword = '';
+    }
+    if ($storedPppoePassword === '') {
+        $storedPppoePassword = (string) ($serviceDetails['password'] ?? '');
     }
     $historyStmt = $db->prepare(
         "SELECT id,ticket_no,subject,message,status,opened_at,resolved_at,resolution_reason,resolution_note,
@@ -119,6 +129,7 @@ app_mobile_json_response([
             true
         ),
         'pppoe_username' => (string) ($serviceDetails['username'] ?? ''),
+        'pppoe_password' => $storedPppoePassword,
         'plan' => (string) ($serviceDetails['plan'] ?? $candidate['plan'] ?? ''),
         'service_status' => (string) ($serviceDetails['status'] ?? ''),
         'session_ip' => (string) ($sessionTraffic['framedipaddress'] ?? $serviceDetails['assigned_ip'] ?? $serviceDetails['static_ip'] ?? ''),
