@@ -5140,5 +5140,6 @@ $legacyModuleMap = app_stage3_filter_workspace_cards($legacyModuleMap, $user, $d
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
     <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
     <script src="<?= e(app_asset('script/barcode-scan.js')); ?>" defer></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>
