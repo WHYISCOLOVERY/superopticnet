@@ -1528,9 +1528,16 @@ function app_copilot_agent_handle_message(string $text, array $actor = [], ?PDO 
         ];
     }
 
-    $modemReply = app_mgs_build_modem_search_reply($text, true, $db, $actor);
-    if (!empty($modemReply['ok'])) {
-        return $modemReply;
+    $modemQueries = [$text];
+    if (preg_match_all('/(?:[0-9A-Fa-f]{2}[:\-.]){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}|\b[A-Za-z]{2,5}[0-9A-Fa-f]{6,}\b|\b[0-9A-Fa-f]{12}\b/', $text, $tokenMatches) > 0) {
+        $modemQueries = array_merge(array_values(array_unique($tokenMatches[0])), $modemQueries);
+    }
+    $modemReply = ['ok' => false, 'reason' => 'not_found'];
+    foreach ($modemQueries as $modemQuery) {
+        $modemReply = app_mgs_build_modem_search_reply((string) $modemQuery, true, $db, $actor);
+        if (!empty($modemReply['ok'])) {
+            return $modemReply;
+        }
     }
 
     // On-premise LLM first (local Ollama/OpenAI-compatible runtime). Only falls

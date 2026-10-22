@@ -34,5 +34,6 @@ $title = (string) (($aiContext['sections'] ?? [])[$aiSection] ?? 'AI');
 <main class="portal-layout"><?php require __DIR__ . '/views/ai/module.php'; ?></main>
 <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
 <script src="<?= e(app_asset('script/ai-center.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>
