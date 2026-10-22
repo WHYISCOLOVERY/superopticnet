@@ -79,6 +79,28 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ? 'Cihaz yaradildi ve discovery/probe axini ucun queue-ya yazildi.'
                 : 'Cihaz elave olunmadi: ' . (string) ($result['error'] ?? 'service cavabi yoxdur'),
         ];
+    } elseif ($action === 'link_ont') {
+        $clean = static fn (string $key): string => ($value = clean_text((string) ($_POST[$key] ?? ''))) === '-' ? '' : $value;
+        $linkResult = app_mgs_link_ont_to_customer(
+            clean_text((string) ($_POST['subscriber_code'] ?? '')),
+            [
+                'serial' => $clean('ont_serial'),
+                'mac' => $clean('ont_mac'),
+                'olt' => $clean('olt'),
+                'pon' => $clean('pon'),
+                'ont_id' => $clean('ont_id'),
+            ],
+            $user,
+            (string) ($_POST['force'] ?? '') === '1',
+            $db
+        );
+        if (!empty($linkResult['ok'])) {
+            $flash = ['type' => 'success', 'message' => 'ONT musteriye baglandi: ' . (string) ($linkResult['full_name'] ?? '')];
+        } elseif ((string) ($linkResult['reason'] ?? '') === 'already_linked') {
+            $flash = ['type' => 'error', 'message' => 'Bu SN artiq ' . (string) ($linkResult['other_subscriber_code'] ?? '') . ' (' . (string) ($linkResult['other_name'] ?? '') . ') musterisine baglidir.'];
+        } else {
+            $flash = ['type' => 'error', 'message' => 'ONT baglanmadi: ' . (string) ($linkResult['reason'] ?? 'unknown')];
+        }
     } elseif ($action === 'set_management_path') {
         $enabled = (string) ($_POST['enabled'] ?? '0') === '1';
         app_mgs_set_runtime_setting('monitor_management_vlan_connected', $enabled ? '1' : '0', $user);
@@ -1150,6 +1172,7 @@ if ($needsDeviceRows) {
         .monitor-link-maintenance{stroke:#f59e0b}
         .monitor-link-unknown{stroke:#94a3b8}
         .native-monitor-board.has-save-error::after{content:'Yerlesim serverde saxlanmadi (yalniz bu brauzerde saxlanir)';position:absolute;right:18px;top:18px;padding:6px 10px;border-radius:10px;background:#fee2e2;color:#991b1b;font-size:.78rem;font-weight:800;z-index:7}
+        .noc-link-ont-form{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px}.noc-link-ont-form input[type=text]{min-height:42px;min-width:180px;padding:0 12px;border:1px solid rgba(148,163,184,.4);border-radius:12px}
         .noc-status-strip{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 4px}.noc-status-chip{display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;font-size:.84rem;font-weight:800;border:1px solid rgba(148,163,184,.3);background:#fff;color:#10233f}.noc-status-chip.is-ok{border-color:rgba(34,197,94,.4);background:#f0fdf4;color:#166534}.noc-status-chip.is-warn{border-color:rgba(245,158,11,.5);background:#fffbeb;color:#92400e}
         .monitor-summary{position:absolute;z-index:6;right:18px;top:18px;display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:12px;background:#1e293b;color:#f8fafc;font-size:.82rem}
         .monitor-hub-native{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:260px;min-height:150px;display:grid;place-content:center;gap:8px;padding:20px;border-radius:18px;background:#1e293b;color:#f8fafc;text-align:center;box-shadow:0 20px 40px rgba(15,23,42,.25)}
@@ -1861,6 +1884,22 @@ if ($needsDeviceRows) {
                         <pre>MODEM AXTARIS NETICESI
 Sorgu: <?= e($ontQuery); ?>
 Netice: <?= e((string) ($modemBotPreview['text'] ?? ($modemBotPreview['reason'] ?? 'not_found'))); ?></pre>
+                    <?php endif; ?>
+                    <?php $linkCandidate = is_array($modemBotPreview['candidate'] ?? null) ? $modemBotPreview['candidate'] : []; ?>
+                    <?php if (!empty($modemBotPreview['ok']) && (int) ($linkCandidate['account_id'] ?? 0) === 0 && trim((string) ($linkCandidate['serial'] ?? '')) !== ''): ?>
+                        <form method="post" class="portal-inline-form noc-link-ont-form">
+                            <?= app_csrf_field(); ?>
+                            <input type="hidden" name="action" value="link_ont">
+                            <input type="hidden" name="ont_q" value="<?= e($ontQuery); ?>">
+                            <input type="hidden" name="ont_serial" value="<?= e((string) $linkCandidate['serial']); ?>">
+                            <input type="hidden" name="olt" value="<?= e((string) ($linkCandidate['olt'] ?? '')); ?>">
+                            <input type="hidden" name="pon" value="<?= e((string) ($linkCandidate['pon'] ?? '')); ?>">
+                            <input type="hidden" name="ont_id" value="<?= e((string) ($linkCandidate['ont_id'] ?? '')); ?>">
+                            <strong>Bu modem hec bir musteriye bagli deyil</strong>
+                            <input type="text" name="subscriber_code" placeholder="Musteri kodu" required>
+                            <input type="text" name="ont_mac" placeholder="MAC (istege bagli)">
+                            <button type="submit" class="portal-primary-btn">Musteriye bagla</button>
+                        </form>
                     <?php endif; ?>
                 </article>
             <?php endif; ?>

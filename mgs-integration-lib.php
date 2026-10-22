@@ -6204,6 +6204,9 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
     }
 
     $liveOnt = is_array($live['ont'] ?? null) ? $live['ont'] : [];
+    if ($liveOnt !== [] && (int) ($candidate['account_id'] ?? 0) > 0) {
+        app_mgs_store_live_ont_snapshot((int) $candidate['account_id'], $candidate, $liveOnt, $db);
+    }
     $ontRx = (string) (($liveOnt['ont_rx'] ?? '') !== '' ? $liveOnt['ont_rx'] : ($candidate['ont_rx'] ?? '-'));
     $ontTx = (string) (($liveOnt['ont_tx'] ?? '') !== '' ? $liveOnt['ont_tx'] : ($candidate['ont_tx'] ?? '-'));
     $oltRx = (string) (($liveOnt['olt_rx'] ?? '') !== '' ? $liveOnt['olt_rx'] : ($candidate['olt_rx'] ?? '-'));
@@ -9416,4 +9419,160 @@ function app_mgs_copilot_context(?PDO $db = null): array
         ],
         'next_safe_actions' => $safeActions,
     ];
+}
+
+
+function app_mgs_ont_identity_key(string $value): string
+{
+    return strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', $value));
+}
+
+function app_mgs_ont_profile_matches(array $profile, array $ont): bool
+{
+    $serialA = app_mgs_ont_identity_key((string) ($profile['serial'] ?? $profile['sn'] ?? ''));
+    $serialB = app_mgs_ont_identity_key((string) ($ont['serial'] ?? ''));
+    if ($serialA !== '' && $serialB !== '' && $serialA === $serialB) {
+        return true;
+    }
+    $macA = app_mgs_ont_identity_key((string) ($profile['mac'] ?? ''));
+    $macB = app_mgs_ont_identity_key((string) ($ont['mac'] ?? ''));
+    if ($macA !== '' && $macB !== '' && $macA === $macB) {
+        return true;
+    }
+    $locationB = trim((string) ($ont['olt'] ?? '')) . '|' . trim((string) ($ont['pon'] ?? '')) . '|' . trim((string) ($ont['ont_id'] ?? ''));
+    $locationA = trim((string) ($profile['olt'] ?? '')) . '|' . trim((string) ($profile['pon'] ?? '')) . '|' . trim((string) ($profile['ont_id'] ?? ''));
+
+    return $locationB !== '||' && $locationA === $locationB && trim((string) ($ont['olt'] ?? '')) !== '';
+}
+
+/**
+ * Bind an ONT found on an OLT (SN / MAC / OLT-PON-ONT) to a customer so later
+ * searches show whose modem it is. Refuses to silently move an SN between customers.
+ */
+function app_mgs_link_ont_to_customer(string $subscriberCode, array $ont, array $actor, bool $force = false, ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    $subscriberCode = trim($subscriberCode);
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    if ($subscriberCode === '') {
+        return ['ok' => false, 'reason' => 'subscriber_code_required'];
+    }
+    $serial = trim((string) ($ont['serial'] ?? ''));
+    $mac = trim((string) ($ont['mac'] ?? ''));
+    if ($serial === '' && $mac === '' && trim((string) ($ont['olt'] ?? '')) === '') {
+        return ['ok' => false, 'reason' => 'ont_identity_required'];
+    }
+
+    $statement = $db->prepare('SELECT * FROM portal_accounts WHERE subscriber_code = :code LIMIT 1');
+    $statement->execute(['code' => $subscriberCode]);
+    $account = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($account)) {
+        return ['ok' => false, 'reason' => 'customer_not_found'];
+    }
+
+    $serialKey = app_mgs_ont_identity_key($serial);
+    if (!$force && strlen($serialKey) >= 6) {
+        $dupe = $db->prepare('SELECT subscriber_code, full_name FROM portal_accounts WHERE id <> :id AND payload_json LIKE :needle LIMIT 1');
+        $dupe->execute(['id' => (int) $account['id'], 'needle' => '%' . $serial . '%']);
+        $other = $dupe->fetch(PDO::FETCH_ASSOC);
+        if (is_array($other)) {
+            return [
+                'ok' => false,
+                'reason' => 'already_linked',
+                'other_subscriber_code' => (string) ($other['subscriber_code'] ?? ''),
+                'other_name' => (string) ($other['full_name'] ?? ''),
+            ];
+        }
+    }
+
+    $payload = app_db_account_payload($account);
+    $profiles = is_array($payload['ont_profiles'] ?? null) ? array_values(array_filter($payload['ont_profiles'], 'is_array')) : [];
+    $entry = [
+        'olt' => trim((string) ($ont['olt'] ?? '')),
+        'pon' => trim((string) ($ont['pon'] ?? '')),
+        'ont_id' => trim((string) ($ont['ont_id'] ?? '')),
+        'serial' => $serial,
+        'mac' => $mac,
+        'status' => trim((string) ($ont['status'] ?? 'linked')),
+        'linked_at' => date('Y-m-d H:i:s'),
+        'linked_by' => clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system')),
+    ];
+    $replaced = false;
+    foreach ($profiles as $index => $profile) {
+        if (app_mgs_ont_profile_matches($profile, $ont)) {
+            $profiles[$index] = array_merge($profile, array_filter($entry, static fn ($value): bool => $value !== ''));
+            $replaced = true;
+            break;
+        }
+    }
+    if (!$replaced) {
+        $profiles[] = $entry;
+    }
+    $payload['ont_profiles'] = array_values($profiles);
+
+    $update = $db->prepare('UPDATE portal_accounts SET payload_json = :payload, updated_at = NOW() WHERE id = :id');
+    $ok = $update->execute(['payload' => app_db_json_encode($payload), 'id' => (int) $account['id']]);
+
+    app_mgs_record_operation_action([
+        'action_type' => 'ont_link_customer',
+        'entity_type' => 'customer',
+        'entity_id' => $subscriberCode,
+        'status' => $ok ? 'executed' : 'failed',
+        'actor' => $actor,
+        'summary' => 'ONT ' . ($serial !== '' ? $serial : $mac) . ' bagli: ' . $subscriberCode,
+        'payload' => ['ont' => $entry, 'forced' => $force],
+    ]);
+
+    return [
+        'ok' => $ok,
+        'reason' => $ok ? '' : 'update_failed',
+        'account_id' => (int) $account['id'],
+        'full_name' => (string) ($account['full_name'] ?? ''),
+    ];
+}
+
+/** Persist the last live optical readings on the customer's stored ONT profile. */
+function app_mgs_store_live_ont_snapshot(int $accountId, array $candidate, array $liveOnt, ?PDO $db = null): bool
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $accountId <= 0 || $liveOnt === []) {
+        return false;
+    }
+    $statement = $db->prepare('SELECT * FROM portal_accounts WHERE id = :id LIMIT 1');
+    $statement->execute(['id' => $accountId]);
+    $account = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($account)) {
+        return false;
+    }
+    $payload = app_db_account_payload($account);
+    $profiles = is_array($payload['ont_profiles'] ?? null) ? array_values(array_filter($payload['ont_profiles'], 'is_array')) : [];
+    $fields = ['temperature', 'ont_rx', 'ont_tx', 'olt_rx', 'olt_tx', 'voltage', 'bias_current', 'status'];
+    $live = [];
+    foreach ($fields as $field) {
+        $value = trim((string) ($liveOnt[$field] ?? ''));
+        if ($value !== '' && $value !== '-') {
+            $live[$field] = $value;
+        }
+    }
+    if ($live === []) {
+        return false;
+    }
+    $live['last_live_at'] = date('Y-m-d H:i:s');
+    $touched = false;
+    foreach ($profiles as $index => $profile) {
+        if (app_mgs_ont_profile_matches($profile, $candidate)) {
+            $profiles[$index] = array_merge($profile, $live);
+            $touched = true;
+            break;
+        }
+    }
+    if (!$touched) {
+        return false;
+    }
+    $payload['ont_profiles'] = $profiles;
+    $update = $db->prepare('UPDATE portal_accounts SET payload_json = :payload WHERE id = :id');
+
+    return $update->execute(['payload' => app_db_json_encode($payload), 'id' => $accountId]);
 }

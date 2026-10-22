@@ -408,6 +408,13 @@ function app_csrf_token(): string
     return $_SESSION['csrf_token'];
 }
 
+if (!function_exists('app_csrf_field')) {
+    function app_csrf_field(): string
+    {
+        return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars(app_csrf_token(), ENT_QUOTES, 'UTF-8') . '">';
+    }
+}
+
 function app_verify_csrf(?string $token): bool
 {
     app_session_boot();
