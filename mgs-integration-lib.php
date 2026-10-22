@@ -6030,18 +6030,26 @@ function app_mgs_parse_hsgq_ont_info_all_rows(string $text): array
     return $rows;
 }
 
-function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8): ?array
+function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8, ?string &$reason = null): ?array
 {
+    $reason = null;
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db) || !app_mgs_management_path_ready()) {
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        $reason = 'db_unavailable';
+        return null;
+    }
+    if (!app_mgs_management_path_ready()) {
+        $reason = 'management_path_down';
         return null;
     }
 
     $query = trim($query);
     if ($query === '') {
+        $reason = 'empty_query';
         return null;
     }
     $needle = app_mgs_search_text_lower($query);
+    $needleCompact = preg_replace('/[^a-z0-9]/', '', $needle) ?? '';
 
     $statement = $db->query(
         'SELECT *
@@ -6052,6 +6060,12 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
           ORDER BY id'
     );
     $devices = $statement !== false ? ($statement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    if ($devices === []) {
+        $reason = 'no_olt_profile';
+        return null;
+    }
+    $credentialed = 0;
+    $reachable = 0;
     foreach ($devices as $device) {
         if (!is_array($device)) {
             continue;
@@ -6060,6 +6074,7 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
         if (trim((string) ($access['ssh_username'] ?? '')) === '' || (string) ($access['ssh_password'] ?? '') === '') {
             continue;
         }
+        $credentialed++;
         for ($pon = 1; $pon <= max(1, $maxPon); $pon++) {
             $run = app_mgs_hsgq_exec_commands(
                 (string) ($device['ip_address'] ?? ''),
@@ -6072,9 +6087,12 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
             if (empty($run['ok'])) {
                 continue;
             }
+            $reachable++;
             $table = (string) (($run['outputs']['show ont-info all'] ?? ''));
             foreach (app_mgs_parse_hsgq_ont_info_all_rows($table) as $row) {
-                if (app_mgs_search_text_matches($needle, [$row['serial'] ?? '', $row['ont_name'] ?? '', $row['line'] ?? '', $row['pon'] . '/' . $row['ont_id']])) {
+                $compactSerial = preg_replace('/[^a-z0-9]/', '', app_mgs_search_text_lower((string) ($row['serial'] ?? ''))) ?? '';
+                $serialHit = $needleCompact !== '' && strlen($needleCompact) >= 6 && $compactSerial !== '' && str_contains($compactSerial, $needleCompact);
+                if ($serialHit || app_mgs_search_text_matches($needle, [$row['serial'] ?? '', $row['ont_name'] ?? '', $row['line'] ?? '', $row['pon'] . '/' . $row['ont_id']])) {
                     $snapshot = app_mgs_hsgq_live_ont_snapshot($device, (string) ($row['pon'] ?? ''), (string) ($row['ont_id'] ?? ''), $db);
                     if (!empty($snapshot['ok'])) {
                         $snapshot['live_lookup'] = $row;
@@ -6085,7 +6103,22 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
         }
     }
 
+    $reason = $credentialed === 0 ? 'no_ssh_credentials' : ($reachable === 0 ? 'olt_unreachable' : 'not_on_olt');
+
     return null;
+}
+
+function app_mgs_live_lookup_reason_text(string $reason): string
+{
+    return match ($reason) {
+        'management_path_down' => 'OLT-e canli sorgu bagli: idareetme yolu (VLAN 550) sistemde "qosulub" kimi isharelenmeyib. NOC > Idareetme yolu bolmesinden aktiv edin.',
+        'no_olt_profile' => 'Monitorinq aktiv HSGQ OLT profili tapilmadi.',
+        'no_ssh_credentials' => 'OLT profillerinde SSH istifadeci/parol yoxdur.',
+        'olt_unreachable' => 'OLT-lere SSH ile qosulmaq alinmadi (IP, port ve ya parolu yoxlayin).',
+        'not_on_olt' => 'OLT-lerde bu SN/ad tapilmadi. MAC ile axtaris yalniz bazadaki melumata gore isleyir.',
+        'db_unavailable' => 'Baza hazir deyil.',
+        default => '',
+    };
 }
 
 function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true, ?PDO $db = null): array
@@ -6103,9 +6136,16 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
     $candidates = app_mgs_modem_search_candidates($query, 3, $db);
     $liveOnly = null;
     if ($candidates === [] && $preferLive) {
-        $liveOnly = app_mgs_hsgq_live_find_ont_by_query($query, $db);
+        $liveFailReason = null;
+        $liveOnly = app_mgs_hsgq_live_find_ont_by_query($query, $db, 8, $liveFailReason);
         if ($liveOnly === null) {
-            return ['ok' => false, 'reason' => 'not_found'];
+            $hint = app_mgs_live_lookup_reason_text((string) $liveFailReason);
+            return [
+                'ok' => false,
+                'reason' => 'not_found',
+                'live_reason' => (string) $liveFailReason,
+                'text' => 'Bazada tapilmadi.' . ($hint !== '' ? ' ' . $hint : ''),
+            ];
         }
         $candidate = [
             'account_id' => 0,

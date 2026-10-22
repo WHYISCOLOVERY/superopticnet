@@ -1813,7 +1813,7 @@ if ($needsDeviceRows) {
                     <?php else: ?>
                         <pre>MODEM AXTARIS NETICESI
 Sorgu: <?= e($ontQuery); ?>
-Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
+Netice: <?= e((string) ($modemBotPreview['text'] ?? ($modemBotPreview['reason'] ?? 'not_found'))); ?></pre>
                     <?php endif; ?>
                 </article>
             <?php endif; ?>
@@ -2242,5 +2242,6 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
     })();
     </script>
     <script src="<?= e(app_asset('script/portal.js')); ?>" defer></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

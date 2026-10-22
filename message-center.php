@@ -1186,11 +1186,12 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     </div>
                     <div class="portal-form-row">
                         <label for="singleTemplate">Sablon</label>
-                        <select id="singleTemplate" name="template_code" required>
+                        <select id="singleTemplate" data-template-select name="template_code" required>
                             <?php foreach ($templates as $template): ?>
-                                <option value="<?= e((string) $template['code']); ?>"><?= e((string) $template['title']); ?> / <?= e((string) $template['category']); ?></option>
+                                <option value="<?= e((string) $template['code']); ?>" data-template-body="<?= e((string) $template['body']); ?>"><?= e((string) $template['title']); ?> / <?= e((string) $template['category']); ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <div class="message-template-preview" data-template-preview aria-live="polite" hidden><strong>Sablon metni</strong><p></p></div>
                     </div>
                     <div class="portal-form-row">
                         <label for="singleMessage">Ferdi metn (bos qalarsa sablon gonderilir)</label>
@@ -1272,11 +1273,12 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
                     <div class="portal-form-row portal-grid-slim">
                         <div>
                             <label for="groupTemplate">Sablon</label>
-                            <select id="groupTemplate" name="template_code" required>
+                            <select id="groupTemplate" data-template-select name="template_code" required>
                                 <?php foreach ($templates as $template): ?>
-                                    <option value="<?= e((string) $template['code']); ?>"><?= e((string) $template['title']); ?></option>
+                                    <option value="<?= e((string) $template['code']); ?>" data-template-body="<?= e((string) $template['body']); ?>"><?= e((string) $template['title']); ?></option>
                                 <?php endforeach; ?>
                             </select>
+                        <div class="message-template-preview" data-template-preview aria-live="polite" hidden><strong>Sablon metni</strong><p></p></div>
                         </div>
                         <div>
                             <label for="groupChannel">Kanal</label>
@@ -1457,5 +1459,6 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
     <script src="<?= e(app_asset('script/message-center.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

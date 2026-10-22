@@ -26,6 +26,14 @@ $moduleNavLinkAttribute = in_array((string) ($moduleNavLinkAttribute ?? ''), $al
             }
         }
         ?>
+        <?php if (count($links) === 1): ?>
+            <?php $only = $links[0]; $onlyKey = (string) ($only['key'] ?? ''); ?>
+            <a class="billing-nav-direct<?= $isActiveGroup ? ' is-active-group' : ''; ?>" href="<?= e((string) ($only['href'] ?? '#')); ?>" data-module-section="<?= e($onlyKey); ?>"<?= $moduleNavLinkAttribute !== '' ? ' ' . $moduleNavLinkAttribute : ''; ?><?= $isActiveGroup ? ' aria-current="page"' : ''; ?>>
+                <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
+                <span><?= e((string) ($group['label'] ?? $only['label'] ?? 'Bolme')); ?></span>
+            </a>
+            <?php continue; ?>
+        <?php endif; ?>
         <details class="billing-nav-group<?= $isActiveGroup ? ' is-active-group' : ''; ?>" name="<?= e($moduleNavName); ?>" data-module-nav-group>
             <summary class="billing-nav-title">
                 <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>

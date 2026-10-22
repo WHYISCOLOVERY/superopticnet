@@ -727,5 +727,6 @@ $viewHref = static function (string $targetView) use ($viewBaseParams): string {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

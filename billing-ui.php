@@ -459,6 +459,13 @@ function billing_render_header(string $title, string $active, string $lang): voi
                 }
             }
             ?>
+            <?php if (count($links) === 1): ?>
+                <a class="billing-nav-direct<?= $isOpen ? ' is-active-group' : ''; ?>" href="<?= e(billing_nav_link_href($links[0])); ?>"<?= $isOpen ? ' aria-current="page"' : ''; ?>>
+                    <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
+                    <span><?= e(billing_nav_group_label((string) $groupTitle, $group)); ?></span>
+                </a>
+                <?php continue; ?>
+            <?php endif; ?>
             <details class="billing-nav-group<?= $isOpen ? ' is-active-group' : ''; ?>" name="billing-nav" data-module-nav-group>
                 <summary class="billing-nav-title">
                     <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>

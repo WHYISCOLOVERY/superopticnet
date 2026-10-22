@@ -195,3 +195,12 @@ Status: `DONE`
 - İstifadəçiyə görünən `case`, `ticket` və `Screen Wall` terminləri monitorinq qeydi, CRM müraciəti və canlı monitor ifadələri ilə sadələşdirildi; daxili action, field, DB və URL dəyərləri qorundu.
 - Codex inteqrasiya baxışında radius 8px portal standartına uyğunlaşdırıldı.
 - Codex Playwright ilə əvvəlki chat/QR ssenariləri daxil olmaqla `22/22` desktop və mobil vizual yoxlamanı keçirdi; overflow və console xətası yoxdur.
+
+## UX / Superpilot / modem axtarisi duzelisleri (istifadecinin birbasa tapsirigi)
+
+- Superpilot widget-i yalniz billing-ui ve admin-users sehifelerinde idi; indi butun emekdas sehifelerinde (NOC, mesaj merkezi, CRM, RADIUS, portal ve s.) gorunur. Endpoint yolu SCRIPT_NAME-e gore hesablanir, JSON olmayan cavab/401 aydin gosterilir, Enter ile gonderilir.
+- Superpilot SN/MAC tokenlerini cumleden ayirib OLT axtarisina verir.
+- OLT canli axtarisi: sebebler qaytarilir (VLAN 550 yolu isharelenmeyib, SSH melumati yox, OLT erisilmez, OLT-de tapilmadi); NOC preview-da "not_found" evezine bu sebeb yazilir. SN uygunlasdirilmis (tire/boslug/registr) uygunlasma ile axtarilir.
+- Tek linkli menyu qruplari acilan menyu evezine birbasa link olur (iki klik -> bir klik).
+- Mesaj merkezinde sablon secende metn onizlemesi (ferdi ve qrup).
+- Yoxlama: php -l, message-center-ui-contract-smoke, subsequent-module-shell-smoke, billing-nav-layout-smoke kecdi; DB olmadigi ucun canli OLT/Superpilot testi aparilmayib.

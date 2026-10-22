@@ -224,5 +224,6 @@ radtest 1100000 UCuvsbLA2b 127.0.0.1 0 menim_gizli_acarim123
 radtest 1200000 any-test-password 127.0.0.1 0 menim_gizli_acarim123</code></pre>
         </section>
     </main>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

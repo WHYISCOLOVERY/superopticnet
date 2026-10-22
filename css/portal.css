@@ -4132,3 +4132,40 @@ body.admin-modal-open .billing-copilot-widget {
         grid-template-columns: 1fr !important;
     }
 }
+
+
+/* Single-link nav groups render as direct links (no dropdown, one click). */
+.billing-nav-direct {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--portal-line);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: var(--portal-shadow-soft);
+    color: var(--portal-text);
+    font-size: 0.86rem;
+    font-weight: 900;
+    text-decoration: none;
+}
+
+.billing-nav-direct span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.billing-nav-direct:hover,
+.billing-nav-direct:focus-visible,
+.billing-nav-direct.is-active-group {
+    border-color: rgba(11, 123, 135, 0.34);
+    background: rgba(255, 255, 255, 0.98);
+}
+
+.billing-nav-direct:focus-visible {
+    outline: 3px solid rgba(11, 123, 135, 0.35);
+    outline-offset: 2px;
+}

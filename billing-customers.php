@@ -1457,5 +1457,6 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         <?php billing_customer_perf_mark(true, $billingCustomerPerfMarks, 'render_done', $billingCustomerPerfStart); ?>
         <?php file_put_contents('php://stderr', json_encode(['billing_customers_perf' => $billingCustomerPerfMarks], JSON_UNESCAPED_UNICODE) . PHP_EOL); ?>
     <?php endif; ?>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>
