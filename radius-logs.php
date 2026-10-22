@@ -72,17 +72,17 @@ if ($db instanceof PDO) {
     $statement->execute($periodParams);
     $stats['period_reject'] = (int) $statement->fetchColumn();
 
-    $statement = $db->prepare('SELECT COUNT(*) FROM radacct WHERE DATE(acctstarttime) BETWEEN :start_date AND :end_date');
+    $statement = $db->prepare('SELECT COUNT(*) FROM radacct WHERE acctstarttime >= :start_date AND acctstarttime < DATE_ADD(:end_date, INTERVAL 1 DAY)');
     $statement->execute($periodParams);
     $stats['period_accounting'] = (int) $statement->fetchColumn();
 
-    $statement = $db->prepare('SELECT COUNT(*) FROM radacct WHERE DATE(acctstoptime) BETWEEN :start_date AND :end_date');
+    $statement = $db->prepare('SELECT COUNT(*) FROM radacct WHERE acctstoptime >= :start_date AND acctstoptime < DATE_ADD(:end_date, INTERVAL 1 DAY)');
     $statement->execute($periodParams);
     $stats['period_disconnect'] = (int) $statement->fetchColumn();
 
     $stats['online'] = (int) $db->query('SELECT COUNT(*) FROM radacct WHERE acctstoptime IS NULL')->fetchColumn();
 
-    $statement = $db->prepare('SELECT COALESCE(SUM(COALESCE(acctinputoctets,0)+COALESCE(acctoutputoctets,0)),0) FROM radacct WHERE DATE(acctstarttime) BETWEEN :start_date AND :end_date');
+    $statement = $db->prepare('SELECT COALESCE(SUM(COALESCE(acctinputoctets,0)+COALESCE(acctoutputoctets,0)),0) FROM radacct WHERE acctstarttime >= :start_date AND acctstarttime < DATE_ADD(:end_date, INTERVAL 1 DAY)');
     $statement->execute($periodParams);
     $stats['period_traffic'] = (float) $statement->fetchColumn();
 
