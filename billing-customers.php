@@ -9,11 +9,15 @@ require_once __DIR__ . '/design-system-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
+$canModifyCustomers = billing_actor_can_modify_customer($user);
+$canCustomerOperations = function_exists('app_customer_operator_allowed') && app_customer_operator_allowed($user);
+$canManageCustomerNetwork = billing_actor_can_manage_customer_network($user);
+$canCreateCustomers = billing_actor_can_create_customer($user);
 
 $db = app_db();
 app_billing_ensure_identity_schema($db);
 $routerRegistryReady = $db instanceof PDO && router_registry_ensure_schema($db);
-$activeRouters = $routerRegistryReady ? router_registry_list($db, true, $user) : [];
+$activeRouters = $routerRegistryReady ? router_registry_customer_creation_routers($db, $user) : [];
 $canManageRouterBindings = router_registry_actor_can_manage_bindings($user);
 $flash = null;
 $billingCustomerPerfEnabled = PHP_SAPI === 'cli' && isset($_GET['perf']);
@@ -114,7 +118,8 @@ function billing_customer_online_usernames(PDO $db, array $usernames): array
         'SELECT DISTINCT username
          FROM radacct
          WHERE username IN (' . implode(',', $placeholders) . ')
-           AND acctstoptime IS NULL'
+           AND acctstoptime IS NULL
+           AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)'
     );
     $statement->execute($params);
 
@@ -165,8 +170,18 @@ function billing_customer_pool_next_ip_map(PDO $db): array
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    $postedBillingAction = clean_text((string) ($_POST['action'] ?? ''));
     $csrfToken = $_POST['csrf_token'] ?? '';
-    if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
+    $restrictedBillingActions = [
+        'request_bulk_customer_deactivation',
+        'resolve_bulk_customer_deactivation',
+    ];
+    $networkActionDenied = $postedBillingAction === 'refresh_customer_radius_session' && !$canManageCustomerNetwork;
+    $createActionDenied = $postedBillingAction === 'create_billing_customer' && !$canCreateCustomers;
+    if ($networkActionDenied || $createActionDenied || (!$canModifyCustomers && in_array($postedBillingAction, $restrictedBillingActions, true))) {
+        $flash = ['type' => 'error', 'message' => 'Bu əməliyyat yalnız admin və super admin üçün açıqdır. Operator müştərini axtara və texniki vəziyyətə baxa bilər.'];
+        http_response_code(403);
+    } elseif (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
         $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu.'];
     } elseif ($db instanceof PDO && clean_text((string) ($_POST['action'] ?? '')) === 'refresh_customer_radius_session') {
         $accountId = (int) ($_POST['account_id'] ?? 0);
@@ -233,11 +248,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $tariffValidationError = 'Secilen tarif ' . strtoupper($serviceType) . ' xidmetine aid deyil.';
         }
         $billingDays = app_billing_account_default_days([], [], is_array($tariff) ? $tariff : null);
-        $postedBillingDays = (int) ($_POST['billing_days'] ?? 0);
+        $postedBillingDays = $canModifyCustomers ? (int) ($_POST['billing_days'] ?? 0) : 0;
         if ($postedBillingDays > 0) {
             $billingDays = max(1, min(366, $postedBillingDays));
         }
-        $postedStableDueDay = max(0, (int) ($_POST['stable_due_day'] ?? 0));
+        $postedStableDueDay = $canModifyCustomers ? max(0, (int) ($_POST['stable_due_day'] ?? 0)) : 0;
         $stableDueDay = $postedStableDueDay >= 1 && $postedStableDueDay <= 31 ? $postedStableDueDay : 0;
 
         $poolStatement = $db->prepare('SELECT * FROM billing_ip_pools WHERE id = :id LIMIT 1');
@@ -268,7 +283,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $ipAllocationError = 'Secilen IP poolda bos IP tapilmadi. Basqa pool secin, IP poolu genisledin ve ya static IP secin.';
         }
 
-        $expiresAt = clean_text((string) ($_POST['expires_at'] ?? ''));
+        $expiresAt = $canModifyCustomers ? clean_text((string) ($_POST['expires_at'] ?? '')) : '';
         if ($expiresAt === '') {
             $expiresAt = app_billing_resolve_next_expires_at($billingDays, $stableDueDay, null, time());
         } else {
@@ -285,8 +300,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
         if (!$routerRegistryReady) {
             $flash = ['type' => 'error', 'message' => 'Router registry hazir deyil. Musteri yaradilmadi.'];
-        } elseif (!$canManageRouterBindings) {
-            $flash = ['type' => 'error', 'message' => 'Musteri yaratmaq ve router teyin etmek ucun admin ve ya NOC icazesi lazimdir.'];
+        } elseif (!$canCreateCustomers) {
+            $flash = ['type' => 'error', 'message' => 'Musteri yaratmaq ucun operator ve ya admin icazesi lazimdir.'];
         } elseif (empty($identityValidation['ok'])) {
             $flash = ['type' => 'error', 'message' => ($identityValidation['error'] ?? '') === 'duplicate_fin' ? 'Bu FIN kod aktiv musteride movcuddur.' : 'FIN, sexsiyyet vesiqesi, mobil nomre ve unvan mutleq doldurulmalidir.'];
         } elseif ($subscriberCode === '' || $fullName === '' || !is_array($tariff) || !is_array($pool)) {
@@ -533,7 +548,7 @@ if ($db instanceof PDO) {
     $summary['total'] = (int) $db->query("SELECT COUNT(*) FROM portal_accounts WHERE role = 'customer'")->fetchColumn();
     $summary['active'] = (int) $db->query("SELECT COUNT(*) FROM portal_accounts WHERE role = 'customer' AND is_active = 1 AND (status IS NULL OR status NOT LIKE '%Deaktiv%')")->fetchColumn();
     $summary['inactive'] = max(0, $summary['total'] - $summary['active']);
-    $summary['online'] = (int) $db->query("SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL")->fetchColumn();
+    $summary['online'] = (int) $db->query("SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)")->fetchColumn();
     $dbAreas = $db->query("SELECT DISTINCT area FROM portal_accounts WHERE role = 'customer' AND area IS NOT NULL AND area <> '' ORDER BY area LIMIT 300")->fetchAll(PDO::FETCH_COLUMN) ?: [];
     $areas = array_values(array_unique(array_filter(array_merge($areas, array_map('strval', $dbAreas)))));
     $areaCodeOptions = app_db_area_code_options($db, $areas);
@@ -1050,7 +1065,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             <?php billing_render_stat_card('Cemi musteri', (string) $summary['total'], 'Portal hesablari', 'fa-users', 'blue'); ?>
             <?php billing_render_stat_card('Aktiv', (string) $summary['active'], 'Billing status', 'fa-user-check', 'green'); ?>
             <?php billing_render_stat_card('Deaktiv', (string) $summary['inactive'], 'Passiv/deaktiv', 'fa-user-xmark', 'red'); ?>
-            <?php billing_render_stat_card('Radius aktiv', (string) $summary['online'], 'billing_radius_services', 'fa-satellite-dish', 'blue'); ?>
+            <?php billing_render_stat_card('Son 20 dəq online', (string) $summary['online'], 'RADIUS accounting yeniləməsi', 'fa-satellite-dish', 'blue'); ?>
             <?php billing_render_stat_card('Filtr neticesi', (string) $summary['filtered'], count($customers) . ' qeyd gosterilir', 'fa-filter', 'orange'); ?>
             <?php billing_render_stat_card('Gorunus', ucfirst($viewMode), 'table / card / compact', 'fa-table-cells-large', 'navy'); ?>
         </section>
@@ -1110,9 +1125,9 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <?php if (!$canManageRouterBindings): ?>
+                    <?php if (!$canCreateCustomers): ?>
                         <div class="portal-form-row wide">
-                            <div class="portal-alert portal-alert-error">Router binding ile musteri yaratmaq yalniz admin ve NOC ucun aktivdir.</div>
+                            <div class="portal-alert portal-alert-error">Musteri yaratmaq operator ve admin rollari ucun aktivdir.</div>
                         </div>
                     <?php elseif (count($activeRouters) > 1): ?>
                         <div class="portal-form-row">
@@ -1325,9 +1340,12 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                             ? 'billing-customer-profile.php?id=' . rawurlencode((string) ($customer['id'] ?? 0)) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '')
                             : 'billing-customer-profile.php?code=' . rawurlencode((string) ($customer['subscriber_code'] ?? '')) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
                         $isOnline = !empty($customer['is_online']);
-                        $onlineText = $isOnline ? 'Online' : 'Offline';
-                        $onlineBadgeClass = $isOnline ? ' is-online' : ' is-offline';
-                        $editHref = 'billing-customer-edit.php?id=' . rawurlencode((string) ($customer['id'] ?? 0)) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
+                        $serviceExpired = (int) ($customer['is_active'] ?? 0) !== 1
+                            || strtolower((string) ($customer['radius_status'] ?? '')) !== 'active'
+                            || ((int) ($customer['days_left'] ?? 0) <= 0 && trim((string) ($customer['expires_at'] ?? '')) !== '');
+                        $onlineText = $isOnline && !$serviceExpired ? 'Online' : ($isOnline ? 'Vaxtı bitib · sessiya açıq' : 'Offline');
+                        $onlineBadgeClass = $isOnline && !$serviceExpired ? ' is-online' : ' is-offline';
+                        $editHref = ($canModifyCustomers ? 'billing-customer-edit.php?id=' : 'billing-customer-service.php?id=') . rawurlencode((string) ($customer['id'] ?? 0)) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
                         $intel = $customerIntelligence[(int) ($customer['id'] ?? 0)] ?? [];
                         $riskClass = strtolower((string) ($intel['churn_risk'] ?? 'low'));
                         ?>
@@ -1391,10 +1409,13 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
                                     ? 'billing-customer-profile.php?id=' . rawurlencode((string) ($customer['id'] ?? 0)) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '')
                                     : 'billing-customer-profile.php?code=' . rawurlencode((string) ($customer['subscriber_code'] ?? '')) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
                                 $isOnline = !empty($customer['is_online']);
-                                $onlineText = $isOnline ? 'Online' : 'Offline';
-                                $onlineBadgeClass = $isOnline ? ' is-online' : ' is-offline';
+                                $serviceExpired = (int) ($customer['is_active'] ?? 0) !== 1
+                                    || strtolower((string) ($customer['radius_status'] ?? '')) !== 'active'
+                                    || ((int) ($customer['days_left'] ?? 0) <= 0 && trim((string) ($customer['expires_at'] ?? '')) !== '');
+                                $onlineText = $isOnline && !$serviceExpired ? 'Online' : ($isOnline ? 'Vaxtı bitib · sessiya açıq' : 'Offline');
+                                $onlineBadgeClass = $isOnline && !$serviceExpired ? ' is-online' : ' is-offline';
                                 $rowClass = $isOnline ? 'billing-row-online' : 'billing-row-offline';
-                                $editHref = 'billing-customer-edit.php?id=' . rawurlencode((string) ($customer['id'] ?? 0)) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
+                                $editHref = ($canModifyCustomers ? 'billing-customer-edit.php?id=' : 'billing-customer-service.php?id=') . rawurlencode((string) ($customer['id'] ?? 0)) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
                                 $intel = $customerIntelligence[(int) ($customer['id'] ?? 0)] ?? [];
                                 $riskClass = strtolower((string) ($intel['churn_risk'] ?? 'low'));
                                 ?>

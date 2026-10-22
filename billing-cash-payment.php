@@ -5,6 +5,11 @@ require_once __DIR__ . '/billing-ui.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
+$canTakePayment = billing_actor_can_modify_customer($user);
+$isPaymentPost = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
+if ($isPaymentPost && !$canTakePayment) {
+    billing_reject_customer_write($user);
+}
 $db = app_db();
 
 if (PHP_SAPI !== 'cli') {

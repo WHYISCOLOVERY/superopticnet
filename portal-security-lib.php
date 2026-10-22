@@ -459,14 +459,27 @@ function app_portal_privileged_password_reset(array $target, array $actor, strin
     app_audit_ensure_schema($db);
     try {
         $db->beginTransaction();
+        $lockedTarget = $db->prepare('SELECT payload_json FROM portal_accounts WHERE id=? FOR UPDATE');
+        $lockedTarget->execute([(int) $target['id']]);
+        $freshPayload = json_decode((string) $lockedTarget->fetchColumn(), true);
+        if (is_array($freshPayload)) {
+            $freshSecurity = is_array($freshPayload['security'] ?? null) ? $freshPayload['security'] : [];
+            $freshPayload['security'] = array_merge($freshSecurity, $security);
+            $payload = $freshPayload;
+        }
         $update = $db->prepare(
-            'UPDATE portal_accounts SET password_hash = :password_hash, payload_json = :payload_json WHERE id = :id'
+            'UPDATE portal_accounts
+                SET password_hash = :password_hash, payload_json = :payload_json, updated_at = NOW()
+              WHERE id = :id'
         );
         $update->execute([
             'password_hash' => password_hash($password, PASSWORD_DEFAULT),
             'payload_json' => app_db_json_encode($payload),
             'id' => (int) $target['id'],
         ]);
+        if ($update->rowCount() !== 1) {
+            throw new RuntimeException('Staff password hash was not updated.');
+        }
         if (app_db_table_exists($db, 'portal_password_recovery_requests')) {
             $invalidate = $db->prepare(
                 'UPDATE portal_password_recovery_requests
@@ -474,6 +487,24 @@ function app_portal_privileged_password_reset(array $target, array $actor, strin
                   WHERE account_id = :account_id AND consumed_at IS NULL AND invalidated_at IS NULL'
             );
             $invalidate->execute(['account_id' => (int) $target['id']]);
+        }
+        if (app_db_table_exists($db, 'mobile_auth_refresh_tokens')) {
+            $db->prepare('DELETE FROM mobile_auth_refresh_tokens WHERE account_id = :account_id')
+                ->execute(['account_id' => (int) $target['id']]);
+        }
+        if (app_db_table_exists($db, 'mobile_device_tokens')) {
+            $db->prepare(
+                "UPDATE mobile_device_tokens
+                    SET is_active=0,revoked_at=NOW(),revoked_reason='password_reset'
+                  WHERE account_id=:account_id AND is_active=1"
+            )->execute(['account_id' => (int) $target['id']]);
+        }
+        if (app_db_table_exists($db, 'mobile_duty_sessions')) {
+            $db->prepare(
+                "UPDATE mobile_duty_sessions
+                    SET ended_at=NOW(),ended_reason='password_reset'
+                  WHERE account_id=:account_id AND ended_at IS NULL"
+            )->execute(['account_id' => (int) $target['id']]);
         }
 
         $actionType = $mode === 'staff_admin'

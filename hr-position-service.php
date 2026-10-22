@@ -14,6 +14,10 @@ function app_hr_position_role_keys(): array
 {
     return [
         'finance',
+        'super_admin',
+        'admin',
+        'director',
+        'team_lead',
         'warehouse',
         'warehouse_manager',
         'hr',

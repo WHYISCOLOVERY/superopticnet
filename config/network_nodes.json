@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "source": "Owner-declared SuperOptic network nodes. Reachability is determined by the latest probe.",
+  "workspace": "superoptic",
+  "nodes": [
+    {"id": "core-router-172-16-5-5", "ip": "172.16.5.5", "name": "SPTECH ASR1006 Core", "type": "router", "vendor": "Cisco", "management_network": "vlan550"},
+    {"id": "olt-hsgq-172-16-5-17", "ip": "172.16.5.17", "name": "HSGQ 172.16.5.17", "type": "olt", "vendor": "HSGQ", "management_network": "vlan550"},
+    {"id": "olt-hsgq-172-16-5-20", "ip": "172.16.5.20", "name": "Kurdexani HSGQ 20", "type": "olt", "vendor": "HSGQ", "management_network": "vlan550"},
+    {"id": "olt-hsgq-172-16-5-21", "ip": "172.16.5.21", "name": "Kurdexani HSGQ 21", "type": "olt", "vendor": "HSGQ", "management_network": "vlan550"},
+    {"id": "olt-hsgq-172-16-5-26", "ip": "172.16.5.26", "name": "HSGQ 172.16.5.26", "type": "olt", "vendor": "HSGQ", "management_network": "vlan550"},
+    {"id": "olt-hsgq-172-16-5-29", "ip": "172.16.5.29", "name": "HSGQ 172.16.5.29", "type": "olt", "vendor": "HSGQ", "management_network": "vlan550"},
+    {"id": "switch-cisco-172-16-5-41", "ip": "172.16.5.41", "name": "Kurdexani office switch", "type": "switch", "vendor": "Cisco", "management_network": "vlan550"}
+  ],
+  "read_only_operations": ["ssh_health", "snmp_get", "if_mib_walk", "interface_traffic", "service_probe", "neighbor_discovery"],
+  "approval_required_operations": ["snmp_enable", "snmp_policy_change", "device_config_apply", "write_memory"]
+}

@@ -5,6 +5,7 @@ require_once __DIR__ . '/billing-ui.php';
 
 $lang = app_lang();
 $user = billing_require_employee(true);
+$db = app_db();
 
 $flash = null;
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
@@ -18,12 +19,87 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'type' => $sync['failed'] === 0 ? 'success' : 'error',
             'message' => 'Radius test sync: ' . $sync['synced'] . ' ugurlu, ' . $sync['failed'] . ' ugursuz.',
         ];
+    } elseif ($db instanceof PDO && $action === 'save_tariff') {
+        $tariffId = max(0, (int) ($_POST['tariff_id'] ?? 0));
+        $name = clean_text((string) ($_POST['name'] ?? ''));
+        $serviceType = clean_text((string) ($_POST['service_type'] ?? 'pppoe'));
+        $downloadMbps = max(0, min(100000, (int) ($_POST['download_mbps'] ?? 0)));
+        $uploadMbps = max(0, min(100000, (int) ($_POST['upload_mbps'] ?? 0)));
+        $monthlyFee = round(max(0, (float) ($_POST['monthly_fee'] ?? 0)), 2);
+        $defaultDays = max(1, min(366, (int) ($_POST['default_days'] ?? 30)));
+        $radiusGroup = trim((string) ($_POST['radius_group'] ?? ''));
+        $reason = clean_text((string) ($_POST['reason'] ?? ''));
+        $status = (string) ($_POST['status'] ?? 'active') === 'disabled' ? 'disabled' : 'active';
+        if ($name === '' || !in_array($serviceType, ['pppoe', 'ipoe'], true)
+            || $downloadMbps <= 0 || $uploadMbps <= 0 || $monthlyFee <= 0
+            || preg_match('/^[A-Za-z0-9._:-]{2,128}$/', $radiusGroup) !== 1 || $reason === '') {
+            $flash = ['type' => 'error', 'message' => 'Paket melumatlari ve deyisiklik sebebi tam, qiymet/suret sifirdan boyuk olmalidir.'];
+        } else {
+            $before = null;
+            if ($tariffId > 0) {
+                $lookup = $db->prepare('SELECT * FROM billing_tariffs WHERE id = :id LIMIT 1');
+                $lookup->execute(['id' => $tariffId]);
+                $before = $lookup->fetch(PDO::FETCH_ASSOC) ?: null;
+            }
+            try {
+                $metadata = is_array($before) ? app_db_json_decode((string) ($before['metadata_json'] ?? ''), []) : [];
+                $metadata['default_days'] = $defaultDays;
+                $metadata['managed_from'] = 'radius-billing.php';
+                if ($tariffId > 0 && is_array($before)) {
+                    $statement = $db->prepare(
+                        'UPDATE billing_tariffs
+                            SET name=:name, service_type=:service_type, download_mbps=:download_mbps,
+                                upload_mbps=:upload_mbps, monthly_fee=:monthly_fee, radius_group=:radius_group,
+                                status=:status, metadata_json=:metadata_json
+                          WHERE id=:id'
+                    );
+                    $statement->execute([
+                        'name' => $name, 'service_type' => $serviceType, 'download_mbps' => $downloadMbps,
+                        'upload_mbps' => $uploadMbps, 'monthly_fee' => $monthlyFee, 'radius_group' => $radiusGroup,
+                        'status' => $status, 'metadata_json' => app_db_json_encode($metadata), 'id' => $tariffId,
+                    ]);
+                } else {
+                    $statement = $db->prepare(
+                        'INSERT INTO billing_tariffs
+                            (name, service_type, download_mbps, upload_mbps, monthly_fee, radius_group, status, metadata_json)
+                         VALUES
+                            (:name, :service_type, :download_mbps, :upload_mbps, :monthly_fee, :radius_group, :status, :metadata_json)'
+                    );
+                    $statement->execute([
+                        'name' => $name, 'service_type' => $serviceType, 'download_mbps' => $downloadMbps,
+                        'upload_mbps' => $uploadMbps, 'monthly_fee' => $monthlyFee, 'radius_group' => $radiusGroup,
+                        'status' => $status, 'metadata_json' => app_db_json_encode($metadata),
+                    ]);
+                    $tariffId = (int) $db->lastInsertId();
+                }
+                app_audit_record($db, [
+                    'module_key' => 'billing', 'operation_class' => 'sensitive_write',
+                    'action_type' => is_array($before) ? 'billing_tariff_updated' : 'billing_tariff_created',
+                    'entity_type' => 'billing_tariff', 'entity_id' => (string) $tariffId,
+                    'status' => 'executed', 'actor_account_id' => (int) ($user['id'] ?? 0),
+                    'actor_name' => (string) ($user['full_name'] ?? $user['login'] ?? 'admin'),
+                    'summary' => 'Billing paketi saxlandi', 'reason' => $reason,
+                    'payload' => ['before' => $before, 'after' => ['name' => $name, 'service_type' => $serviceType, 'download_mbps' => $downloadMbps, 'upload_mbps' => $uploadMbps, 'monthly_fee' => $monthlyFee, 'radius_group' => $radiusGroup, 'status' => $status, 'default_days' => $defaultDays]],
+                ]);
+                $flash = ['type' => 'success', 'message' => 'Paket saxlandi ve deyisiklik audit jurnalina yazildi.'];
+            } catch (Throwable $exception) {
+                $flash = ['type' => 'error', 'message' => 'Paket saxlanmadi. Ad ve Radius group unikal olmalidir.'];
+            }
+        }
     }
 }
 
-$db = app_db();
 $overview = app_billing_overview();
 $tariffs = $db instanceof PDO ? $db->query('SELECT * FROM billing_tariffs ORDER BY service_type, download_mbps')->fetchAll() : [];
+$editTariffId = max(0, (int) ($_GET['edit_tariff'] ?? 0));
+$editTariff = null;
+foreach ($tariffs as $tariffRow) {
+    if ((int) ($tariffRow['id'] ?? 0) === $editTariffId) {
+        $editTariff = $tariffRow;
+        break;
+    }
+}
+$editTariffMetadata = is_array($editTariff) ? app_db_json_decode((string) ($editTariff['metadata_json'] ?? ''), []) : [];
 $pools = $db instanceof PDO ? $db->query('SELECT * FROM billing_ip_pools ORDER BY service_type, pool_type, name')->fetchAll() : [];
 $services = [];
 if ($db instanceof PDO) {
@@ -128,6 +204,28 @@ if ($db instanceof PDO) {
             </form>
         </section>
 
+        <section class="portal-card portal-reveal" id="tariff-editor">
+            <div class="portal-card-head">
+                <h2><?= is_array($editTariff) ? 'Paketi redakte et' : 'Yeni paket yarat'; ?></h2>
+                <small>Qiymet, suret, muddet ve RADIUS qrupunu bir yerde idare et. Her deyisiklik sebeble jurnallasir.</small>
+            </div>
+            <form method="post" class="portal-form-grid">
+                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                <input type="hidden" name="action" value="save_tariff">
+                <input type="hidden" name="tariff_id" value="<?= e((string) ($editTariff['id'] ?? 0)); ?>">
+                <label>Paket adi<input name="name" required value="<?= e((string) ($editTariff['name'] ?? '')); ?>"></label>
+                <label>Xidmet novu<select name="service_type"><option value="pppoe"<?= ($editTariff['service_type'] ?? 'pppoe') === 'pppoe' ? ' selected' : ''; ?>>PPPoE</option><option value="ipoe"<?= ($editTariff['service_type'] ?? '') === 'ipoe' ? ' selected' : ''; ?>>IPoE</option></select></label>
+                <label>Download Mbps<input type="number" min="1" max="100000" name="download_mbps" required value="<?= e((string) ($editTariff['download_mbps'] ?? '')); ?>"></label>
+                <label>Upload Mbps<input type="number" min="1" max="100000" name="upload_mbps" required value="<?= e((string) ($editTariff['upload_mbps'] ?? '')); ?>"></label>
+                <label>Ayliq qiymet<input type="number" min="0.01" step="0.01" name="monthly_fee" required value="<?= e((string) ($editTariff['monthly_fee'] ?? '')); ?>"></label>
+                <label>Muddet (gun)<input type="number" min="1" max="366" name="default_days" required value="<?= e((string) ($editTariffMetadata['default_days'] ?? 30)); ?>"></label>
+                <label>RADIUS group<input name="radius_group" pattern="[A-Za-z0-9._:-]{2,128}" required value="<?= e((string) ($editTariff['radius_group'] ?? '')); ?>"></label>
+                <label>Status<select name="status"><option value="active"<?= ($editTariff['status'] ?? 'active') === 'active' ? ' selected' : ''; ?>>Aktiv</option><option value="disabled"<?= ($editTariff['status'] ?? '') === 'disabled' ? ' selected' : ''; ?>>Deaktiv</option></select></label>
+                <label class="portal-form-span-2">Deyisiklik sebebi<input name="reason" required maxlength="255" placeholder="Yeni paket / qiymet yenilenmesi / deaktiv edilme sebebi"></label>
+                <div class="portal-form-actions"><button class="portal-primary-btn" type="submit">Paketi saxla</button><?php if (is_array($editTariff)): ?><a class="portal-ghost-btn portal-inline-link" href="radius-billing.php#tariff-editor">Yeni paket</a><?php endif; ?></div>
+            </form>
+        </section>
+
         <section class="portal-grid portal-grid-2 portal-reveal" id="tariffs">
             <article class="portal-card" id="pools">
                 <div class="portal-card-head">
@@ -145,7 +243,7 @@ if ($db instanceof PDO) {
                                     <td><?= e((string) $tariff['download_mbps']); ?>/<?= e((string) $tariff['upload_mbps']); ?> Mb/s</td>
                                     <td><?= e((string) $tariff['monthly_fee']); ?> AZN</td>
                                     <td><?= e((string) app_billing_tariff_default_days($tariff)); ?> gün</td>
-                                    <td><code><?= e((string) $tariff['radius_group']); ?></code></td>
+                                    <td><code><?= e((string) $tariff['radius_group']); ?></code><br><a href="radius-billing.php?edit_tariff=<?= e((string) ($tariff['id'] ?? 0)); ?>#tariff-editor">Redakte et</a></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>

@@ -7,6 +7,7 @@ require_once __DIR__ . '/portal-security-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
+billing_reject_customer_write($user);
 $db = app_db();
 app_billing_ensure_identity_schema($db);
 
@@ -14,6 +15,7 @@ $status = clean_text((string) ($_GET['status'] ?? ''));
 $flashMap = [
     'saved' => ['type' => 'success', 'message' => 'Musteri billing duzelisi saxlandi ve RADIUS sync yenilendi.'],
     'save_failed' => ['type' => 'error', 'message' => 'Duzelis saxlanmadi. Tarif, tarix ve billing payload melumatlarini yoxla.'],
+    'identity_super_admin_required' => ['type' => 'error', 'message' => 'Ad-soyad, ünvan və FIN yalnız super admin tərəfindən dəyişdirilə bilər.'],
     'duplicate_fin' => ['type' => 'error', 'message' => 'FIN kod basqa aktiv musteriye aiddir. FIN sahesini yoxlayin.'],
     'identity_required' => ['type' => 'error', 'message' => 'FIN, sexsiyyet vesiqesi, telefon ve unvan sahesi mutleqdir.'],
     'reason_required' => ['type' => 'error', 'message' => 'Tarif, gun, bitme tarixi ve ya status deyisirse sebeb mutleq yazilmalidir.'],
@@ -284,7 +286,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $updatedAccount = !empty($saveResult['ok']) && is_array($saveResult['account'] ?? null) ? $saveResult['account'] : null;
     $synced = $updatedAccount !== null && !empty($saveResult['radius_synced']);
 
-    header('Location: billing-customer-edit.php?id=' . rawurlencode((string) ($account['id'] ?? 0)) . '&status=' . ($synced ? 'saved' : 'save_failed') . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''));
+    $saveStatus = $synced ? 'saved' : (($saveResult['error'] ?? '') === 'identity_super_admin_required' ? 'identity_super_admin_required' : 'save_failed');
+    header('Location: billing-customer-edit.php?id=' . rawurlencode((string) ($account['id'] ?? 0)) . '&status=' . $saveStatus . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''));
     exit;
 }
 
@@ -365,7 +368,7 @@ $profileHref = 'billing-customer-profile.php?id=' . rawurlencode((string) ($acco
                     </div>
                     <div class="portal-form-row">
                         <label>Ad soyad / sirket</label>
-                        <input type="text" name="full_name" value="<?= e((string) ($oldInput['full_name'] ?? $account['full_name'] ?? $profile['full_name'] ?? '')); ?>" required>
+                        <input type="text" name="full_name" <?= app_portal_is_super_admin($user) ? '' : 'readonly'; ?> value="<?= e((string) ($oldInput['full_name'] ?? $account['full_name'] ?? $profile['full_name'] ?? '')); ?>" required>
                     </div>
                     <div class="portal-form-row">
                         <label>Muqavile nomresi</label>
@@ -375,7 +378,7 @@ $profileHref = 'billing-customer-profile.php?id=' . rawurlencode((string) ($acco
                         <label>Telefon</label>
                         <input type="text" name="phone" value="<?= e((string) ($oldInput['phone'] ?? $account['phone'] ?? $profile['phone'] ?? '')); ?>" required>
                     </div>
-                    <div class="portal-form-row"><label>FIN kod</label><input type="text" name="fin_code" maxlength="32" value="<?=e((string)($oldInput['fin_code']??$account['fin_code']??$profile['fin_code']??''));?>" required></div>
+                    <div class="portal-form-row"><label>FIN kod</label><input type="text" name="fin_code" maxlength="32" <?= app_portal_is_super_admin($user) ? '' : 'readonly'; ?> value="<?=e((string)($oldInput['fin_code']??$account['fin_code']??$profile['fin_code']??''));?>" required></div>
                     <div class="portal-form-row"><label>Sexsiyyet vesiqesi</label><input type="text" name="document_no" maxlength="64" value="<?=e((string)($oldInput['document_no']??$account['document_no']??$profile['document_no']??''));?>" required></div>
                     <div class="portal-form-row">
                         <label>Email</label>
@@ -396,7 +399,7 @@ $profileHref = 'billing-customer-profile.php?id=' . rawurlencode((string) ($acco
                     </div>
                     <div class="portal-form-row wide">
                         <label>Unvan</label>
-                        <input type="text" name="address" value="<?= e((string) ($oldInput['address'] ?? $account['address'] ?? $profile['address'] ?? '')); ?>" required>
+                        <input type="text" name="address" <?= app_portal_is_super_admin($user) ? '' : 'readonly'; ?> value="<?= e((string) ($oldInput['address'] ?? $account['address'] ?? $profile['address'] ?? '')); ?>" required>
                     </div>
                     <div class="portal-form-row wide">
                         <label>Tarif / plan</label>

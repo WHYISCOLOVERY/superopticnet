@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_db_migrations_20260820_480_legacy_mgs_ont_inventory_php", "label": "20260820_480_legacy_mgs_ont_inventory.php", "file_type": "code", "source_file": "db/migrations/20260820_480_legacy_mgs_ont_inventory.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

@@ -90,6 +90,7 @@ declare -Ar SECRET_ALIAS_TARGETS=(
 
 declare -ar APPLICATION_SERVICES=(
     superoptic-billing-maintenance.service
+    superoptic-payment-outbox.service
     superoptic-communication-queue.service
     superoptic-pg365-status.service
     superoptic-radius-coa-worker.service
@@ -102,6 +103,7 @@ declare -ar APPLICATION_SERVICES=(
 declare -Ar APPLICATION_SERVICE_USERS=(
     [superoptic-mgs-node.service]=superoptic-node
     [superoptic-billing-maintenance.service]=superoptic-billing
+    [superoptic-payment-outbox.service]=superoptic-billing
     [superoptic-communication-queue.service]=superoptic-communication
     [superoptic-pg365-status.service]=superoptic-pg365
     [superoptic-radius-coa-worker.service]=superoptic-radius
@@ -114,6 +116,7 @@ declare -Ar APPLICATION_SERVICE_USERS=(
 declare -Ar APPLICATION_SERVICE_SCOPES=(
     [superoptic-mgs-node.service]=node
     [superoptic-billing-maintenance.service]=billing
+    [superoptic-payment-outbox.service]=billing
     [superoptic-communication-queue.service]=communication
     [superoptic-pg365-status.service]=pg365
     [superoptic-radius-coa-worker.service]=radius
@@ -125,6 +128,7 @@ declare -Ar APPLICATION_SERVICE_SCOPES=(
 
 declare -ar APPLICATION_TIMERS=(
     superoptic-billing-maintenance.timer
+    superoptic-payment-outbox.timer
     superoptic-communication-queue.timer
     superoptic-pg365-status.timer
     superoptic-radius-coa-worker.timer

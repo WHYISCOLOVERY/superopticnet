@@ -2,12 +2,39 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/billing-ui.php';
+require_once __DIR__ . '/billing-customer-identity-lib.php';
 require_once __DIR__ . '/customer-intelligence-lib.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/router-registry-lib.php';
 
 $lang = app_lang();
 $user = billing_require_employee();
+$canModifyCustomer = billing_actor_can_modify_customer($user);
+$canManageCustomerNetwork = billing_actor_can_manage_customer_network($user);
+$canChangeCustomerPackage = billing_actor_can_change_customer_package($user);
+
+$profileWriteActions = [
+    'bind_customer_router',
+    'add_radius_service',
+    'add_extra_service',
+];
+$profileNetworkActions = [
+    'refresh_customer_radius_session',
+    'release_ip_assignment',
+    'update_ip_assignment',
+];
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    $profilePostedAction = clean_text((string) ($_POST['action'] ?? ''));
+    if (in_array($profilePostedAction, $profileWriteActions, true) && !$canModifyCustomer) {
+        billing_reject_customer_write($user);
+    }
+    if (in_array($profilePostedAction, $profileNetworkActions, true) && !$canManageCustomerNetwork) {
+        billing_reject_customer_write($user);
+    }
+    if ($profilePostedAction === 'change_customer_package' && !$canChangeCustomerPackage) {
+        billing_reject_customer_write($user);
+    }
+}
 
 function billing_profile_field(array $row, array $keys, string $default = '-'): string
 {
@@ -332,6 +359,92 @@ $enginePools = $db instanceof PDO ? app_ip_pool_summaries($db) : [];
 $freeLocalIps = $db instanceof PDO ? app_ip_available_addresses($db, 'local', 40) : [];
 $freeNatIps = $db instanceof PDO ? app_ip_available_addresses($db, 'nat_public', 40) : [];
 $freeStaticIps = $db instanceof PDO ? app_ip_available_addresses($db, 'static_public', 40) : [];
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && clean_text((string) ($_POST['action'] ?? '')) === 'change_customer_package') {
+    $csrfToken = $_POST['csrf_token'] ?? '';
+    $reason = clean_text((string) ($_POST['package_change_reason'] ?? ''));
+    $tariffId = (int) ($_POST['tariff_id'] ?? 0);
+    $selectedTariff = null;
+    foreach ($tariffs as $tariffRow) {
+        if ((int) ($tariffRow['id'] ?? 0) === $tariffId) {
+            $selectedTariff = $tariffRow;
+            break;
+        }
+    }
+    $currentServiceType = strtolower((string) ($billing['service_type'] ?? ($basePayload['internet_services'][0]['service_type'] ?? 'pppoe')));
+    if (!app_verify_csrf(is_string($csrfToken) ? $csrfToken : null)) {
+        $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu.'];
+    } elseif (!$db instanceof PDO || !is_array($selectedTariff)) {
+        $flash = ['type' => 'error', 'message' => 'Paket tapilmadi.'];
+    } elseif ($reason === '') {
+        $flash = ['type' => 'error', 'message' => 'Paket deyisikliyinin sebebi yazilmalidir.'];
+    } elseif (strtolower((string) ($selectedTariff['service_type'] ?? '')) !== $currentServiceType) {
+        $flash = ['type' => 'error', 'message' => 'Paket cari servis novune uygun deyil.'];
+    } else {
+        $beforePayload = $basePayload;
+        $updatedPayload = $basePayload;
+        $updatedProfile = is_array($updatedPayload['profile'] ?? null) ? $updatedPayload['profile'] : [];
+        $updatedBilling = is_array($updatedPayload['billing'] ?? null) ? $updatedPayload['billing'] : [];
+        $updatedServices = is_array($updatedPayload['internet_services'] ?? null)
+            ? array_values(array_filter($updatedPayload['internet_services'], 'is_array'))
+            : [];
+        $newTariffName = (string) ($selectedTariff['name'] ?? '');
+        $updatedProfile['plan'] = $newTariffName;
+        $updatedBilling['tariff'] = $newTariffName;
+        $primaryUsername = (string) ($updatedBilling['pppoe_username'] ?? '');
+        foreach ($updatedServices as $index => $serviceRow) {
+            if ($index === 0 || ($primaryUsername !== '' && strcasecmp((string) ($serviceRow['username'] ?? ''), $primaryUsername) === 0)) {
+                $updatedServices[$index]['tariff'] = $newTariffName;
+                break;
+            }
+        }
+        $updatedPayload['profile'] = $updatedProfile;
+        $updatedPayload['billing'] = $updatedBilling;
+        $updatedPayload['internet_services'] = $updatedServices;
+        $updatedPayload = app_billing_refresh_payload_totals($account, $updatedPayload, $selectedTariff);
+        $oldPrimaryService = is_array($beforePayload['internet_services'][0] ?? null) ? $beforePayload['internet_services'][0] : [];
+        $newPrimaryService = is_array($updatedPayload['internet_services'][0] ?? null) ? $updatedPayload['internet_services'][0] : [];
+        $saveResult = app_billing_upsert_customer_with_identity($db, [
+            'id' => (int) ($account['id'] ?? 0),
+            'login' => (string) ($account['login'] ?? ''),
+            'password' => '',
+            'role' => 'customer',
+            'account_type' => 'customer',
+            'employee_role' => '',
+            'full_name' => (string) ($account['full_name'] ?? $updatedProfile['full_name'] ?? ''),
+            'subscriber_code' => (string) ($account['subscriber_code'] ?? ''),
+            'contract_no' => (string) ($account['contract_no'] ?? $updatedProfile['contract_no'] ?? ''),
+            'email' => (string) ($account['email'] ?? $updatedProfile['email'] ?? ''),
+            'phone' => (string) ($account['phone'] ?? $updatedProfile['phone'] ?? ''),
+            'category' => (string) ($account['category'] ?? $updatedProfile['category'] ?? ''),
+            'area' => (string) ($account['area'] ?? $updatedProfile['area'] ?? ''),
+            'address' => (string) ($account['address'] ?? $updatedProfile['address'] ?? ''),
+            'plan' => $newTariffName,
+            'status' => (string) ($account['status'] ?? 'Aktiv'),
+            'payload' => $updatedPayload,
+            'is_active' => (int) ($account['is_active'] ?? 1),
+            'sensitive_change_audit' => [
+                'before' => ['account' => ['plan' => (string) ($account['plan'] ?? '')], 'profile' => $profile, 'billing' => $billing, 'service' => $oldPrimaryService],
+                'after' => ['account' => ['plan' => $newTariffName], 'profile' => $updatedProfile, 'billing' => $updatedPayload['billing'] ?? [], 'service' => $newPrimaryService],
+                'reason' => $reason,
+            ],
+        ], [
+            'fin_code' => (string) ($account['fin_code'] ?? $updatedProfile['fin_code'] ?? ''),
+            'document_no' => (string) ($account['document_no'] ?? $updatedProfile['document_no'] ?? ''),
+            'phone' => (string) ($account['phone'] ?? $updatedProfile['phone'] ?? ''),
+            'address' => (string) ($account['address'] ?? $updatedProfile['address'] ?? ''),
+        ], $user);
+        if (!empty($saveResult['ok'])) {
+            $account = is_array($saveResult['account'] ?? null) ? $saveResult['account'] : $account;
+            $basePayload = app_db_account_payload($account);
+            $profile = is_array($basePayload['profile'] ?? null) ? $basePayload['profile'] : [];
+            $billing = is_array($basePayload['billing'] ?? null) ? $basePayload['billing'] : [];
+            $flash = ['type' => 'success', 'message' => 'Paket deyisdirildi, RADIUS yenilendi ve audit tarixcesine yazildi.'];
+        } else {
+            $flash = ['type' => 'error', 'message' => 'Paket deyisdirilmedi. Musterinin FIN/sened melumatini ve RADIUS baglantisini yoxlayin.'];
+        }
+    }
+}
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && clean_text((string) ($_POST['action'] ?? '')) === 'refresh_customer_radius_session') {
     $csrfToken = $_POST['csrf_token'] ?? '';
@@ -1125,16 +1238,19 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                 <article class="mgs-profile-card">
                     <h2>Kontekst emeliyyatlari</h2>
                     <div class="customer-context-actions">
+                        <?php if (app_customer_operator_allowed($user)): ?><a class="customer-context-action" href="billing-customer-service.php?id=<?= (int) $account['id']; ?>">Telefon, borc günü və panel şifrəsi</a><?php endif; ?>
+                        <?php if ($canModifyCustomer): ?>
                         <a class="customer-context-action" href="billing-customer-edit.php?id=<?= rawurlencode((string) ($account['id'] ?? 0)); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-pen-to-square"></i> Duzelis et</a>
                         <a class="customer-context-action" href="billing-cash-payment.php?subscriber_code=<?= rawurlencode($subscriberCode); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-cash-register"></i> Odenis al</a>
+                        <?php endif; ?>
                         <a class="customer-context-action" href="message-center.php?q=<?= rawurlencode($subscriberCode); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-message"></i> SMS gonder</a>
-                        <form class="customer-context-action-form" method="post" data-profile-radius-refresh>
+                        <?php if ($canManageCustomerNetwork): ?><form class="customer-context-action-form" method="post" data-profile-radius-refresh>
                             <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                             <input type="hidden" name="action" value="refresh_customer_radius_session">
                             <input type="hidden" name="username" value="<?= e($currentServiceUsername); ?>">
                             <button class="customer-context-action" type="submit"><i class="fa-solid fa-rotate"></i> RADIUS yenile</button>
-                        </form>
-                        <a class="customer-context-action" href="#profile-services"><i class="fa-solid fa-layer-group"></i> Paket/servis</a>
+                        </form><?php endif; ?>
+                        <?php if ($canModifyCustomer): ?><a class="customer-context-action" href="#profile-services"><i class="fa-solid fa-layer-group"></i> Paket/servis</a><?php endif; ?>
                         <a class="customer-context-action" href="<?= e(billing_profile_tab_url($account, $lang, 'network', 'profile-radius-accounting')); ?>"><i class="fa-solid fa-satellite-dish"></i> RADIUS</a>
                         <a class="customer-context-action" href="radius-natlog.php?q=<?= rawurlencode($subscriberCode); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-magnifying-glass-chart"></i> NAT log</a>
                         <a class="customer-context-action" href="network-definitions.php?q=<?= rawurlencode($subscriberCode); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-diagram-project"></i> VLAN/IP</a>
@@ -1263,12 +1379,12 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
         <?php if ($activeProfileTab === 'network'): ?>
         <section class="portal-card portal-reveal customer-profile-section" id="profile-ip">
             <div class="portal-card-head">
-                <h2>IP / NAT / Static IP</h2>
-                <small>RADIUS reply, IP pool engine ve musteri IP tarixcesi bir yerde.</small>
+                <h2>NAT / daxili IP ve statik IP</h2>
+                <small>Kohne billing qaydasina uygun olaraq NAT/daxili IP (10.11.x.x) Radiusdan verilir; statik public IP ayrica idare olunur.</small>
             </div>
             <div class="customer-profile-kv">
                 <div><span>Radius username</span><strong><?= e($currentServiceUsername ?: '-'); ?></strong></div>
-                <div><span>Local IP</span><strong><?= e($currentLocalIp ?: '-'); ?></strong></div>
+                <div><span>NAT / daxili IP</span><strong><?= e($currentLocalIp ?: '-'); ?></strong></div>
                 <div><span>NAT public IP</span><strong><?= e($currentNatIp ?: '-'); ?></strong></div>
                 <div><span>Static IP</span><strong><?= e($currentStaticIp ?: '-'); ?></strong></div>
                 <div><span>Radius sync</span><strong><?= !empty($primaryIpAssignment['radius_synced']) ? 'Synced' : 'Profil/RADIUS esasinda' ?></strong></div>
@@ -1291,8 +1407,8 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                         </select>
                     </div>
                     <div class="portal-form-row">
-                        <label>Local IP</label>
-                        <input list="freeLocalIps" type="text" name="local_ip" value="<?= e($currentLocalIp); ?>" placeholder="10.11.x.x">
+                        <label>NAT / daxili IP</label>
+                        <input list="freeLocalIps" type="text" name="local_ip" value="<?= e($currentLocalIp); ?>" placeholder="10.11.x.x (kohnə NAT/daxili IP)">
                     </div>
                     <div class="portal-form-row">
                         <label>NAT public IP</label>
@@ -1332,7 +1448,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
             <?php if ($ipHistory !== []): ?>
                 <div class="portal-table-wrap portal-section-gap">
                     <table class="portal-table">
-                        <thead><tr><th>Tarix</th><th>Username</th><th>Local</th><th>NAT</th><th>Static</th><th>Sebeb</th></tr></thead>
+                        <thead><tr><th>Tarix</th><th>Username</th><th>NAT / daxili</th><th>Elave NAT public</th><th>Statik public</th><th>Sebeb</th></tr></thead>
                         <tbody>
                             <?php foreach ($ipHistory as $historyRow): ?>
                                 <tr>
@@ -1352,6 +1468,28 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
 
         <section class="portal-card portal-reveal customer-profile-section" id="profile-services">
             <div class="portal-card-head"><h2>Internet servisleri</h2><small>Bir muqavile altinda bir ve ya bir nece PPPoE/IPoE xidmeti.</small></div>
+            <?php if ($canChangeCustomerPackage): ?>
+            <form method="post" class="portal-inline-inputs portal-section-gap">
+                <input type="hidden" name="action" value="change_customer_package">
+                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                <label>
+                    <span>Paket</span>
+                    <select name="tariff_id" required>
+                        <?php foreach ($tariffs as $tariff): ?>
+                            <?php if (strtolower((string) ($tariff['service_type'] ?? '')) === strtolower((string) ($billing['service_type'] ?? 'pppoe'))): ?>
+                            <option value="<?= e((string) $tariff['id']); ?>" <?= (string) ($tariff['name'] ?? '') === (string) ($billing['tariff'] ?? '') ? 'selected' : ''; ?>><?= e((string) ($tariff['name'] ?? '')); ?> / <?= e((string) ($tariff['monthly_fee'] ?? '0')); ?> AZN</option>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label>
+                    <span>Dəyişiklik səbəbi</span>
+                    <input type="text" name="package_change_reason" required placeholder="Müştəri müraciəti / paket dəyişikliyi">
+                </label>
+                <button type="submit" class="portal-primary-btn">Paketi dəyiş</button>
+            </form>
+            <?php endif; ?>
+            <?php if ($canModifyCustomer): ?>
             <form method="post" class="portal-stacked-form" id="profile-add-service">
                 <input type="hidden" name="action" value="add_radius_service">
                 <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
@@ -1392,7 +1530,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                         </select>
                     </div>
                     <div class="portal-form-row">
-                        <label>Dynamic IP</label>
+                        <label>NAT / daxili IP</label>
                         <input list="freeLocalIps" type="text" name="assigned_ip" placeholder="bos = pooldan al">
                     </div>
                     <div class="portal-form-row">
@@ -1422,6 +1560,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                 </div>
                 <button type="submit" class="portal-primary-btn">Servisi elave et ve Radius-a yaz</button>
             </form>
+            <?php endif; ?>
             <div class="portal-table-wrap">
                 <table class="portal-table">
                     <thead><tr><th>Nov</th><th>Username / sifre</th><th>Tarif</th><th>IP / NAT / VLAN</th><th>Pool</th><th>Status</th><th>Bitme</th></tr></thead>
@@ -1463,6 +1602,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                 </table>
             </div>
 
+            <?php if ($canModifyCustomer): ?>
             <div class="portal-card-head portal-section-gap">
                 <h2>Elave ayliq xidmetler</h2>
                 <small>TV, IPTV, SIP phone, static IP ve diger pullu xidmetler ayliq toplam meblege avtomatik elave olunur.</small>
@@ -1502,6 +1642,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                 </div>
                 <button type="submit" class="portal-primary-btn">Elave xidmeti yaz ve ayliq meblegi yenile</button>
             </form>
+            <?php endif; ?>
             <div class="portal-table-wrap portal-section-gap">
                 <table class="portal-table">
                     <thead><tr><th>Tip</th><th>Ad</th><th>Melumat</th><th>Qiymet</th><th>Status</th><th>Tarix</th></tr></thead>

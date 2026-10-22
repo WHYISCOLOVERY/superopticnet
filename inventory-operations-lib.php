@@ -28,8 +28,8 @@ function app_inventory_ensure_operational_schema(PDO $db): void
         throw new RuntimeException('inventory_operational_schema_not_migrated');
     }
 }
-function app_inventory_actor_can_write(array $a):bool{return app_portal_is_admin($a)||in_array(strtolower((string)($a['employee_role']??'')),['warehouse','warehouse_manager'],true);}
-function app_inventory_actor_can_approve(array $a):bool{return app_portal_is_admin($a)||strtolower((string)($a['employee_role']??''))==='warehouse_manager';}
+function app_inventory_actor_can_write(array $a):bool{$p=json_decode((string)($a['payload_json']??''),true);$caps=is_array($p)&&is_array($p['mobile_capabilities']??null)?$p['mobile_capabilities']:[];return app_portal_is_admin($a)||in_array(strtolower((string)($a['employee_role']??'')),['warehouse','warehouse_manager'],true)||in_array('warehouse',$caps,true)||in_array('warehouse_manager',$caps,true);}
+function app_inventory_actor_can_approve(array $a):bool{return app_portal_is_admin($a)||in_array(strtolower((string)($a['employee_role']??'')),['super_admin','admin','director'],true);}
 function app_inventory_location_exists(PDO $db,string $type,string $id):bool
 {
     if($type==='warehouse')return $id==='MAIN';
@@ -102,7 +102,7 @@ function app_inventory_update_item(PDO $db,array $input,array $actor):array
 }
 function app_inventory_deactivate_item(PDO $db,array $input,array $actor):array
 {
-    if(!app_inventory_actor_can_write($actor))return['ok'=>false,'error'=>'forbidden'];
+    if(!app_inventory_actor_can_approve($actor))return['ok'=>false,'error'=>'admin_approval_required'];
     try{$reason=app_inventory_required_reason($input['reason']??'');}catch(InvalidArgumentException){return['ok'=>false,'error'=>'reason_required'];}
     app_inventory_ensure_operational_schema($db);app_audit_ensure_schema($db);
     $itemId=(int)($input['item_id']??0);if($itemId<=0)return['ok'=>false,'error'=>'invalid_item'];
@@ -190,24 +190,24 @@ function app_inventory_handover_employee(PDO $db,array $input,array $actor):arra
 {
     if(!app_inventory_actor_can_write($actor))return['ok'=>false,'error'=>'forbidden'];
     app_inventory_ensure_operational_schema($db);
-    $item=(int)($input['item_id']??0);$employee=(int)($input['employee_id']??0);$qty=(float)($input['quantity']??0);$branch=(string)($input['source_branch_id']??'');
+    $item=(int)($input['item_id']??0);$employee=(int)($input['employee_id']??0);$qty=(float)($input['quantity']??0);$sourceType=clean_text((string)($input['source_location_type']??'branch'));$sourceId=clean_text((string)($input['source_location_id']??$input['source_branch_id']??''));
     $requireConfirmation=!empty($input['require_confirmation']);
-    if($item<=0||$employee<=0||$qty<=0||$branch==='')return['ok'=>false,'error'=>'invalid_handover'];
-    if(!app_inventory_location_exists($db,'branch',$branch)||!app_inventory_location_exists($db,'employee',(string)$employee))return['ok'=>false,'error'=>'invalid_location'];
+    if($item<=0||$employee<=0||$qty<=0||$sourceId===''||!in_array($sourceType,['warehouse','branch'],true))return['ok'=>false,'error'=>'invalid_handover'];
+    if(!app_inventory_location_exists($db,$sourceType,$sourceId)||!app_inventory_location_exists($db,'employee',(string)$employee))return['ok'=>false,'error'=>'invalid_location'];
     try{
         $db->beginTransaction();
-        $src=app_inventory_lock_location_balance($db,$item,'branch',$branch);
+        $src=app_inventory_lock_location_balance($db,$item,$sourceType,$sourceId);
         if((float)$src['available_quantity']<$qty){$db->rollBack();return['ok'=>false,'error'=>'insufficient_stock'];}
         $status=$requireConfirmation?'pending':'approved';
-        $doc=app_inventory_write_document($db,'THV','handover',$status,['source_location_type'=>'branch','source_location_id'=>$branch,'destination_type'=>'employee','destination_id'=>(string)$employee,'note'=>clean_text((string)($input['note']??''))],[['item_id'=>$item,'quantity'=>$qty,'serial_number'=>$input['serial_number']??'','mac_address'=>$input['mac_address']??'','note'=>$input['item_note']??'']],$actor);
+        $doc=app_inventory_write_document($db,'THV','handover',$status,['source_location_type'=>$sourceType,'source_location_id'=>$sourceId,'destination_type'=>'employee','destination_id'=>(string)$employee,'note'=>clean_text((string)($input['note']??''))],[['item_id'=>$item,'quantity'=>$qty,'serial_number'=>$input['serial_number']??'','mac_address'=>$input['mac_address']??'','note'=>$input['item_note']??'']],$actor);
         if(!$requireConfirmation){
             $dst=app_inventory_lock_location_balance($db,$item,'employee',(string)$employee);
             $db->prepare('UPDATE inventory_location_balances SET available_quantity=available_quantity-:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$src['id']]);
             $db->prepare('UPDATE inventory_location_balances SET available_quantity=available_quantity+:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$dst['id']]);
             $employeeName=app_mgs_hr_employee_name($db,$employee,(string)$employee);
-            app_inventory_lifecycle($db,'handover',$item,$qty,'branch',$branch,'employee',(string)$employee,'employee handover',$actor,$doc['document_no'],$employeeName);
+            app_inventory_lifecycle($db,'handover',$item,$qty,$sourceType,$sourceId,'employee',(string)$employee,'employee handover',$actor,$doc['document_no'],$employeeName);
         }
-        app_inventory_record_audit($db,'inventory_handover',$doc['document_no'],$requireConfirmation?'pending':'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'branch_id'=>$branch,'employee_id'=>$employee,'confirmation_required'=>$requireConfirmation]);
+        app_inventory_record_audit($db,'inventory_handover',$doc['document_no'],$requireConfirmation?'pending':'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'source_type'=>$sourceType,'source_id'=>$sourceId,'employee_id'=>$employee,'confirmation_required'=>$requireConfirmation]);
         $db->commit();
         return['ok'=>true,'confirmation_required'=>$requireConfirmation]+$doc;
     }catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'handover_failed','detail'=>$e->getMessage()];}
@@ -253,11 +253,12 @@ function app_inventory_consume_employee_stock(PDO $db,array $input,array $actor)
     $customer=clean_text((string)($input['customer_code']??''));$ticket=clean_text((string)($input['ticket_no']??''));
     $actorId=(int)($actor['id']??0);
     if($item<=0||$employee<=0||$qty<=0||$customer===''||($actorId!==$employee&&!app_inventory_actor_can_write($actor)))return['ok'=>false,'error'=>'invalid_consumption'];
+    $ownsTransaction = !$db->inTransaction();
     try{
-        $db->beginTransaction();$source=app_inventory_lock_location_balance($db,$item,'employee',(string)$employee);
-        if((float)($source['available_quantity']??0)<$qty){$db->rollBack();return['ok'=>false,'error'=>'insufficient_employee_stock'];}
+        if ($ownsTransaction) $db->beginTransaction();$source=app_inventory_lock_location_balance($db,$item,'employee',(string)$employee);
+        if((float)($source['available_quantity']??0)<$qty){if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'insufficient_employee_stock'];}
         $company=$db->prepare('SELECT quantity_on_hand FROM inventory_stock_items WHERE id=:id FOR UPDATE');$company->execute(['id'=>$item]);
-        if((float)$company->fetchColumn()<$qty){$db->rollBack();return['ok'=>false,'error'=>'insufficient_company_stock'];}
+        if((float)$company->fetchColumn()<$qty){if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'insufficient_company_stock'];}
         $db->prepare('UPDATE inventory_location_balances SET available_quantity=available_quantity-:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$source['id']]);
         $db->prepare('UPDATE inventory_stock_items SET quantity_on_hand=quantity_on_hand-:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$item]);
         $employeeName=app_mgs_hr_employee_name($db,$employee,(string)$employee);
@@ -266,8 +267,8 @@ function app_inventory_consume_employee_stock(PDO $db,array $input,array $actor)
         $movement=$db->prepare('INSERT INTO inventory_stock_movements(item_id,movement_type,quantity,ticket_no,customer_account_id,technician_account_id,actor_account_id,actor_name,note,status,metadata_json)VALUES(:item,"customer_install",:qty,:ticket,:customer_id,:employee,:actor_id,:actor_name,:note,"posted",:metadata)');
         $movement->execute(['item'=>$item,'qty'=>$qty,'ticket'=>$ticket?:null,'customer_id'=>(int)($input['customer_account_id']??0)?:null,'employee'=>$employee,'actor_id'=>$actorId?:null,'actor_name'=>app_inventory_actor_name($actor),'note'=>clean_text((string)($input['note']??'')),'metadata'=>app_db_json_encode($input)]);
         app_inventory_record_audit($db,'inventory_employee_consumed',$doc['document_no'],'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'employee_id'=>$employee,'customer_code'=>$customer,'ticket_no'=>$ticket]);
-        $db->commit();return['ok'=>true]+$doc;
-    }catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'employee_consumption_failed','detail'=>$e->getMessage()];}
+        if ($ownsTransaction) $db->commit();return['ok'=>true]+$doc;
+    }catch(Throwable $e){if (!$ownsTransaction) throw $e; if($db->inTransaction())if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'employee_consumption_failed','detail'=>$e->getMessage()];}
 }
 
 function app_inventory_return_employee_stock(PDO $db,array $input,array $actor):array

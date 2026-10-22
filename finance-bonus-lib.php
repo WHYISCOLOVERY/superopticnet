@@ -79,6 +79,8 @@ function app_bonus_create_schema_legacy(PDO $db): void
         created_by_account_id BIGINT UNSIGNED DEFAULT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        active_customer_account_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status='active' THEN customer_account_id ELSE NULL END) STORED,
+        UNIQUE KEY uq_bonus_one_active_customer (active_customer_account_id),
         KEY idx_bonus_customer_assignment_customer (customer_account_id, status),
         KEY idx_bonus_customer_assignment_finder (finder_employee_id, status),
         KEY idx_bonus_customer_assignment_installer (installer_employee_id, status),
@@ -156,6 +158,7 @@ function app_bonus_create_schema_legacy(PDO $db): void
         reason VARCHAR(255) DEFAULT NULL,
         metadata_json LONGTEXT DEFAULT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_bonus_one_customer_award (period_id, customer_account_id, item_type),
         KEY idx_bonus_item_period_employee (period_id, employee_id),
         KEY idx_bonus_item_customer (customer_account_id, period_id),
         KEY idx_bonus_item_type_status (item_type, status)
@@ -482,20 +485,12 @@ function app_bonus_quality_for_customer(PDO $db, int $customerId, string $subscr
 
 function app_bonus_employee_share(PDO $db, array $assignment, int $employeeId, string $kind): float
 {
-    $owner = (int) ($assignment['bonus_owner_employee_id'] ?? 0);
-    if ($owner > 0) {
-        return $owner === $employeeId ? 100.0 : 0.0;
-    }
-    $finderPercent = app_bonus_decimal_setting($db, $kind === 'new_connection' ? 'new_connection_finder_percent' : 'recurring_finder_percent', 100.0);
-    $installerPercent = app_bonus_decimal_setting($db, $kind === 'new_connection' ? 'new_connection_installer_percent' : 'recurring_installer_percent', 0.0);
-    $share = 0.0;
-    if ((int) ($assignment['finder_employee_id'] ?? 0) === $employeeId) {
-        $share += $finderPercent;
-    }
-    if ((int) ($assignment['installer_employee_id'] ?? 0) === $employeeId) {
-        $share += $installerPercent;
-    }
-    return max(0.0, min(100.0, $share));
+    unset($db, $kind);
+    $owner = (int) ($assignment['bonus_owner_employee_id'] ?? 0)
+        ?: (int) ($assignment['finder_employee_id'] ?? 0)
+        ?: (int) ($assignment['installer_employee_id'] ?? 0)
+        ?: (int) ($assignment['area_responsible_employee_id'] ?? 0);
+    return $owner > 0 && $owner === $employeeId ? 100.0 : 0.0;
 }
 
 function app_bonus_assignment_customers_for_employee(PDO $db, int $employeeId): array
@@ -888,15 +883,22 @@ function app_bonus_save_assignment(PDO $db, array $input, array $actor): array
     $finder = max(0, (int) ($input['finder_employee_id'] ?? 0)) ?: null;
     $installer = max(0, (int) ($input['installer_employee_id'] ?? 0)) ?: null;
     $areaOwner = max(0, (int) ($input['area_responsible_employee_id'] ?? 0)) ?: null;
-    $bonusOwner = max(0, (int) ($input['bonus_owner_employee_id'] ?? 0)) ?: $finder;
+    $bonusOwner = max(0, (int) ($input['bonus_owner_employee_id'] ?? 0)) ?: $finder ?: $installer ?: $areaOwner;
     if ($finder === null && $installer === null && $areaOwner === null && $bonusOwner === null) {
         return ['ok' => false, 'error' => 'employee_required'];
     }
+    $employeeCheck = $db->prepare('SELECT COUNT(*) FROM portal_accounts WHERE id=:id AND role="employee" AND is_active=1');
+    $employeeCheck->execute(['id' => $bonusOwner]);
+    if ((int) $employeeCheck->fetchColumn() !== 1) {
+        return ['ok' => false, 'error' => 'bonus_owner_not_found'];
+    }
     try {
         $db->beginTransaction();
+        $customerLock = $db->prepare('SELECT id FROM portal_accounts WHERE id=:id FOR UPDATE');
+        $customerLock->execute(['id' => (int) $customer['id']]);
         $db->prepare('UPDATE customer_employee_assignments SET status = "transferred", effective_to = COALESCE(effective_to, CURDATE()) WHERE customer_account_id = :customer_id AND status = "active"')->execute(['customer_id' => (int) $customer['id']]);
         $statement = $db->prepare('INSERT INTO customer_employee_assignments (customer_account_id, finder_employee_id, installer_employee_id, area_responsible_employee_id, assigned_area_id, bonus_owner_employee_id, split_mode, assignment_source, effective_from, note, created_by_account_id) VALUES (:customer_account_id, :finder_employee_id, :installer_employee_id, :area_responsible_employee_id, :assigned_area_id, :bonus_owner_employee_id, :split_mode, "manual", :effective_from, :note, :actor_id)');
-        $statement->execute(['customer_account_id' => (int) $customer['id'], 'finder_employee_id' => $finder, 'installer_employee_id' => $installer, 'area_responsible_employee_id' => $areaOwner, 'assigned_area_id' => clean_text((string) ($input['assigned_area_id'] ?? ($customer['area'] ?? ''))) ?: null, 'bonus_owner_employee_id' => $bonusOwner, 'split_mode' => clean_text((string) ($input['split_mode'] ?? 'finder_100')) ?: 'finder_100', 'effective_from' => app_bonus_date_value($input['effective_from'] ?? date('Y-m-d'), date('Y-m-d')), 'note' => clean_text((string) ($input['note'] ?? '')) ?: null, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null]);
+        $statement->execute(['customer_account_id' => (int) $customer['id'], 'finder_employee_id' => $finder, 'installer_employee_id' => $installer, 'area_responsible_employee_id' => $areaOwner, 'assigned_area_id' => clean_text((string) ($input['assigned_area_id'] ?? ($customer['area'] ?? ''))) ?: null, 'bonus_owner_employee_id' => $bonusOwner, 'split_mode' => 'single_owner', 'effective_from' => app_bonus_date_value($input['effective_from'] ?? date('Y-m-d'), date('Y-m-d')), 'note' => clean_text((string) ($input['note'] ?? '')) ?: null, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null]);
         $assignmentId = (int) $db->lastInsertId();
         app_bonus_record_audit($db, 'bonus_customer_assignment_saved', 'customer_employee_assignment', (string) $assignmentId, $actor, 'Customer bonus assignment saved: ' . (string) ($customer['subscriber_code'] ?? $customer['login'] ?? $customer['id']), ['customer_id' => (int) $customer['id'], 'finder_employee_id' => $finder, 'installer_employee_id' => $installer, 'area_responsible_employee_id' => $areaOwner, 'bonus_owner_employee_id' => $bonusOwner]);
         $db->commit();

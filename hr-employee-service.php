@@ -45,12 +45,15 @@ function app_hr_create_employee(PDO $db,array $input,array $actor): array
     $exists=$db->prepare('SELECT id FROM portal_accounts WHERE login=:login LIMIT 1');$exists->execute(['login'=>$login]);if($exists->fetchColumn())return ['ok'=>false,'error'=>'duplicate_login'];
     $salaryMode=($input['salary_mode']??'gross')==='net'?'net':'gross';$gross=max(0,(float)($input['gross_salary']??0));$net=max(0,(float)($input['net_salary']??0));
     if(($gross>0&&$net>0)||($salaryMode==='gross'&&$gross<=0&&$net>0)||($salaryMode==='net'&&$net<=0&&$gross>0))return ['ok'=>false,'error'=>'salary_value_mismatch'];
+    $areas=app_hr_normalize_employee_areas((array)($input['responsible_areas']??[]));
+    if($areas===[]) return ['ok'=>false,'error'=>'area_required'];
     $payload=['employee'=>['branch_id'=>clean_text((string)($input['branch_id']??'')),'hire_date'=>clean_text((string)($input['hire_date']??'')),'position_id'=>$positionId,'position_title'=>$job,'access_pending'=>true,'created_by_hr'=>(int)($actor['id']??0)]];
     try{
         $db->beginTransaction();
         $insert=$db->prepare('INSERT INTO portal_accounts (external_id,login,password_hash,role,account_type,employee_role,job_title,full_name,email,phone,area,address,status,is_active,payload_json,created_at,updated_at) VALUES (NULL,:login,:password_hash,"employee","employee","",:job_title,:full_name,:email,:phone,:area,:address,"Passiv",0,:payload,NOW(),NOW())');
-        $insert->execute(['login'=>$login,'password_hash'=>password_hash(bin2hex(random_bytes(24)),PASSWORD_DEFAULT),'job_title'=>$job,'full_name'=>$name,'email'=>clean_text((string)($input['email']??''))?:null,'phone'=>normalize_phone((string)($input['phone']??''))?:null,'area'=>clean_text((string)($input['area']??''))?:null,'address'=>clean_text((string)($input['address']??''))?:null,'payload'=>app_db_json_encode($payload)]);
+        $insert->execute(['login'=>$login,'password_hash'=>password_hash(bin2hex(random_bytes(24)),PASSWORD_DEFAULT),'job_title'=>$job,'full_name'=>$name,'email'=>clean_text((string)($input['email']??''))?:null,'phone'=>normalize_phone((string)($input['phone']??''))?:null,'area'=>$areas[0],'address'=>clean_text((string)($input['address']??''))?:null,'payload'=>app_db_json_encode($payload)]);
         $accountId=(int)$db->lastInsertId();
+        app_db_replace_account_areas($accountId,$areas);
         if($gross>0||$net>0){
             $effective=clean_text((string)($input['effective_from']??$input['hire_date']??date('Y-m-d')))?:date('Y-m-d');
             $calc=$salaryMode==='net'?app_mgs_hr_estimate_gross_from_net($net):app_mgs_hr_payroll_preview(['gross_salary'=>$gross]);
@@ -76,7 +79,9 @@ function app_hr_update_employee(PDO $db, array $input, array $actor): array
     $positionId=max(0,(int)($input['position_id']??0));
     $position=app_hr_position_by_id($db,$positionId,true);
     $job=clean_text((string)($position['title']??''));
+    $areas=app_hr_normalize_employee_areas((array)($input['responsible_areas']??[]));
     if($id<=0||$name===''||$login===''||$position===null||$job==='')return['ok'=>false,'error'=>$position===null?'position_required':'required_fields'];
+    if($areas===[])return['ok'=>false,'error'=>'area_required'];
     try{
         $db->beginTransaction();
         $lock=$db->prepare('SELECT id,payload_json FROM portal_accounts WHERE id=:id AND role="employee" FOR UPDATE');$lock->execute(['id'=>$id]);$existing=$lock->fetch(PDO::FETCH_ASSOC);
@@ -85,9 +90,23 @@ function app_hr_update_employee(PDO $db, array $input, array $actor): array
         $payload=json_decode((string)($existing['payload_json']??'{}'),true);if(!is_array($payload))$payload=[];if(!isset($payload['employee'])||!is_array($payload['employee']))$payload['employee']=[];
         $payload['employee']['branch_id']=clean_text((string)($input['branch_id']??''));$payload['employee']['hire_date']=clean_text((string)($input['hire_date']??''));$payload['employee']['position_id']=$positionId;$payload['employee']['position_title']=$job;
         $update=$db->prepare('UPDATE portal_accounts SET login=:login,full_name=:full_name,job_title=:job_title,email=:email,phone=:phone,area=:area,address=:address,payload_json=:payload,updated_at=NOW() WHERE id=:id');
-        $update->execute(['login'=>$login,'full_name'=>$name,'job_title'=>$job,'email'=>clean_text((string)($input['email']??''))?:null,'phone'=>normalize_phone((string)($input['phone']??''))?:null,'area'=>clean_text((string)($input['area']??''))?:null,'address'=>clean_text((string)($input['address']??''))?:null,'payload'=>app_db_json_encode($payload),'id'=>$id]);
+        $update->execute(['login'=>$login,'full_name'=>$name,'job_title'=>$job,'email'=>clean_text((string)($input['email']??''))?:null,'phone'=>normalize_phone((string)($input['phone']??''))?:null,'area'=>$areas[0],'address'=>clean_text((string)($input['address']??''))?:null,'payload'=>app_db_json_encode($payload),'id'=>$id]);
+        app_db_replace_account_areas($id,$areas);
         $audit=$db->prepare('INSERT INTO mgs_operation_actions(action_type,entity_type,entity_id,status,actor_account_id,actor_name,summary,payload_json,executed_at)VALUES("hr_employee_updated","employee",:entity_id,"executed",:actor_id,:actor_name,:summary,:payload,:executed_at)');
         $audit->execute(['entity_id'=>(string)$id,'actor_id'=>(int)($actor['id']??0)?:null,'actor_name'=>clean_text((string)($actor['full_name']??$actor['login']??'HR')),'summary'=>mb_substr('HR employee updated: '.$name,0,255),'payload'=>app_db_json_encode(['position_id'=>$positionId,'job_title'=>$job,'login'=>$login]),'executed_at'=>app_db_now()]);
         $db->commit();return['ok'=>true,'account_id'=>$id];
     }catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'employee_update_failed'];}
+}
+
+function app_hr_normalize_employee_areas(array $areas): array
+{
+    $allowed = array_flip(app_service_areas());
+    $result = [];
+    foreach ($areas as $area) {
+        $area = clean_text((string) $area);
+        if ($area !== '' && isset($allowed[$area])) $result[] = $area;
+    }
+    $result = array_values(array_unique($result));
+    sort($result);
+    return $result;
 }

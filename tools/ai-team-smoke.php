@@ -27,12 +27,16 @@ if (!$db instanceof PDO) {
 
 $conversationIds = [];
 $taskIds = [];
-$cleanup = function () use ($db, &$conversationIds, &$taskIds): void {
+$stockItemIds = [];
+$cleanup = function () use ($db, &$conversationIds, &$taskIds, &$stockItemIds): void {
     foreach ($conversationIds as $id) {
         $db->prepare('DELETE FROM ai_team_conversations WHERE id = :id')->execute(['id' => $id]);
     }
     foreach ($taskIds as $id) {
         $db->prepare('DELETE FROM ai_team_tasks WHERE id = :id')->execute(['id' => $id]);
+    }
+    foreach ($stockItemIds as $id) {
+        $db->prepare('DELETE FROM inventory_stock_items WHERE id = :id')->execute(['id' => $id]);
     }
 };
 
@@ -116,13 +120,28 @@ try {
     $logCheck->execute(['q' => 'Bugünkü vəziyyət necədir?']);
     $conversationIds[] = (int) $logCheck->fetchColumn();
 
-    // --- Seed a deterministic high-risk warehouse fact so the agenda test has something to stage ---
-    $sku = 'SMOKEAITEAM-' . date('His') . random_int(100, 999);
-    $db->prepare(
+    // --- Seed enough high-risk warehouse facts so the agenda test has something to stage ---
+    // app_advisor_read_model_critical_stock_count() excludes rows whose sku/item_name/
+    // metadata_json contain "smoke"/"test-"/etc (app_inventory_operational_stock_sql()),
+    // so fixture rows must avoid those markers or they silently never count. The techops
+    // briefing only marks critical_stock as risk=high once the count reaches >= 5
+    // (advisor-agent-lib.php app_advisor_techops_briefing), so this seeds however many
+    // rows are needed to cross that threshold regardless of pre-existing real inventory
+    // data, instead of assuming a single row is always enough.
+    $currentCritical = (int) $db->query(
+        'SELECT COUNT(*) FROM inventory_stock_items i WHERE i.status = "active"
+           AND i.quantity_on_hand <= i.minimum_quantity AND ' . app_inventory_operational_stock_sql('i')
+    )->fetchColumn();
+    $neededRows = max(1, 5 - $currentCritical);
+    $insertStockItem = $db->prepare(
         'INSERT INTO inventory_stock_items (sku, item_name, category, unit, quantity_on_hand, minimum_quantity, status, created_at)
-         VALUES (:sku, "Smoke AI Team Item", "smoke", "ədəd", 0, 5, "active", NOW())'
-    )->execute(['sku' => $sku]);
-    $stockItemId = (int) $db->lastInsertId();
+         VALUES (:sku, :item_name, "aiteamfixture", "ədəd", 0, 5, "active", NOW())'
+    );
+    for ($i = 0; $i < $neededRows; $i++) {
+        $sku = 'AITEAMFIXTURE-' . date('His') . random_int(1000, 9999) . '-' . $i;
+        $insertStockItem->execute(['sku' => $sku, 'item_name' => 'AI Komanda anbar fixture ' . $i]);
+        $stockItemIds[] = (int) $db->lastInsertId();
+    }
 
     // --- Agenda-intent question stages high/critical proposals as pending tasks ---
     $agendaResult = app_ai_team_answer($db, $admin, 'warehouse_keeper', 'Bugünkü gündəlik tapşırıqları hazırla', $mockChat);
@@ -281,7 +300,6 @@ try {
         ai_team_smoke_fail('ai_team_php_missing_csrf_check');
     }
 
-    $db->prepare('DELETE FROM inventory_stock_items WHERE id = :id')->execute(['id' => $stockItemId]);
     $cleanup();
 
     echo json_encode([
@@ -290,9 +308,6 @@ try {
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
 } catch (Throwable $exception) {
     $cleanup();
-    if (isset($stockItemId)) {
-        $db->prepare('DELETE FROM inventory_stock_items WHERE id = :id')->execute(['id' => $stockItemId]);
-    }
     fwrite(STDERR, get_class($exception) . ': ' . $exception->getMessage() . PHP_EOL);
     exit(1);
 }

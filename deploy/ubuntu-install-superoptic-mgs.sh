@@ -1058,6 +1058,32 @@ Unit=superoptic-billing-maintenance.service
 WantedBy=timers.target
 CONF
 
+    run tee /etc/systemd/system/superoptic-payment-outbox.service >/dev/null <<CONF
+[Unit]
+Description=SuperOptic payment activation outbox worker
+After=mysql.service freeradius.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=$(dirname "${SECRET_ENV_FILE}")/services/billing.env
+User=superoptic-billing
+Group=www-data
+ExecStart=/usr/bin/php ${WEB_ROOT}/tools/process-billing-payment-outbox.php --limit=250
+CONF
+
+    run tee /etc/systemd/system/superoptic-payment-outbox.timer >/dev/null <<'CONF'
+[Unit]
+Description=Run SuperOptic payment activation outbox every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+Unit=superoptic-payment-outbox.service
+
+[Install]
+WantedBy=timers.target
+CONF
+
     run tee /etc/systemd/system/superoptic-communication-queue.service >/dev/null <<CONF
 [Unit]
 Description=SuperOptic communication queue worker
@@ -1358,6 +1384,7 @@ CONF
         run systemctl enable --now superoptic-mgs-node.service
     fi
     run systemctl enable --now superoptic-billing-maintenance.timer
+    run systemctl enable --now superoptic-payment-outbox.timer
     run systemctl enable --now superoptic-communication-queue.timer
     run systemctl enable --now superoptic-pg365-status.timer
     run systemctl enable --now superoptic-radius-coa-worker.timer

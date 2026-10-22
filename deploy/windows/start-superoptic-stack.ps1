@@ -8,9 +8,12 @@ param(
     [int]$MysqlPort = 3306,
     [int]$MgsPort = 3000,
     [int]$WhatsappBridgePort = 4001,
+    [int]$SnmpTrapListenPort = 1162,
     [switch]$SkipMgs,
+    [switch]$StartMgs,
     [switch]$SkipWhatsappBridge,
     [switch]$SkipWorkers,
+    [switch]$StartSnmpTrapListener,
     [switch]$DryRun
 )
 
@@ -87,6 +90,10 @@ function Start-ServiceOrBatch {
 function Start-MgsNode {
     if ($SkipMgs) {
         Write-StackLog "MGS Node start skipped by flag"
+        return
+    }
+    if (-not $StartMgs) {
+        Write-StackLog "MGS Node start disabled by default (superopticnet is now the single system of record; pass -StartMgs to opt back in, see docs/39_MGS_NODE_CONSOLIDATION.md)"
         return
     }
     if (Test-TcpOpen -HostName "127.0.0.1" -Port $MgsPort) {
@@ -174,6 +181,44 @@ function Start-WhatsappBridge {
         -WindowStyle Hidden
 }
 
+function Start-SnmpTrapListener {
+    # Opt-in, same as MGS Node above: this is a brand new always-on UDP
+    # listener (docs/39_MGS_NODE_CONSOLIDATION.md Faza 1), so it must not
+    # silently start running on a machine that didn't ask for it. A missed
+    # trap while the listener is down is not silently lost data in the way a
+    # missed HTTP request would be -- the source device just re-sends the
+    # next state-change trap -- so there is no urgency to make this default-on.
+    if (-not $StartSnmpTrapListener) {
+        Write-StackLog "SNMP trap listener start disabled by default (pass -StartSnmpTrapListener to opt in, see docs/39_MGS_NODE_CONSOLIDATION.md)"
+        return
+    }
+    if (Test-TcpOpen -HostName "127.0.0.1" -Port $SnmpTrapListenPort) {
+        Write-StackLog "SNMP trap listener already listens on port $SnmpTrapListenPort"
+        return
+    }
+    $php = Join-Path $XamppRoot "php\php.exe"
+    $listenerScript = Join-Path $WebRoot "tools\snmp-trap-listener.php"
+    if (!(Test-Path -LiteralPath $php) -or !(Test-Path -LiteralPath $listenerScript)) {
+        Write-StackLog "SNMP trap listener start source not found. Checked $php and $listenerScript"
+        return
+    }
+    if ($DryRun) {
+        Write-StackLog "[DRY-RUN] Start SNMP trap listener on port $SnmpTrapListenPort"
+        return
+    }
+
+    Write-StackLog "Starting SNMP trap listener on port $SnmpTrapListenPort"
+    $logDir = Join-Path $WebRoot "tmp"
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    Start-Process `
+        -FilePath $php `
+        -ArgumentList @("$listenerScript", "--port=$SnmpTrapListenPort") `
+        -WorkingDirectory $WebRoot `
+        -RedirectStandardOutput (Join-Path $logDir "snmp-trap-listener.out.log") `
+        -RedirectStandardError (Join-Path $logDir "snmp-trap-listener.err.log") `
+        -WindowStyle Hidden
+}
+
 function Sync-WhatsappPairingWorkerToken {
     if ($SkipWhatsappBridge) {
         return
@@ -254,5 +299,6 @@ Start-ServiceOrBatch -Label "MySQL" -ServiceNames @("mysql", "mysql80", "mariadb
 Start-MgsNode
 Sync-WhatsappPairingWorkerToken
 Start-WhatsappBridge
+Start-SnmpTrapListener
 Start-WorkerSupervisor
 Write-StackLog "SuperOptic stack autostart end"

@@ -28,6 +28,48 @@ function billing_require_employee(bool $adminOnly = false, ?string $requiredModu
     return $user;
 }
 
+function billing_actor_can_modify_customer(array $user): bool
+{
+    return app_portal_is_admin($user);
+}
+
+function billing_actor_can_manage_customer_network(array $user): bool
+{
+    if (app_portal_is_admin($user)) {
+        return true;
+    }
+
+    $role = strtolower(trim((string) ($user['employee_role'] ?? '')));
+    return in_array($role, ['operator', 'support', 'noc'], true);
+}
+
+function billing_actor_can_create_customer(array $user): bool
+{
+    if (app_portal_is_admin($user)) {
+        return true;
+    }
+
+    $role = strtolower(trim((string) ($user['employee_role'] ?? '')));
+    return in_array($role, ['operator', 'support'], true);
+}
+
+function billing_actor_can_change_customer_package(array $user): bool
+{
+    return billing_actor_can_create_customer($user);
+}
+
+function billing_reject_customer_write(array $user): void
+{
+    if (billing_actor_can_modify_customer($user)) {
+        return;
+    }
+
+    http_response_code(403);
+    header('Content-Type: text/html; charset=UTF-8');
+    echo '<!DOCTYPE html><html lang="az"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>403</title></head><body><h1>İcazə yoxdur</h1><p>Bu əməliyyat üçün səlahiyyətiniz yoxdur. İcazəli əməliyyatları müştəri profilindən seçin.</p><a href="billing-customers.php">Müştəri axtarışına qayıt</a></body></html>';
+    exit;
+}
+
 function billing_nav_groups(string $lang): array
 {
     $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';

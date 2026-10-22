@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/billing-payment-workflow-lib.php';
+require_once __DIR__ . '/legacy-customer-secret-lib.php';
 
 function app_db_ready(): bool
 {
@@ -2608,6 +2609,20 @@ function app_db_insert_ticket(array $ticket): bool
     }
 
     $ticketNo = trim((string) ($ticket['ticket_no'] ?? app_db_next_ticket_no()));
+    // Customer, CRM and mobile tickets receive an area-aware assignee when the
+    // dispatcher did not explicitly choose one.  The least loaded eligible
+    // field employee is selected; an explicit assignment always wins.
+    if ((int) ($ticket['assigned_technician_account_id'] ?? 0) <= 0) {
+        $assignee = app_db_dispatch_ticket_assignee($db, (string) ($ticket['area'] ?? ''));
+        if ($assignee !== null) {
+            $ticket['assigned_technician_account_id'] = (int) $assignee['id'];
+            $ticket['assigned_technician_name'] = (string) $assignee['full_name'];
+            $ticket['status'] = 'assigned';
+            $metadata = is_array($ticket['metadata'] ?? null) ? $ticket['metadata'] : [];
+            $metadata['dispatch'] = ['mode' => 'area_workload', 'assigned_at' => app_db_now()];
+            $ticket['metadata'] = $metadata;
+        }
+    }
     if (strlen($ticketNo) > 32) {
         $ticketNo = substr($ticketNo, 0, 23) . '-' . substr(hash('sha256', $ticketNo), 0, 8);
     }
@@ -2664,9 +2679,51 @@ function app_db_insert_ticket(array $ticket): bool
     if ($ok) {
         $ticketId = (int) $db->lastInsertId();
         app_db_add_ticket_event($ticketId, 'created', (string) ($ticket['message'] ?? ''), (int) ($ticket['created_by_account_id'] ?? 0), (string) ($ticket['created_by_name'] ?? ''));
+        $assigneeId = (int) ($ticket['assigned_technician_account_id'] ?? 0);
+        if ($assigneeId > 0) {
+            app_db_add_ticket_event($ticketId, 'assigned', 'Bilet avtomatik ərazi və yük bölgüsünə görə yönləndirildi.', 0, 'Sistem', ['technician_account_id' => $assigneeId]);
+            app_db_notify_ticket_assignee($db, $assigneeId, $ticketId, $ticketNo, (string) ($ticket['subject'] ?? ''), (string) ($ticket['area'] ?? ''));
+        }
     }
 
     return $ok;
+}
+
+function app_db_dispatch_ticket_assignee(PDO $db, string $area): ?array
+{
+    $area = trim($area);
+    if ($area === '') return null;
+    $statement = $db->prepare(
+        "SELECT p.id,p.full_name,COUNT(t.id) AS open_workload
+           FROM portal_accounts p
+      LEFT JOIN portal_tickets t ON t.assigned_technician_account_id=p.id
+              AND t.resolved_at IS NULL AND t.status NOT IN ('resolved','closed','Baglandi','Tesdiqlendi')
+          WHERE p.role='employee' AND p.is_active=1
+            AND (p.account_type='technician' OR p.employee_role IN ('technician','team_lead','engineer'))
+            AND (p.area=:area OR EXISTS (SELECT 1 FROM portal_account_areas paa WHERE paa.account_id=p.id AND paa.area=:area))
+          GROUP BY p.id,p.full_name
+          ORDER BY open_workload ASC,p.full_name ASC,p.id ASC LIMIT 1"
+    );
+    $statement->execute(['area' => $area]);
+    $row = $statement->fetch(PDO::FETCH_ASSOC);
+    return is_array($row) ? $row : null;
+}
+
+function app_db_notify_ticket_assignee(PDO $db, int $accountId, int $ticketId, string $ticketNo, string $subject, string $area): void
+{
+    if ($accountId <= 0 || $ticketId <= 0 || !app_db_table_exists($db, 'mobile_manager_alerts')) return;
+    $statement = $db->prepare(
+        "INSERT IGNORE INTO mobile_manager_alerts
+         (alert_key,account_id,alert_type,severity,title,message,event_at,metadata_json)
+         VALUES (?,?, 'ticket_assigned','high',?,?,NOW(),?)"
+    );
+    $statement->execute([
+        'ticket-assigned-' . $ticketId . '-' . $accountId,
+        $accountId,
+        'Yeni bilet sizə yönləndirildi',
+        trim($ticketNo . ' · ' . $subject . ($area !== '' ? ' · ' . $area : '')),
+        app_db_json_encode(['ticket_id' => $ticketId, 'ticket_no' => $ticketNo, 'area' => $area]),
+    ]);
 }
 
 function app_db_add_ticket_event(int $ticketId, string $eventType, string $note = '', int $actorAccountId = 0, string $actorName = '', ?array $payload = null): void
@@ -4909,6 +4966,46 @@ function app_radius_request_disconnect(PDO $db, array $session, array $user, str
     return (int) $db->lastInsertId();
 }
 
+function app_radius_request_account_disconnect(PDO $db, array $account, string $reason): int
+{
+    $accountId = (int) ($account['id'] ?? 0);
+    if ($accountId <= 0 || (string) ($account['role'] ?? '') !== 'customer') {
+        return 0;
+    }
+
+    $payload = app_db_account_payload($account);
+    $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
+    $services = is_array($payload['internet_services'] ?? null)
+        ? array_values(array_filter($payload['internet_services'], 'is_array'))
+        : [];
+    $username = trim((string) ($services[0]['username'] ?? $billing['pppoe_username'] ?? $account['subscriber_code'] ?? $account['login'] ?? ''));
+    if ($username === '') {
+        return 0;
+    }
+
+    $session = ['account_id' => $accountId, 'username' => $username];
+    $statement = $db->prepare(
+        'SELECT username, framedipaddress, nasipaddress, nasportid, callingstationid,
+                acctsessionid, acctuniqueid AS acctuniquesessionid, nasidentifier, calledstationid
+           FROM radacct
+          WHERE username = :username AND acctstoptime IS NULL
+          ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
+          LIMIT 1'
+    );
+    $statement->execute(['username' => $username]);
+    $activeSession = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($activeSession)) {
+        return 0;
+    }
+
+    return app_radius_request_disconnect(
+        $db,
+        $session + $activeSession,
+        ['id' => 0, 'full_name' => 'Billing automation'],
+        trim($reason) !== '' ? $reason : 'Billing lifecycle session refresh'
+    );
+}
+
 function app_radius_settings(): array
 {
     return [
@@ -5657,14 +5754,14 @@ function app_billing_refresh_account_countdown(array $account, bool $syncExpired
     return $updated;
 }
 
-function app_billing_refresh_countdowns(int $limit = 1000, bool $syncExpired = true): array
+function app_billing_refresh_countdowns(int $limit = 10000, bool $syncExpired = true): array
 {
     $db = app_db();
     if (!$db instanceof PDO) {
         return ['checked' => 0, 'updated' => 0, 'expired' => 0, 'failed' => 0];
     }
 
-    $limit = max(1, min(5000, $limit));
+    $limit = max(1, min(100000, $limit));
     $statement = $db->prepare(
         "SELECT DISTINCT a.*
          FROM portal_accounts a
@@ -5711,6 +5808,18 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
 
     $payload = app_db_account_payload($account);
     $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
+    $vaultPassword = '';
+    if (trim((string) $cleartextPassword) === '' && (int) ($account['id'] ?? 0) > 0) {
+        try {
+            $vaultPassword = trim((string) app_legacy_customer_secret_reveal(
+                $db,
+                (int) $account['id'],
+                'pppoe_password'
+            ));
+        } catch (Throwable) {
+            $vaultPassword = '';
+        }
+    }
     $services = is_array($payload['internet_services'] ?? null) ? array_values(array_filter($payload['internet_services'], 'is_array')) : [];
     if ($services === []) {
         $services[] = [
@@ -5737,6 +5846,9 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
         }
 
         $password = (string) ($service['password'] ?? ($index === 0 ? ($cleartextPassword ?? $billing['pppoe_password'] ?? '') : ''));
+        if ($password === '' && $index === 0 && $vaultPassword !== '') {
+            $password = $vaultPassword;
+        }
         $plan = (string) ($service['tariff'] ?? $account['plan'] ?? $billing['tariff'] ?? '');
         $poolName = (string) ($service['pool'] ?? $billing['pool'] ?? ($serviceType === 'ipoe' ? 'IPoE Pool 1100' : 'Pool 1 - Core'));
         $assignedIp = trim((string) ($service['ip_address'] ?? $service['assigned_ip'] ?? ($index === 0 ? ($billing['ip_address'] ?? '') : '')));
@@ -6074,6 +6186,7 @@ function app_billing_process_due_suspensions(): array
             $deactivateStatement->execute(['id' => (int) $account['id']]);
             $updated = app_db_account_by_id((int) $account['id']);
             if ($updated !== null && app_billing_sync_radius_account($updated)) {
+                app_radius_request_account_disconnect($db, $updated, 'Service expired; force RADIUS re-authentication');
                 $result['suspended']++;
                 continue;
             }
@@ -6105,7 +6218,6 @@ function app_billing_payment_external_exists(string $externalId): bool
 function app_billing_required_payment_amount(array $account, array $payload, array $billing = [], ?array $tariff = null): float
 {
     $billing = $billing !== [] ? $billing : (is_array($payload['billing'] ?? null) ? $payload['billing'] : []);
-    $balance = app_billing_parse_money_amount($billing['balance'] ?? 0);
     $monthlyTotal = app_billing_parse_money_amount($billing['monthly_total'] ?? 0);
     if ($monthlyTotal <= 0) {
         $monthlyTotal = app_billing_parse_money_amount($billing['internet_monthly_fee'] ?? 0)
@@ -6115,7 +6227,138 @@ function app_billing_required_payment_amount(array $account, array $payload, arr
         $monthlyTotal = app_billing_account_default_amount($account, $billing, $tariff);
     }
 
-    return max(0.01, $balance > 0 ? $balance : $monthlyTotal);
+    return max(0.01, $monthlyTotal);
+}
+
+/**
+ * Applies prepaid customer credit to the current tariff.  `billing.balance`
+ * is a credit balance imported from the prior billing, not a debt amount.
+ * A balance debit is deliberately not inserted into billing_payments because
+ * the original terminal/cash receipt already represents the revenue.
+ */
+function app_billing_apply_available_balance(array $account, ?PDO $db = null): array
+{
+    $db ??= app_db();
+    $accountId = (int) ($account['id'] ?? 0);
+    if (!$db instanceof PDO || $accountId <= 0 || (string) ($account['role'] ?? '') !== 'customer') {
+        return ['ok' => false, 'reason' => 'invalid_customer'];
+    }
+
+    try {
+        $db->beginTransaction();
+        $locked = $db->prepare('SELECT * FROM portal_accounts WHERE id=? AND role="customer" FOR UPDATE');
+        $locked->execute([$accountId]);
+        $current = $locked->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($current)) throw new RuntimeException('customer_not_found');
+        $payload = app_db_account_payload($current);
+        $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
+        $tariff = app_billing_account_tariff($db, $current, $billing);
+        $payload = app_billing_refresh_payload_totals($current, $payload, $tariff);
+        $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
+        $available = app_billing_parse_money_amount($billing['balance'] ?? 0);
+        $price = app_billing_required_payment_amount($current, $payload, $billing, $tariff);
+        $oldExpiresAt = app_billing_payload_primary_expires_at($payload, $billing);
+        $expiryTimestamp = $oldExpiresAt !== '' ? strtotime($oldExpiresAt) : false;
+        // Stored credit must be charged only when a service is due.  Otherwise a
+        // customer who prepaid ahead would lose a future month's credit early.
+        if ((int) ($current['is_active'] ?? 0) === 1 && $expiryTimestamp !== false && $expiryTimestamp > time()) {
+            $db->rollBack();
+            return ['ok' => false, 'reason' => 'not_due', 'available' => $available, 'price' => $price];
+        }
+        if ($available + 0.0001 < $price) {
+            $db->rollBack();
+            return ['ok' => false, 'reason' => 'insufficient_balance', 'available' => $available, 'price' => $price];
+        }
+
+        $days = app_billing_account_default_days($current, $billing, $tariff);
+        $expiresAt = app_billing_resolve_next_expires_at($days, app_billing_account_stable_due_day($current, $billing), $oldExpiresAt, time());
+        $remaining = max(0.0, $available - $price);
+        $billing['balance'] = number_format($remaining, 2, '.', '') . ' AZN';
+        $billing['status'] = 'Aktiv';
+        $billing['radius_status'] = 'Aktiv';
+        $billing['expires_at'] = $expiresAt;
+        $billing['days_left'] = app_billing_days_left($expiresAt);
+        $billing['remaining_days_raw'] = app_billing_remaining_days_text($expiresAt);
+        $billing['last_balance_auto_charge_at'] = app_db_now();
+        $payload['billing'] = $billing;
+        $services = is_array($payload['internet_services'] ?? null) ? array_values(array_filter($payload['internet_services'], 'is_array')) : [];
+        foreach ($services as $index => $service) {
+            $services[$index]['status'] = 'active';
+            $services[$index]['expires_at'] = $expiresAt;
+        }
+        if ($services !== []) $payload['internet_services'] = $services;
+        $history = is_array($payload['balance_auto_charge_history'] ?? null) ? $payload['balance_auto_charge_history'] : [];
+        array_unshift($history, [
+            'at' => app_db_now(), 'amount' => $price, 'balance_before' => $available,
+            'balance_after' => $remaining, 'expires_at' => $expiresAt,
+            'tariff' => (string) ($tariff['name'] ?? $billing['tariff'] ?? $current['plan'] ?? ''),
+        ]);
+        $payload['balance_auto_charge_history'] = array_slice($history, 0, 50);
+        $update = $db->prepare('UPDATE portal_accounts SET payload_json=?,status="Aktiv",is_active=1,updated_at=NOW() WHERE id=?');
+        $update->execute([app_db_json_encode($payload), $accountId]);
+        $serviceUpdate = $db->prepare('UPDATE billing_radius_services SET status="active",expires_at=?,updated_at=NOW() WHERE account_id=?');
+        $serviceUpdate->execute([$expiresAt, $accountId]);
+        $db->commit();
+        $fresh = app_db_account_by_id($accountId);
+        if (!is_array($fresh) || !app_billing_sync_radius_account($fresh, null, $db)) {
+            return ['ok' => false, 'reason' => 'radius_sync_failed', 'available' => $available, 'price' => $price];
+        }
+        try {
+            app_audit_ensure_schema($db);
+            app_audit_record($db, [
+                'module_key' => 'billing', 'operation_class' => 'balance_auto_charge', 'action_type' => 'customer_balance_auto_charge',
+                'entity_type' => 'customer', 'entity_id' => (string) $accountId, 'status' => 'executed',
+                'actor_account_id' => null, 'actor_name' => 'Billing automation',
+                'summary' => 'Prepaid balance auto-applied to tariff',
+                'payload' => ['amount' => $price, 'balance_before' => $available, 'balance_after' => $remaining, 'expires_at' => $expiresAt],
+                'sensitivity' => 'high',
+            ]);
+        } catch (Throwable) { }
+        return ['ok' => true, 'amount' => $price, 'balance_before' => $available, 'balance_after' => $remaining, 'expires_at' => $expiresAt];
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) $db->rollBack();
+        return ['ok' => false, 'reason' => 'balance_auto_charge_failed'];
+    }
+}
+
+function app_billing_apply_available_balances(int $limit = 10000): array
+{
+    $db = app_db();
+    $result = ['checked' => 0, 'activated' => 0, 'insufficient' => 0, 'not_due' => 0, 'failed' => 0];
+    if (!$db instanceof PDO) return $result;
+    $limit = max(1, min(100000, $limit));
+    $statement = $db->prepare(
+        'SELECT * FROM portal_accounts WHERE role="customer" AND CAST(REPLACE(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.balance")), "0"), " AZN", "") AS DECIMAL(12,2)) > 0 AND (is_active=0 OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "") = "" OR STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "%Y-%m-%d %H:%i:%s") <= NOW()) ORDER BY id ASC LIMIT ?'
+    );
+    $statement->bindValue(1, $limit, PDO::PARAM_INT);
+    $statement->execute();
+    foreach ($statement->fetchAll(PDO::FETCH_ASSOC) ?: [] as $account) {
+        $result['checked']++;
+        $outcome = app_billing_apply_available_balance($account, $db);
+        if (!empty($outcome['ok'])) $result['activated']++;
+        elseif (($outcome['reason'] ?? '') === 'insufficient_balance') $result['insufficient']++;
+        elseif (($outcome['reason'] ?? '') === 'not_due') $result['not_due']++;
+        else $result['failed']++;
+    }
+    return $result;
+}
+
+function app_billing_apply_borrowed_day_deduction(string $newExpiresAt, string $oldExpiresAt, int $pendingDays, ?int $now = null): array
+{
+    $now ??= time();
+    $newTimestamp = strtotime($newExpiresAt);
+    if ($pendingDays <= 0 || $newTimestamp === false) {
+        return ['expires_at' => $newExpiresAt, 'deducted_days' => 0, 'pending_days' => max(0, $pendingDays)];
+    }
+    $oldTimestamp = strtotime($oldExpiresAt);
+    $extensionBase = max($now, $oldTimestamp === false ? 0 : $oldTimestamp);
+    $extensionDays = max(0, (int) floor(($newTimestamp - $extensionBase) / 86400));
+    $deducted = min($pendingDays, $extensionDays);
+    return [
+        'expires_at' => date('Y-m-d H:i:s', $newTimestamp - $deducted * 86400),
+        'deducted_days' => $deducted,
+        'pending_days' => $pendingDays - $deducted,
+    ];
 }
 
 function app_billing_apply_customer_payment(
@@ -6130,6 +6373,15 @@ function app_billing_apply_customer_payment(
     string $correlationId = ''
 ): bool
 {
+    $pauseValue = strtolower(trim((string) getenv('BILLING_PAYMENT_INGRESS_PAUSED')));
+    $pauseFile = trim((string) getenv('BILLING_PAYMENT_INGRESS_PAUSE_FILE'));
+    if ($pauseFile === '') {
+        $pauseFile = '/run/superoptic-payment-ingress-paused';
+    }
+    if (in_array($pauseValue, ['1', 'true', 'yes', 'on'], true) || is_file($pauseFile)) {
+        return false;
+    }
+
     $account = app_db_account_by_subscriber_code($subscriberCode);
     $db = app_db();
     if (!$db instanceof PDO || $account === null) {
@@ -6161,6 +6413,13 @@ function app_billing_apply_customer_payment(
     $newExpiresAt = $fullPayment
         ? app_billing_resolve_next_expires_at($resolvedDays, $stableDueDay, $oldExpiresAt, time())
         : $oldExpiresAt;
+    $borrowedDaysDeducted = 0;
+    if ($fullPayment && (int) ($billing['borrowed_days_pending'] ?? 0) > 0) {
+        $borrowedDeduction = app_billing_apply_borrowed_day_deduction($newExpiresAt, $oldExpiresAt, (int) $billing['borrowed_days_pending']);
+        $newExpiresAt = (string) $borrowedDeduction['expires_at'];
+        $borrowedDaysDeducted = (int) $borrowedDeduction['deducted_days'];
+        $billing['borrowed_days_pending'] = (int) $borrowedDeduction['pending_days'];
+    }
     $remainingDays = app_billing_days_left($newExpiresAt);
     if ($fullPayment) {
         $billing['status'] = 'Aktiv';
@@ -6210,11 +6469,13 @@ function app_billing_apply_customer_payment(
         'days_added' => $fullPayment ? $resolvedDays : 0,
         'expires_at' => $newExpiresAt,
         'effect' => $fullPayment ? 'activated' : 'partial_balance_reduction',
+        'borrowed_days_deducted' => $borrowedDaysDeducted,
     ];
     $payments = is_array($payload['payments'] ?? null) ? $payload['payments'] : [];
     array_unshift($payments, $payment);
     $payload['payments'] = array_slice($payments, 0, 30);
     $metadata = [
+        'borrowed_days_deducted' => $borrowedDaysDeducted,
         'days_added' => $resolvedDays,
         'previous_expires_at' => $oldExpiresAt !== '' ? $oldExpiresAt : null,
         'new_expires_at' => $fullPayment ? $newExpiresAt : null,
@@ -6271,6 +6532,11 @@ function app_billing_apply_customer_payment(
     $operationId = 0;
     $actionId = 0;
     try {
+        $customerLock = $db->prepare('SELECT payload_json FROM portal_accounts WHERE id=? FOR UPDATE');
+        $customerLock->execute([(int) $account['id']]);
+        if ((string) $customerLock->fetchColumn() !== (string) ($account['payload_json'] ?? '')) {
+            throw new RuntimeException('Customer changed concurrently; retry payment.');
+        }
         $operationStatement = $db->prepare(
             'INSERT INTO billing_payment_operations
                 (account_id, subscriber_code, idempotency_key, request_hash, correlation_id, state,
@@ -6409,6 +6675,38 @@ function app_billing_apply_customer_payment(
         return false;
     }
 
+    try {
+        $freshAccount = app_db_account_by_id((int) $account['id']);
+        if (is_array($freshAccount)) {
+            $messageActor = ['id' => 0, 'full_name' => 'Billing automation'];
+            app_message_queue_for_account(
+                $freshAccount,
+                'payment_received',
+                'auto',
+                '',
+                $messageActor,
+                false,
+                ['amount' => number_format($resolvedAmount, 2, '.', '')]
+            );
+            if ($fullPayment) {
+                app_message_queue_for_account(
+                    $freshAccount,
+                    'service_activated_30d',
+                    'auto',
+                    '',
+                    $messageActor,
+                    false,
+                    [
+                        'expires_at' => $newExpiresAt,
+                        'days_added' => $resolvedDays,
+                    ]
+                );
+            }
+        }
+    } catch (Throwable $exception) {
+        error_log('billing_payment_notification_queue_failed:' . get_class($exception));
+    }
+
     if ($fullPayment && $actionId > 0
         && (!app_billing_payment_outbox_enabled() || app_billing_payment_inline_dispatch_enabled())) {
         $dispatch = app_billing_payment_process_action($db, $actionId, 'inline-payment-' . getmypid());
@@ -6448,10 +6746,10 @@ function app_message_seed_defaults(PDO $db): void
         ],
         [
             'service_activated_30d',
-            'Xidmet 30 gun aktiv edildi',
+            'Xidmet aktiv edildi',
             'billing',
             'sms,whatsapp,app,telegram',
-            'Hormetli {full_name}, {customer_code} nomreli xidmetiniz novbeti 30 gun ucun aktiv edildi. Bitme tarixi: {expires_at}.',
+            'Hormetli {full_name}, {customer_code} nomreli xidmetiniz {days_added} gun ucun aktiv edildi. Bitme tarixi: {expires_at}.',
             'billing.activated',
         ],
         [
@@ -6800,6 +7098,7 @@ function app_message_render_body(string $body, array $account, array $extra = []
         'amount' => (string) ($extra['amount'] ?? $billing['monthly_fee'] ?? ''),
         'expires_at' => (string) ($extra['expires_at'] ?? $billing['expires_at'] ?? ''),
         'days_left' => (string) ($extra['days_left'] ?? $billing['days_left'] ?? ''),
+        'days_added' => (string) ($extra['days_added'] ?? $billing['default_days'] ?? ''),
     ], $extra);
 
     foreach ($values as $key => $value) {
@@ -6904,7 +7203,7 @@ function app_message_channel_for_account(array $account, string $requested = 'au
     ];
 }
 
-function app_message_queue_for_account(array $account, string $templateCode, string $requestedChannel, string $customBody, array $actor, bool $testMode = false): bool
+function app_message_queue_for_account(array $account, string $templateCode, string $requestedChannel, string $customBody, array $actor, bool $testMode = false, array $extra = []): bool
 {
     $db = app_db();
     if (!$db instanceof PDO) {
@@ -6920,7 +7219,7 @@ function app_message_queue_for_account(array $account, string $templateCode, str
         return false;
     }
 
-    $body = app_message_render_body($body, $account);
+    $body = app_message_render_body($body, $account, $extra);
     if ($testMode) {
         $body = "TEST MESAJI\n" . $body;
     }

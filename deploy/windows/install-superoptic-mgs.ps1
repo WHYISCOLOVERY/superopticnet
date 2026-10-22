@@ -266,6 +266,8 @@ function Register-ScheduledTaskCompat {
                 -RepetitionInterval (New-TimeSpan -Minutes $interval)
         } elseif ($Schedule.ToUpperInvariant() -eq 'WEEKLY') {
             $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At '03:00'
+        } elseif ($Schedule.ToUpperInvariant() -eq 'DAILY') {
+            $trigger = New-ScheduledTaskTrigger -Daily -At '03:00'
         } else {
             throw "Unsupported scheduled task cadence: $Schedule"
         }
@@ -525,6 +527,7 @@ if (-not $SkipScheduledTasks) {
     $optimizer = "`"& '$php' '$WebRoot\tools\system-maintenance-optimizer.php' --apply --json`""
     $security = "`"& '$php' '$WebRoot\tools\security-anomaly-scan.php' --record --live`""
     $networkOltRules = "`"& '$php' '$WebRoot\tools\process-network-olt-ticket-rules.php' --apply`""
+    $interfaceTraffic = "`"& '$php' '$WebRoot\tools\poll-device-interface-traffic.php' --apply`""
 
     Register-ScheduledTaskCompat -Name "SuperOptic MGS Billing Maintenance" -Command "powershell.exe" -Arguments ($phpArgsPrefix + $maintenance) -Schedule "MINUTE" -Modifier "5"
     Register-ScheduledTaskCompat -Name "SuperOptic MGS Communication Queue" -Command "powershell.exe" -Arguments ($phpArgsPrefix + $queue) -Schedule "MINUTE" -Modifier "2"
@@ -535,6 +538,7 @@ if (-not $SkipScheduledTasks) {
     Register-ScheduledTaskCompat -Name "SuperOptic MGS Daily Optimizer" -Command "powershell.exe" -Arguments ($phpArgsPrefix + $optimizer) -Schedule "DAILY"
     Register-ScheduledTaskCompat -Name "SuperOptic MGS Security Anomaly Scan" -Command "powershell.exe" -Arguments ($phpArgsPrefix + $security) -Schedule "MINUTE" -Modifier "5"
     Register-ScheduledTaskCompat -Name "SuperOptic MGS OLT Ticket Rules" -Command "powershell.exe" -Arguments ($phpArgsPrefix + $networkOltRules) -Schedule "MINUTE" -Modifier "5"
+    Register-ScheduledTaskCompat -Name "SuperOptic MGS Interface Traffic Poll" -Command "powershell.exe" -Arguments ($phpArgsPrefix + $interfaceTraffic) -Schedule "MINUTE" -Modifier "5"
 }
 
 if (-not $SkipStackAutostart) {

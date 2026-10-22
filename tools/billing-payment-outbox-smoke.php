@@ -144,6 +144,13 @@ try {
     $expect((int) $db->query('SELECT COUNT(*) FROM billing_payment_service_actions WHERE operation_id = ' . $operationId)->fetchColumn() === 1, 'single_service_action');
     $expect((int) $db->query('SELECT COUNT(*) FROM billing_payment_outbox WHERE service_action_id = ' . $actionId)->fetchColumn() === 1, 'single_outbox_job');
     $expect((string) $operation['state'] === 'service_action_pending', 'initial_state_pending');
+    $messageStatement = $db->prepare(
+        'SELECT COUNT(*) FROM communication_messages
+          WHERE account_id = :account_id
+            AND template_code IN ("payment_received", "service_activated_30d")'
+    );
+    $messageStatement->execute(['account_id' => $accountId]);
+    $expect((int) $messageStatement->fetchColumn() === 2, 'payment_and_activation_messages_queued');
 
     for ($attempt = 1; $attempt <= 5; $attempt++) {
         $db->prepare('UPDATE billing_payment_outbox SET available_at = NOW() WHERE service_action_id = :id')
@@ -217,6 +224,7 @@ try {
         $db->prepare('DELETE FROM billing_payments WHERE id = :id')->execute(['id' => $paymentId]);
     }
     if ($accountId > 0) {
+        $db->prepare('DELETE FROM communication_messages WHERE account_id = :id')->execute(['id' => $accountId]);
         foreach (['radcheck', 'radreply', 'radusergroup'] as $table) {
             $db->prepare('DELETE FROM ' . $table . ' WHERE username = :username')->execute(['username' => $subscriberCode]);
         }

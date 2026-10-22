@@ -179,8 +179,24 @@ function spog_update_package_from_request(): array
     }
 
     $tmpName = (string) ($file['tmp_name'] ?? '');
-    if ($tmpName === '' || !is_file($tmpName)) {
+    if ($tmpName === '' || !is_file($tmpName) || !is_uploaded_file($tmpName)) {
         return ['ok' => false, 'error' => 'Update fayli temp qovluqda tapilmadi.'];
+    }
+
+    $maxBytes = max(1, (int) app_setting('mgs_update_max_upload_bytes', 52428800));
+    $size = @filesize($tmpName);
+    if ($size === false || $size <= 0 || $size > $maxBytes) {
+        return ['ok' => false, 'error' => 'Update paketi olcu limitini asir.'];
+    }
+    if (function_exists('finfo_open')) {
+        $fileInfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = $fileInfo ? (string) (finfo_file($fileInfo, $tmpName) ?: '') : '';
+        if ($fileInfo) {
+            finfo_close($fileInfo);
+        }
+        if (!in_array($mime, ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'], true)) {
+            return ['ok' => false, 'error' => 'Update faylinin MIME tipi ZIP deyil.'];
+        }
     }
 
     $targetDir = __DIR__ . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'update-packages';
@@ -189,12 +205,13 @@ function spog_update_package_from_request(): array
     }
 
     $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '-', $originalName) ?: 'update.zip';
-    $targetPath = $targetDir . DIRECTORY_SEPARATOR . date('Ymd-His') . '-' . $safeName;
+    $targetPath = $targetDir . DIRECTORY_SEPARATOR . date('Ymd-His') . '-' . bin2hex(random_bytes(6)) . '-' . $safeName;
     if (!move_uploaded_file($tmpName, $targetPath)) {
         if (PHP_SAPI !== 'cli' || !@rename($tmpName, $targetPath)) {
             return ['ok' => false, 'error' => 'Update fayli temp qovluqa kocurulmedi.'];
         }
     }
+    @chmod($targetPath, 0600);
 
     return ['ok' => true, 'path' => $targetPath];
 }
@@ -464,8 +481,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'snmpPort' => max(1, (int) ($_POST['snmp_port'] ?? 161)),
                 'snmpTrapPort' => max(1, (int) ($_POST['snmp_trap_port'] ?? 162)),
                 'snmpVersion' => clean_text((string) ($_POST['snmp_version'] ?? '2c')),
-                'snmpReadCommunity' => clean_text((string) ($_POST['snmp_read_community'] ?? 'public')),
-                'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? 'private')),
+                'snmpReadCommunity' => clean_text((string) ($_POST['snmp_read_community'] ?? '')),
+                'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? '')),
                 'driverMode' => clean_text((string) ($_POST['driver_mode'] ?? 'real')),
             ];
             $result = app_mgs_noc_service_request_json(
@@ -666,7 +683,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'hire_date' => (string) ($_POST['hire_date'] ?? ''),
                 'phone' => (string) ($_POST['phone'] ?? ''),
                 'email' => (string) ($_POST['email'] ?? ''),
-                'area' => (string) ($_POST['area'] ?? ''),
+                'responsible_areas' => $_POST['responsible_areas'] ?? [],
                 'branch_id' => (string) ($_POST['branch_id'] ?? ''),
                 'address' => (string) ($_POST['address'] ?? ''),
                 'salary_mode' => (string) ($_POST['salary_mode'] ?? 'gross'),
@@ -684,7 +701,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'full_name' => (string) ($_POST['full_name'] ?? ''), 'login' => (string) ($_POST['login'] ?? ''),
                 'position_id' => (int) ($_POST['position_id'] ?? 0), 'hire_date' => (string) ($_POST['hire_date'] ?? ''),
                 'phone' => (string) ($_POST['phone'] ?? ''), 'email' => (string) ($_POST['email'] ?? ''),
-                'area' => (string) ($_POST['area'] ?? ''), 'branch_id' => (string) ($_POST['branch_id'] ?? ''), 'address' => (string) ($_POST['address'] ?? ''),
+                'responsible_areas' => $_POST['responsible_areas'] ?? [], 'branch_id' => (string) ($_POST['branch_id'] ?? ''), 'address' => (string) ($_POST['address'] ?? ''),
             ], $user);
             spog_operations_flash_redirect([
                 'type' => !empty($localResult['ok']) ? 'success' : 'error',
@@ -1732,7 +1749,7 @@ $hasNetworkDefinitions = spog_table_exists($db, 'network_vlan_definitions');
 $metrics = [
     'customers' => spog_count($db, "SELECT COUNT(*) FROM portal_accounts WHERE role = 'customer'"),
     'active_customers' => spog_count($db, "SELECT COUNT(*) FROM portal_accounts WHERE role = 'customer' AND is_active = 1"),
-    'online_sessions' => spog_count($db, "SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)"),
+    'online_sessions' => spog_count($db, "SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)"),
     'payments_today' => spog_sum($db, "SELECT COALESCE(SUM(amount),0) FROM billing_payments WHERE created_at >= CURDATE()"),
     'open_tickets' => spog_count($db, "SELECT COUNT(*) FROM portal_tickets WHERE status <> 'Baglandi'"),
     'queued_messages' => spog_count($db, "SELECT COUNT(*) FROM communication_messages WHERE status = 'queued'"),
@@ -2409,7 +2426,7 @@ $legacyModuleMap = app_stage3_filter_workspace_cards($legacyModuleMap, $user, $d
 
         <section class="mgs-stat-grid portal-reveal">
             <?php billing_render_stat_card('Cemi musteri', (string) $metrics['customers'], $metrics['active_customers'] . ' aktiv', 'fa-users', 'blue', 'billing-customers.php'); ?>
-            <?php billing_render_stat_card('Online sessiya', (string) $metrics['online_sessions'], 'Radius accounting', 'fa-wifi', 'green', 'radius-active.php'); ?>
+            <?php billing_render_stat_card('Son 20 dəq online', (string) $metrics['online_sessions'], 'RADIUS accounting yeniləməsi', 'fa-wifi', 'green', 'radius-active.php'); ?>
             <?php billing_render_stat_card('Bugun gelir', billing_money($metrics['payments_today']), 'Billing/maliyye', 'fa-coins', 'orange', 'billing-payments.php'); ?>
             <?php billing_render_stat_card('Aciq ticket', (string) $metrics['open_tickets'], 'CRM/NOC', 'fa-ticket', 'red', 'crm.php'); ?>
             <?php billing_render_stat_card('Mesaj queue', (string) $metrics['queued_messages'], 'Provider gozleyen', 'fa-message', 'navy', 'message-center.php'); ?>
@@ -2582,8 +2599,8 @@ $legacyModuleMap = app_stage3_filter_workspace_cards($legacyModuleMap, $user, $d
                                     <input type="number" name="snmp_port" placeholder="SNMP port" value="<?= e((string) app_setting('mgs_snmp_port', 161)); ?>" min="1" max="65535">
                                 </div>
                                 <div class="portal-form-row portal-grid-slim">
-                                    <input type="text" name="snmp_read_community" placeholder="SNMP RO" value="<?= e((string) app_setting('mgs_snmp_read_community', 'public')); ?>">
-                                    <input type="text" name="snmp_write_community" placeholder="SNMP RW" value="<?= e((string) app_setting('mgs_snmp_write_community', 'private')); ?>">
+                                    <input type="text" name="snmp_read_community" placeholder="SNMP RO (vault/env)" value="<?= e((string) app_environment_secret('MGS_SNMP_READ_COMMUNITY')); ?>">
+                                    <input type="text" name="snmp_write_community" placeholder="SNMP RW (vault/env)" value="<?= e((string) app_environment_secret('MGS_SNMP_WRITE_COMMUNITY')); ?>">
                                 </div>
                                 <div class="portal-form-row portal-grid-slim">
                                     <input type="number" name="snmp_trap_port" placeholder="Trap port" value="<?= e((string) app_setting('mgs_snmp_trap_port', 162)); ?>" min="1" max="65535">
@@ -4710,10 +4727,16 @@ $legacyModuleMap = app_stage3_filter_workspace_cards($legacyModuleMap, $user, $d
                 }
                 if (form) {
                     const values = {...data, employee_account_id: data.id || ''};
-                    ['employee_account_id', 'full_name', 'login', 'position_id', 'hire_date', 'phone', 'email', 'area', 'branch_id', 'address'].forEach((name) => {
+                    ['employee_account_id', 'full_name', 'login', 'position_id', 'hire_date', 'phone', 'email', 'branch_id', 'address'].forEach((name) => {
                         const field = form.elements.namedItem(name);
                         if (field) field.value = values[name] ?? '';
                     });
+                    const areaField = form.elements.namedItem('responsible_areas[]');
+                    if (areaField && areaField.options) {
+                        const areas = Array.isArray(values.responsible_areas) && values.responsible_areas.length
+                            ? values.responsible_areas : (values.area ? [values.area] : []);
+                        [...areaField.options].forEach((option) => { option.selected = areas.includes(option.value); });
+                    }
                 }
             }
 

@@ -31,7 +31,7 @@ function app_noc_action_roles(): array
         'record_noc_alarm' => ['noc'],
         'read_security_anomaly' => ['support', 'technician', 'engineer', 'noc'],
         'run_security_anomaly_scan' => ['noc'],
-        'read_router' => ['noc'],
+        'read_router' => ['support', 'operator', 'noc'],
         'manage_router' => [],
         'bind_router' => ['noc'],
     ];

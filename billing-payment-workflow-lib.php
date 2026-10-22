@@ -284,6 +284,9 @@ function app_billing_payment_process_action(
         if (!$ok) {
             throw new RuntimeException('radius_sync_returned_false');
         }
+        if ($executor === null) {
+            app_radius_request_account_disconnect($db, $account, 'Payment activation; force RADIUS re-authentication');
+        }
     } catch (Throwable $exception) {
         $errorCode = substr((string) preg_replace('/[^A-Za-z0-9_.:-]+/', '_', get_class($exception)), 0, 96);
         $errorMessage = substr((string) preg_replace('/\s+/', ' ', $exception->getMessage()), 0, 255);

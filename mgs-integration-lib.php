@@ -1319,15 +1319,18 @@ function app_mgs_record_hr_attendance_event(array $input, array $actor = [], ?PD
     $note = clean_text((string) ($input['note'] ?? '')) ?: null;
     $employeeName = (string) ($employee['full_name'] ?? $employee['login'] ?? ('Employee #' . $employeeId));
 
+    $ownsTransaction = !$db->inTransaction();
     try {
-        $db->beginTransaction();
+        if ($ownsTransaction) {
+            $db->beginTransaction();
+        }
         $select = $db->prepare('SELECT * FROM hr_attendance_events WHERE employee_account_id = :employee_id AND work_date = :work_date FOR UPDATE');
         $select->execute(['employee_id' => $employeeId, 'work_date' => $workDate]);
         $before = $select->fetch(PDO::FETCH_ASSOC) ?: null;
 
         if ($eventType === 'check_in') {
             if (is_array($before) && !empty($before['check_in_at'])) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'already_checked_in'];
             }
             $profile = $db->prepare(
@@ -1348,16 +1351,16 @@ function app_mgs_record_hr_attendance_event(array $input, array $actor = [], ?PD
             $insert->execute(['employee_id' => $employeeId, 'employee_name' => $employeeName, 'work_date' => $workDate, 'event_at' => $eventAt->format('Y-m-d H:i:s'), 'status' => $status, 'branch_id' => $branchId, 'source' => $source, 'note' => $note, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null]);
         } else {
             if (!is_array($before) || empty($before['check_in_at'])) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'check_in_required'];
             }
             if (!empty($before['check_out_at'])) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'already_checked_out'];
             }
             $checkIn = new DateTimeImmutable((string) $before['check_in_at']);
             if ($eventAt < $checkIn) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'invalid_checkout_time'];
             }
             $workedMinutes = max(0, (int) floor(($eventAt->getTimestamp() - $checkIn->getTimestamp()) / 60));
@@ -1368,9 +1371,10 @@ function app_mgs_record_hr_attendance_event(array $input, array $actor = [], ?PD
         $select->execute(['employee_id' => $employeeId, 'work_date' => $workDate]);
         $after = $select->fetch(PDO::FETCH_ASSOC) ?: [];
         app_mgs_hr_write_audit($db, 'hr_attendance_' . $eventType, $employeeId, $actor, $employeeName . ': ' . $eventType, ['work_date' => $workDate, 'source' => $source], '', $before, $after);
-        $db->commit();
+        if ($ownsTransaction) $db->commit();
         return ['ok' => true, 'record' => $after];
     } catch (Throwable $exception) {
+        if (!$ownsTransaction) throw $exception;
         if ($db->inTransaction()) {
             $db->rollBack();
         }
@@ -1738,7 +1742,10 @@ function app_mgs_save_hr_employee_compensation(array $input, array $actor = [], 
     $employeeId = (int) ($input['employee_account_id'] ?? $input['employee_id'] ?? 0);
     $employee=app_mgs_hr_employee_record($db,$employeeId);if($employee===[])return['ok'=>false,'error'=>'employee_not_found'];
     $employeeName=clean_text((string)($employee['full_name']??$employee['login']??''));
-    try{$reason=app_mgs_hr_required_reason($input['reason']??$input['change_reason']??$input['note']??$input['note_text']??'');}catch(InvalidArgumentException){return['ok'=>false,'error'=>'reason_required'];}
+    $reason = clean_text((string) ($input['reason'] ?? $input['change_reason'] ?? $input['note'] ?? $input['note_text'] ?? ''));
+    if ($reason === '') {
+        $reason = 'Maaş profili yeniləndi';
+    }
     $salaryMode = app_mgs_hr_status((string) ($input['salary_mode'] ?? 'gross'), ['gross', 'net'], 'gross');
     $effectiveFrom = app_mgs_hr_date_value($input['effective_from'] ?? null) ?? date('Y-m-d');
     if ($salaryMode === 'net') {
@@ -5942,11 +5949,12 @@ function app_mgs_find_python_binary(): ?string
         return $resolved;
     }
 
-    $candidates = ['python', 'py'];
+    $configuredPython = trim(app_config('mgs_python_binary', ''));
+    $candidates = array_values(array_filter([$configuredPython, 'python', 'py']));
     foreach ($candidates as $candidate) {
         $output = [];
         $exitCode = 1;
-        @exec($candidate . ' --version 2>&1', $output, $exitCode);
+        @exec(escapeshellarg($candidate) . ' --version 2>&1', $output, $exitCode);
         if ($exitCode === 0 && $output !== []) {
             $resolved = $candidate;
             return $resolved;
@@ -6691,7 +6699,8 @@ function app_mgs_probe_ssh_auth(
     array $actor = [],
     array $device = [],
     ?PDO $db = null,
-    string $authorizationAction = 'probe_device'
+    string $authorizationAction = 'probe_device',
+    string $healthProfile = ''
 ): array
 {
     $target = array_replace(['ip_address' => trim($ip)], $device);
@@ -6703,6 +6712,9 @@ function app_mgs_probe_ssh_auth(
         );
     }
     $username = trim($username);
+    if ($healthProfile !== '' && ($healthProfile !== 'cisco_health' || strtoupper((string)($device['vendor'] ?? '')) !== 'CISCO')) {
+        return ['reachable'=>false, 'method'=>'ssh_auth', 'error'=>'unsupported_health_profile'];
+    }
     if ($username === '' || $password === '') {
         return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'missing_ssh_credentials'];
     }
@@ -6713,26 +6725,47 @@ function app_mgs_probe_ssh_auth(
         return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'ssh_auth_helper_unavailable'];
     }
 
-    $payloadFile = tempnam(sys_get_temp_dir(), 'mgs_ssh_');
-    if ($payloadFile === false) {
-        return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'ssh_auth_payload_temp_failed'];
-    }
     $payload = [
         'host' => $ip,
         'port' => $port,
         'username' => $username,
         'password' => $password,
         'timeout_ms' => max(800, $timeoutMs),
+        'health_profile' => $healthProfile,
     ];
-    file_put_contents($payloadFile, json_encode($payload, JSON_UNESCAPED_SLASHES));
-
-    $command = escapeshellarg($python)
-        . ' ' . escapeshellarg($script)
-        . ' --payload-file ' . escapeshellarg($payloadFile);
-    $output = [];
-    $exitCode = 1;
-    @exec($command . ' 2>&1', $output, $exitCode);
-    @unlink($payloadFile);
+    // Credentials travel through stdin, not command arguments or a plaintext temp file.
+    $process = @proc_open([$python, $script, '--payload-stdin'],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, __DIR__);
+    if (!is_resource($process)) {
+        return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'ssh_auth_helper_unavailable'];
+    }
+    fwrite($pipes[0], json_encode($payload, JSON_UNESCAPED_SLASHES));
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $stdout = '';
+    $stderr = '';
+    $started = microtime(true);
+    $timedOut = false;
+    do {
+        $stdout .= (string)stream_get_contents($pipes[1]);
+        $stderr .= (string)stream_get_contents($pipes[2]);
+        $running = proc_get_status($process)['running'];
+        if (!$running) { break; }
+        if (microtime(true) - $started > ($healthProfile !== '' ? 18 : 12)) {
+            $timedOut = true;
+            proc_terminate($process);
+            break;
+        }
+        usleep(50000);
+    } while (true);
+    $stdout .= (string)stream_get_contents($pipes[1]);
+    $stderr .= (string)stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
+    if ($timedOut) { return ['reachable'=>false,'method'=>'ssh_auth','error'=>'ssh_auth_timeout']; }
+    $output = explode("\n", trim($stdout !== '' ? $stdout : $stderr));
     $lines = array_values(array_filter(array_map(static fn ($line): string => trim((string) $line), $output), static fn ($line): bool => $line !== ''));
     $text = implode("\n", $lines);
     $jsonCandidate = $text;
@@ -6752,6 +6785,7 @@ function app_mgs_probe_ssh_auth(
         'method' => 'ssh_auth',
         'error' => (string) ($decoded['error'] ?? ''),
         'banner' => (string) ($decoded['banner'] ?? ''),
+        'health' => is_array($decoded['health'] ?? null) ? $decoded['health'] : null,
         'port' => (int) ($decoded['port'] ?? $port),
         'username' => $username,
     ];
@@ -6782,6 +6816,11 @@ function app_mgs_cli_discovery_handler_registry(): array
             'probe' => 'app_mgs_hsgq_cli_discovery_probe',
             'derive' => 'app_mgs_hsgq_derived_command_map_from_discovery',
             'source_label' => 'live_hsgq_cli_discovery',
+        ],
+        'CISCO' => [
+            'probe' => 'app_mgs_cisco_cli_discovery_probe',
+            'derive' => 'app_mgs_cisco_derived_command_map_from_discovery',
+            'source_label' => 'live_cisco_cli_discovery',
         ],
     ];
 }
@@ -8036,6 +8075,145 @@ function app_mgs_parse_hsgq_ont_info_all_rows(string $text): array
     return $rows;
 }
 
+/**
+ * Parse the bounded HSGQ "show ont-optical all" table.  The device prints
+ * PON/ONU, serial, temperature, voltage, bias, ONT TX, ONT RX and (on newer
+ * firmware) the receive level observed by the OLT.  Raw CLI output is never
+ * returned to agent callers; only these typed telemetry fields leave this
+ * parser.
+ */
+function app_mgs_parse_hsgq_ont_optical_all_rows(string $text): array
+{
+    $rows = [];
+    $text = app_repair_mojibake_dynamic(app_repair_mojibake($text));
+    $text = preg_replace('/\x1b\[[0-9;]*[A-Za-z]/', '', $text);
+    foreach (preg_split('/\r?\n/', (string) $text) ?: [] as $line) {
+        $line = trim((string) $line);
+        if ($line === '' || str_starts_with($line, 'PON/ONU') || str_starts_with($line, 'OLT(')) {
+            continue;
+        }
+        if (preg_match(
+            '/^(\d+\/\d+)\s+(\S+)\s+(-?\d+(?:\.\d+)?)\s+C\s+([\d.]+)\s+V\s+([\d.]+)\s+mA\s+([+-]?[\d.]+)\s+dBm\s+([+-]?[\d.]+)\s+dBm(?:\s+([+-]?[\d.]+)\s+dBm)?(?:\s+(\S+))?$/i',
+            $line,
+            $match
+        ) !== 1) {
+            continue;
+        }
+        [$pon, $ontId] = array_pad(explode('/', (string) $match[1], 2), 2, '');
+        $rows[] = [
+            'pon' => $pon,
+            'ont_id' => $ontId,
+            'serial' => trim((string) $match[2]),
+            'temperature' => (float) $match[3],
+            'voltage' => (float) $match[4],
+            'bias_current' => (float) $match[5],
+            'ont_tx' => (float) $match[6],
+            'ont_rx' => (float) $match[7],
+            'olt_rx' => isset($match[8]) && $match[8] !== '' ? (float) $match[8] : null,
+            'name' => (string) ($match[9] ?? ''),
+        ];
+    }
+
+    return $rows;
+}
+
+/**
+ * Read the complete ONT inventory and optical table from one registered HSGQ
+ * OLT.  This is a read-only operation: only fixed show commands are sent and
+ * no device or database configuration is changed.
+ */
+function app_mgs_hsgq_live_ont_inventory(array $device, array $actor = [], ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    $authorization = app_noc_authorize($actor, 'read_ont_live', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('read_ont_live', $authorization);
+    }
+    if (!app_mgs_management_path_ready()) {
+        return ['ok' => false, 'reason' => 'management_path_down'];
+    }
+    if (strtoupper((string) ($device['vendor'] ?? '')) !== 'HSGQ') {
+        return ['ok' => false, 'reason' => 'unsupported_vendor'];
+    }
+
+    $access = app_mgs_device_access_profile($device, $db, $actor, 'read_ont_live');
+    $username = trim((string) ($access['ssh_username'] ?? ''));
+    $password = (string) ($access['ssh_password'] ?? '');
+    if ($username === '' || $password === '') {
+        return ['ok' => false, 'reason' => 'missing_ssh_credentials'];
+    }
+
+    $map = app_mgs_device_command_map($device, $db, $actor);
+    $commands = [
+        trim((string) ($map['enter_enable'] ?? 'enable')),
+        trim((string) ($map['enter_config'] ?? 'configure')),
+        trim((string) ($map['ont_info_all'] ?? 'show ont-info all')),
+        trim((string) ($map['ont_optical_all'] ?? 'show ont-optical all')),
+    ];
+    $commands = array_values(array_filter($commands, static fn (string $command): bool => $command !== ''));
+    $run = app_mgs_hsgq_exec_commands(
+        (string) ($device['ip_address'] ?? ''),
+        $username,
+        $password,
+        $commands,
+        (int) ($access['ssh_port'] ?? 22),
+        12000,
+        $actor,
+        $device,
+        $db,
+        'read_ont_live'
+    );
+    if (empty($run['ok'])) {
+        return ['ok' => false, 'reason' => (string) ($run['reason'] ?? 'command_probe_failed')];
+    }
+
+    $outputs = is_array($run['outputs'] ?? null) ? $run['outputs'] : [];
+    $infoCommand = $commands[count($commands) - 2] ?? 'show ont-info all';
+    $opticalCommand = $commands[count($commands) - 1] ?? 'show ont-optical all';
+    $infoRows = app_mgs_parse_hsgq_ont_info_all_rows((string) ($outputs[$infoCommand] ?? ''));
+    $opticalRows = app_mgs_parse_hsgq_ont_optical_all_rows((string) ($outputs[$opticalCommand] ?? ''));
+
+    $byPath = [];
+    foreach ($infoRows as $row) {
+        $path = trim((string) ($row['pon'] ?? '')) . '/' . trim((string) ($row['ont_id'] ?? ''));
+        if ($path === '/') {
+            continue;
+        }
+        $runState = strtolower(trim((string) ($row['run_state'] ?? '')));
+        $adminState = strtolower(trim((string) ($row['state'] ?? '')));
+        $byPath[$path] = [
+            'pon' => (string) ($row['pon'] ?? ''),
+            'ont_id' => (string) ($row['ont_id'] ?? ''),
+            'serial' => (string) ($row['serial'] ?? ''),
+            'status' => $runState === 'online' ? 'online' : ($adminState === 'inactive' ? 'disabled' : 'offline'),
+            'name' => (string) ($row['ont_name'] ?? ''),
+        ];
+    }
+    foreach ($opticalRows as $row) {
+        $path = trim((string) ($row['pon'] ?? '')) . '/' . trim((string) ($row['ont_id'] ?? ''));
+        if ($path === '/') {
+            continue;
+        }
+        $byPath[$path] = array_replace($byPath[$path] ?? [
+            'pon' => (string) ($row['pon'] ?? ''),
+            'ont_id' => (string) ($row['ont_id'] ?? ''),
+            'status' => 'unknown',
+        ], array_filter($row, static fn ($value): bool => $value !== '' && $value !== null));
+    }
+
+    ksort($byPath, SORT_NATURAL);
+    return [
+        'ok' => true,
+        'checked_at' => date(DATE_ATOM),
+        'device_key' => (string) ($device['device_key'] ?? ''),
+        'device_name' => (string) ($device['device_name'] ?? ''),
+        'device_ip' => (string) ($device['ip_address'] ?? ''),
+        'onts_total' => count($byPath),
+        'optical_rows' => count($opticalRows),
+        'rows' => array_values($byPath),
+    ];
+}
+
 function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8, array $actor = []): ?array
 {
     $db = $db instanceof PDO ? $db : app_db();
@@ -8317,6 +8495,126 @@ function app_mgs_hsgq_derived_command_map_from_discovery(array $discovery): arra
     return $map;
 }
 
+/**
+ * Cisco IOS/IOS-XE CLI discovery (docs/39_MGS_NODE_CONSOLIDATION.md Faza 3
+ * -- the first non-HSGQ vendor onboarded into the per-vendor CLI-discovery
+ * registry). Structurally identical to app_mgs_hsgq_cli_discovery_probe()
+ * (same tools/*.py + payload-file + JSON-line-decode plumbing), but does
+ * not need HSGQ's exploratory "?"-at-every-level menu walk: IOS `show`
+ * command syntax is standardized and documented, so tools/cisco-cli-
+ * discovery.py just confirms device identity and runs a fixed set of safe
+ * read-only show commands instead of deriving the command set live.
+ */
+function app_mgs_cisco_cli_discovery_probe(
+    string $ip,
+    string $username,
+    string $password,
+    int $port = 22,
+    int $timeoutMs = 4500,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'preview_device_backup'
+): array {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
+    $username = trim($username);
+    if ($username === '' || $password === '') {
+        return ['ok' => false, 'error' => 'missing_ssh_credentials'];
+    }
+
+    $python = app_mgs_find_python_binary();
+    $script = __DIR__ . '/tools/cisco-cli-discovery.py';
+    if ($python === null || !is_file($script) || !function_exists('exec')) {
+        return ['ok' => false, 'error' => 'cisco_cli_helper_unavailable'];
+    }
+
+    $payloadFile = tempnam(sys_get_temp_dir(), 'mgs_cisco_');
+    if ($payloadFile === false) {
+        return ['ok' => false, 'error' => 'cisco_cli_payload_temp_failed'];
+    }
+
+    $payload = [
+        'host' => $ip,
+        'port' => $port,
+        'username' => $username,
+        'password' => $password,
+        'timeout_ms' => max(1800, $timeoutMs),
+    ];
+    file_put_contents($payloadFile, json_encode($payload, JSON_UNESCAPED_SLASHES));
+
+    $command = escapeshellarg($python)
+        . ' ' . escapeshellarg($script)
+        . ' --payload-file ' . escapeshellarg($payloadFile);
+    $output = [];
+    $exitCode = 1;
+    @exec($command . ' 2>&1', $output, $exitCode);
+    @unlink($payloadFile);
+
+    $lines = array_values(array_filter(array_map(static fn ($line): string => trim((string) $line), $output), static fn ($line): bool => $line !== ''));
+    $text = implode("\n", $lines);
+    $jsonCandidate = $text;
+    if ($lines !== []) {
+        $lastLine = $lines[count($lines) - 1];
+        if (str_starts_with($lastLine, '{') && str_ends_with($lastLine, '}')) {
+            $jsonCandidate = $lastLine;
+        }
+    }
+
+    $decoded = json_decode($jsonCandidate, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'error' => $text !== '' ? $text : 'cisco_cli_invalid_response'];
+    }
+
+    return [
+        'ok' => !empty($decoded['ok']),
+        'error' => (string) ($decoded['error'] ?? ''),
+        'host' => (string) ($decoded['host'] ?? $ip),
+        'port' => (int) ($decoded['port'] ?? $port),
+        'username' => $username,
+        'prompts' => is_array($decoded['prompts'] ?? null) ? $decoded['prompts'] : [],
+        'is_cisco_ios' => !empty($decoded['is_cisco_ios']),
+        'hostname' => (string) ($decoded['hostname'] ?? ''),
+        'privileged_mode' => !empty($decoded['privileged_mode']),
+        'outputs' => is_array($decoded['outputs'] ?? null) ? $decoded['outputs'] : [],
+        'welcome' => (string) ($decoded['welcome'] ?? ''),
+    ];
+}
+
+/**
+ * Unlike HSGQ's derive function (which builds the command map FROM live
+ * exploration output, since HSGQ's menu structure isn't independently
+ * documented), this confirms the probe actually reached a real Cisco IOS
+ * device (is_cisco_ios) and, if so, returns the same fixed standard IOS
+ * command set app_mgs_default_device_profiles() already seeds for
+ * CiscoRouterAdapter/CiscoSwitchAdapter -- so a freshly-onboarded Cisco
+ * device converges on the identical, already-reviewed command map rather
+ * than an ad-hoc derived one.
+ */
+function app_mgs_cisco_derived_command_map_from_discovery(array $discovery): array
+{
+    if (empty($discovery['is_cisco_ios'])) {
+        return [];
+    }
+
+    $map = [
+        'show_version' => 'show version',
+        'ip_interface_brief' => 'show ip interface brief',
+        'interfaces_status' => 'show interfaces status',
+        'vlan_brief' => 'show vlan brief',
+        'mac_table' => 'show mac address-table',
+        'inventory' => 'show inventory',
+    ];
+    if (!empty($discovery['privileged_mode'])) {
+        $map['enter_enable'] = 'enable';
+    }
+
+    return $map;
+}
+
 function app_mgs_sync_device_command_map(string $deviceKey, array $commandMap, array $actor = [], ?PDO $db = null): array
 {
     $deviceKey = trim($deviceKey);
@@ -8422,7 +8720,9 @@ function app_mgs_device_access_override_by_key(
     string $deviceKey,
     ?PDO $db = null,
     array $actor = [],
-    string $purposeAction = 'read_device_sensitive'
+    string $purposeAction = 'read_device_sensitive',
+    bool $ensureSchema = true,
+    array $authorizationObject = []
 ): ?array
 {
     $deviceKey = clean_text($deviceKey);
@@ -8431,10 +8731,15 @@ function app_mgs_device_access_override_by_key(
     }
 
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+    if (!$db instanceof PDO || !($ensureSchema ? app_mgs_ensure_schema($db) : app_mgs_schema_ready($db))) {
         return null;
     }
-    $authorization = app_noc_authorize($actor, $purposeAction, ['device_key' => $deviceKey], $db);
+    $authorization = app_noc_authorize(
+        $actor,
+        $purposeAction,
+        array_replace(['device_key' => $deviceKey], $authorizationObject),
+        $db
+    );
     if (empty($authorization['ok'])) {
         return null;
     }
@@ -8450,7 +8755,8 @@ function app_mgs_device_access_profile(
     array $device,
     ?PDO $db = null,
     array $actor = [],
-    string $purposeAction = 'read_device_sensitive'
+    string $purposeAction = 'read_device_sensitive',
+    bool $ensureSchema = true
 ): array
 {
     $authorization = app_noc_authorize($actor, $purposeAction, $device, $db);
@@ -8472,22 +8778,13 @@ function app_mgs_device_access_profile(
         'notes' => '',
     ];
 
-    $hardcodedOverrides = [
-        'switch-cisco-2960-172-16-5-41' => [
-            'read_community' => 'SuperOptikRO',
-            'write_community' => 'SuperOptikRW',
-            'port' => 161,
-            'contact' => 'Sardar',
-            'location' => 'Kurdexani-Ofis',
-        ],
-    ];
-
+    // Device-specific communities must never be embedded in source code.
+    // Store them in the encrypted device credential vault (or environment
+    // defaults) and let the authorization layer decide whether they may be
+    // revealed to this actor.
     $deviceKey = (string) ($device['device_key'] ?? '');
-    if ($deviceKey !== '' && isset($hardcodedOverrides[$deviceKey])) {
-        $profile = array_merge($profile, $hardcodedOverrides[$deviceKey]);
-    }
 
-    $override = app_mgs_device_access_override_by_key($deviceKey, $db, $actor, $purposeAction);
+    $override = app_mgs_device_access_override_by_key($deviceKey, $db, $actor, $purposeAction, $ensureSchema, $device);
     if (is_array($override)) {
         $map = [
             'ssh_username' => 'ssh_username',
@@ -8722,8 +9019,8 @@ function app_mgs_apply_vendor_access_defaults(string $vendor, array $actor = [],
     $results = [];
     foreach ($deviceKeys as $deviceKey) {
         $results[] = app_mgs_set_device_access_override($deviceKey, [
-            'snmp_read_community' => (string) ($defaults['read_community'] ?? 'public'),
-            'snmp_write_community' => (string) ($defaults['write_community'] ?? 'private'),
+            'snmp_read_community' => (string) ($defaults['read_community'] ?? app_environment_secret('MGS_SNMP_READ_COMMUNITY')),
+            'snmp_write_community' => (string) ($defaults['write_community'] ?? app_environment_secret('MGS_SNMP_WRITE_COMMUNITY')),
             'snmp_port' => (int) ($defaults['port'] ?? 161),
             'trap_server' => (string) ($defaults['trap_server'] ?? '172.16.5.2'),
             'trap_port' => (int) ($defaults['trap_port'] ?? 162),
@@ -8826,12 +9123,13 @@ function app_mgs_snmp_ber_oid(string $oid): string
     return app_mgs_snmp_ber_wrap(0x06, $encoded);
 }
 
-function app_mgs_snmp_build_get_request(string $community, string $oid, int $requestId): string
+function app_mgs_snmp_build_get_request(string $community, string $oid, int $requestId, int $version = 0): string
 {
+    $version = $version === 1 ? 1 : 0;
     $varBind = app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_oid($oid) . app_mgs_snmp_ber_null());
     $varBindList = app_mgs_snmp_ber_wrap(0x30, $varBind);
     $pdu = app_mgs_snmp_ber_wrap(0xA0, app_mgs_snmp_ber_integer($requestId) . app_mgs_snmp_ber_integer(0) . app_mgs_snmp_ber_integer(0) . $varBindList);
-    return app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_integer(0) . app_mgs_snmp_ber_string($community) . $pdu);
+    return app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_integer($version) . app_mgs_snmp_ber_string($community) . $pdu);
 }
 
 function app_mgs_probe_snmp(
@@ -8860,38 +9158,1330 @@ function app_mgs_probe_snmp(
         return ['reachable' => false, 'method' => 'snmp_v1', 'error' => 'missing_snmp_config'];
     }
 
-    $requestId = random_int(100000, 9999999);
-    $packet = app_mgs_snmp_build_get_request($community, '1.3.6.1.2.1.1.1.0', $requestId);
-    $errno = 0;
-    $errstr = '';
-    $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.4, $timeoutMs / 1000));
-    if (!is_resource($socket)) {
-        return ['reachable' => false, 'method' => 'snmp_v1', 'error' => $errstr !== '' ? $errstr : 'socket_open_failed'];
-    }
-
-    stream_set_timeout($socket, 0, max(100000, $timeoutMs * 1000));
-    $written = @fwrite($socket, $packet);
-    if ($written === false || $written <= 0) {
-        fclose($socket);
-        return ['reachable' => false, 'method' => 'snmp_v1', 'error' => 'socket_write_failed'];
-    }
-
-    $response = @fread($socket, 4096);
-    $meta = stream_get_meta_data($socket);
-    fclose($socket);
-
-    if (is_string($response) && $response !== '' && ($meta['timed_out'] ?? false) !== true) {
+    $probe = app_mgs_snmp_get_raw($ip, $community, $port, '1.3.6.1.2.1.1.1.0', $timeoutMs);
+    $version = (int) ($probe['version'] ?? 0);
+    if (empty($probe['ok'])) {
         return [
-            'reachable' => true,
-            'method' => 'snmp_v1',
-            'error' => '',
-            'bytes' => strlen($response),
-            'community' => $community,
-            'port' => $port,
+            'reachable' => false,
+            'method' => 'snmp_v1_v2c',
+            'error' => (string) ($probe['error'] ?? 'snmp_timeout'),
         ];
     }
 
-    return ['reachable' => false, 'method' => 'snmp_v1', 'error' => ($meta['timed_out'] ?? false) ? 'snmp_timeout' : 'empty_snmp_response'];
+    // Never return the community: callers only need capability/reachability,
+    // and leaking it would turn an otherwise harmless health endpoint into a
+    // credential disclosure path.
+    return [
+        'reachable' => true,
+        'method' => $version === 1 ? 'snmp_v2c' : 'snmp_v1',
+        'version' => $version === 1 ? '2c' : '1',
+        'error' => '',
+        'bytes' => (int) ($probe['bytes'] ?? 0),
+        'port' => $port,
+    ];
+}
+
+/**
+ * IF-MIB (RFC1213) interface inventory columns walked by
+ * app_mgs_discover_device_interfaces() -- the "interfeys inventarı"
+ * prerequisite for a future interface-traffic collector
+ * (docs/39_MGS_NODE_CONSOLIDATION.md Faza 1). ifIndex itself is not walked
+ * separately: it is derived from the last OID arc of every other column.
+ */
+function app_mgs_if_mib_columns(): array
+{
+    return [
+        'if_descr' => '1.3.6.1.2.1.2.2.1.2',
+        'if_type' => '1.3.6.1.2.1.2.2.1.3',
+        'if_speed' => '1.3.6.1.2.1.2.2.1.5',
+        'if_phys_address' => '1.3.6.1.2.1.2.2.1.6',
+        'if_admin_status' => '1.3.6.1.2.1.2.2.1.7',
+        'if_oper_status' => '1.3.6.1.2.1.2.2.1.8',
+    ];
+}
+
+function app_mgs_snmp_build_getnext_request(string $community, string $oid, int $requestId, int $version = 0): string
+{
+    $version = $version === 1 ? 1 : 0;
+    $varBind = app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_oid($oid) . app_mgs_snmp_ber_null());
+    $varBindList = app_mgs_snmp_ber_wrap(0x30, $varBind);
+    $pdu = app_mgs_snmp_ber_wrap(0xA1, app_mgs_snmp_ber_integer($requestId) . app_mgs_snmp_ber_integer(0) . app_mgs_snmp_ber_integer(0) . $varBindList);
+    return app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_integer($version) . app_mgs_snmp_ber_string($community) . $pdu);
+}
+
+/**
+ * Reads one BER TLV (tag, length, value) at $offset. Returns null on any
+ * malformed/truncated input instead of throwing -- SNMP responses come from
+ * untrusted network devices, so the decoder must fail closed, not crash the
+ * caller.
+ */
+function app_mgs_snmp_ber_read_tlv(string $data, int $offset): ?array
+{
+    $len = strlen($data);
+    if ($offset < 0 || $offset >= $len) {
+        return null;
+    }
+    $tag = ord($data[$offset]);
+    $offset++;
+    if ($offset >= $len) {
+        return null;
+    }
+    $lengthByte = ord($data[$offset]);
+    $offset++;
+    if ($lengthByte < 0x80) {
+        $length = $lengthByte;
+    } else {
+        $numBytes = $lengthByte & 0x7F;
+        if ($numBytes === 0 || $numBytes > 4 || $offset + $numBytes > $len) {
+            return null;
+        }
+        $length = 0;
+        for ($i = 0; $i < $numBytes; $i++) {
+            $length = ($length << 8) | ord($data[$offset + $i]);
+        }
+        $offset += $numBytes;
+    }
+    if ($length < 0 || $offset + $length > $len) {
+        return null;
+    }
+
+    return ['tag' => $tag, 'value' => substr($data, $offset, $length), 'next' => $offset + $length];
+}
+
+function app_mgs_snmp_ber_decode_oid(string $bytes): string
+{
+    if ($bytes === '') {
+        return '';
+    }
+    $first = ord($bytes[0]);
+    $parts = [intdiv($first, 40), $first % 40];
+    $value = 0;
+    $length = strlen($bytes);
+    for ($i = 1; $i < $length; $i++) {
+        $byte = ord($bytes[$i]);
+        $value = ($value << 7) | ($byte & 0x7F);
+        if (($byte & 0x80) === 0) {
+            $parts[] = $value;
+            $value = 0;
+        }
+    }
+
+    return implode('.', $parts);
+}
+
+function app_mgs_snmp_ber_decode_unsigned(string $bytes): int
+{
+    $value = 0;
+    $length = strlen($bytes);
+    for ($i = 0; $i < $length; $i++) {
+        $value = ($value << 8) | ord($bytes[$i]);
+    }
+
+    return $value;
+}
+
+/**
+ * Turns one decoded varbind's raw BER bytes into a usable PHP value based on
+ * its ASN.1/SNMP tag. INTEGER (0x02) and the SNMP application types
+ * Counter32/Gauge32/TimeTicks/Counter64 (0x41/0x42/0x43/0x46) are all plain
+ * big-endian byte sequences here -- every IF-MIB column this module walks
+ * (ifIndex, ifType, ifSpeed, ifAdminStatus, ifOperStatus) is small and
+ * non-negative, so an unsigned decode is sufficient and avoids sign-bit
+ * edge cases entirely. noSuchObject/noSuchInstance/endOfMibView
+ * (0x80/0x81/0x82) are SNMPv2-style exception tags some agents still send
+ * in response to a v1 GETNEXT past the end of a table; treated as "no
+ * value" so the walk loop's subtree check below ends the walk cleanly.
+ */
+function app_mgs_snmp_decode_value(int $tag, string $raw): int|string|null
+{
+    return match (true) {
+        in_array($tag, [0x02, 0x41, 0x42, 0x43, 0x46], true) => app_mgs_snmp_ber_decode_unsigned($raw),
+        $tag === 0x06 => app_mgs_snmp_ber_decode_oid($raw),
+        in_array($tag, [0x05, 0x80, 0x81, 0x82], true) => null,
+        default => $raw,
+    };
+}
+
+/**
+ * Decodes a full SNMPv1/v2c message (version, community, GetResponse-PDU with
+ * request-id/error-status/error-index/varbind-list). Only the shape this
+ * module's own GET/GETNEXT requests can trigger a response to is parsed;
+ * anything else is reported as ok=false rather than guessed at.
+ */
+function app_mgs_snmp_decode_response(string $packet): array
+{
+    $outer = app_mgs_snmp_ber_read_tlv($packet, 0);
+    if ($outer === null || $outer['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_packet'];
+    }
+    $body = $outer['value'];
+
+    $version = app_mgs_snmp_ber_read_tlv($body, 0);
+    if ($version === null || $version['tag'] !== 0x02) {
+        return ['ok' => false, 'error' => 'malformed_version'];
+    }
+    $community = app_mgs_snmp_ber_read_tlv($body, $version['next']);
+    if ($community === null || $community['tag'] !== 0x04) {
+        return ['ok' => false, 'error' => 'malformed_community'];
+    }
+    $pdu = app_mgs_snmp_ber_read_tlv($body, $community['next']);
+    if ($pdu === null) {
+        return ['ok' => false, 'error' => 'malformed_pdu'];
+    }
+
+    $pduBody = $pdu['value'];
+    $requestId = app_mgs_snmp_ber_read_tlv($pduBody, 0);
+    if ($requestId === null) {
+        return ['ok' => false, 'error' => 'malformed_request_id'];
+    }
+    $errorStatus = app_mgs_snmp_ber_read_tlv($pduBody, $requestId['next']);
+    if ($errorStatus === null) {
+        return ['ok' => false, 'error' => 'malformed_error_status'];
+    }
+    $errorIndex = app_mgs_snmp_ber_read_tlv($pduBody, $errorStatus['next']);
+    if ($errorIndex === null) {
+        return ['ok' => false, 'error' => 'malformed_error_index'];
+    }
+    $varbindList = app_mgs_snmp_ber_read_tlv($pduBody, $errorIndex['next']);
+    if ($varbindList === null || $varbindList['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_varbind_list'];
+    }
+
+    $varbinds = [];
+    $offset = 0;
+    $listBody = $varbindList['value'];
+    $listLength = strlen($listBody);
+    while ($offset < $listLength) {
+        $pair = app_mgs_snmp_ber_read_tlv($listBody, $offset);
+        if ($pair === null || $pair['tag'] !== 0x30) {
+            break;
+        }
+        $offset = $pair['next'];
+        $oidTlv = app_mgs_snmp_ber_read_tlv($pair['value'], 0);
+        if ($oidTlv === null || $oidTlv['tag'] !== 0x06) {
+            break;
+        }
+        $valueTlv = app_mgs_snmp_ber_read_tlv($pair['value'], $oidTlv['next']);
+        if ($valueTlv === null) {
+            break;
+        }
+        $varbinds[] = ['oid' => app_mgs_snmp_ber_decode_oid($oidTlv['value']), 'tag' => $valueTlv['tag'], 'raw' => $valueTlv['value']];
+    }
+
+    return [
+        'ok' => true,
+        'version' => app_mgs_snmp_ber_decode_unsigned($version['value']),
+        'pdu_tag' => (int) $pdu['tag'],
+        'community' => (string) $community['value'],
+        'request_id' => app_mgs_snmp_ber_decode_unsigned($requestId['value']),
+        'error_status' => app_mgs_snmp_ber_decode_unsigned($errorStatus['value']),
+        'error_index' => app_mgs_snmp_ber_decode_unsigned($errorIndex['value']),
+        'varbinds' => $varbinds,
+    ];
+}
+
+/**
+ * Sends one raw SNMPv1 GETNEXT for $oid and decodes the single varbind that
+ * comes back. No authorization check here -- this is the low-level UDP/BER
+ * mechanic, mirroring how app_mgs_snmp_build_get_request() itself is
+ * unauthenticated; callers (app_mgs_discover_device_interfaces()) authorize
+ * once before looping, not once per GETNEXT round-trip.
+ */
+function app_mgs_snmp_getnext_raw(string $ip, string $community, int $port, string $oid, int $timeoutMs, ?int $version = null): array
+{
+    static $versionCache = [];
+    $cacheKey = $ip . ':' . $port . ':' . hash('sha256', $community);
+    $versions = in_array($version, [0, 1], true)
+        ? [(int) $version]
+        : (isset($versionCache[$cacheKey])
+            ? [(int) $versionCache[$cacheKey], (int) $versionCache[$cacheKey] === 0 ? 1 : 0]
+            : [0, 1]);
+    $lastError = 'snmp_timeout';
+
+    foreach ($versions as $candidateVersion) {
+        $requestId = random_int(100000, 9999999);
+        $packet = app_mgs_snmp_build_getnext_request($community, $oid, $requestId, $candidateVersion);
+        $errno = 0;
+        $errstr = '';
+        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000));
+        if (!is_resource($socket)) {
+            $lastError = $errstr !== '' ? $errstr : 'socket_open_failed';
+            continue;
+        }
+        stream_set_timeout($socket, 0, max(100000, $timeoutMs * 1000));
+        $written = @fwrite($socket, $packet);
+        if ($written === false || $written <= 0) {
+            fclose($socket);
+            $lastError = 'socket_write_failed';
+            continue;
+        }
+        $response = @fread($socket, 4096);
+        $meta = stream_get_meta_data($socket);
+        fclose($socket);
+        if (!is_string($response) || $response === '' || ($meta['timed_out'] ?? false) === true) {
+            $lastError = ($meta['timed_out'] ?? false) ? 'snmp_timeout' : 'empty_snmp_response';
+            continue;
+        }
+
+        $decoded = app_mgs_snmp_decode_response($response);
+        if (empty($decoded['ok']) || $decoded['varbinds'] === []) {
+            $lastError = (string) ($decoded['error'] ?? 'decode_failed');
+            continue;
+        }
+        if (($decoded['community'] ?? null) !== $community ||
+            (int) ($decoded['version'] ?? -1) !== $candidateVersion ||
+            (int) ($decoded['request_id'] ?? -1) !== $requestId ||
+            (int) ($decoded['pdu_tag'] ?? 0) !== 0xA2) {
+            $lastError = 'snmp_response_mismatch';
+            continue;
+        }
+        if ((int) $decoded['error_status'] !== 0) {
+            $lastError = 'snmp_error_status_' . $decoded['error_status'];
+            continue;
+        }
+        $varbind = $decoded['varbinds'][0];
+        $versionCache[$cacheKey] = $candidateVersion;
+
+        return [
+            'ok' => true,
+            'oid' => (string) $varbind['oid'],
+            'tag' => (int) $varbind['tag'],
+            'value' => app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']),
+            'version' => $candidateVersion,
+            'bytes' => strlen($response),
+        ];
+    }
+
+    return ['ok' => false, 'error' => $lastError];
+}
+
+/**
+ * Walks one MIB column via repeated GETNEXT starting at $baseOid, stopping
+ * as soon as the returned OID leaves the $baseOid subtree (the portable
+ * SNMPv1 end-of-table signal), a GETNEXT stops making progress (safety
+ * against a misbehaving agent looping the same OID forever), or $maxRows is
+ * reached (bounds worst-case round-trips against a slow/unreachable device).
+ * Returns [oid => ['tag' => int, 'value' => mixed]] keyed by the full
+ * returned OID; app_mgs_discover_device_interfaces() derives the ifIndex
+ * from each key's last arc.
+ */
+function app_mgs_snmp_walk_column(string $ip, string $community, int $port, string $baseOid, int $timeoutMs, int $maxRows, ?int $version = null): array
+{
+    $results = [];
+    $currentOid = $baseOid;
+    $selectedVersion = $version;
+    for ($i = 0; $i < $maxRows; $i++) {
+        $step = app_mgs_snmp_getnext_raw($ip, $community, $port, $currentOid, $timeoutMs, $selectedVersion);
+        if (empty($step['ok'])) {
+            break;
+        }
+        $selectedVersion = (int) ($step['version'] ?? 0);
+        $nextOid = (string) $step['oid'];
+        if ($nextOid === '' || $nextOid === $currentOid || !str_starts_with($nextOid . '.', $baseOid . '.')) {
+            break;
+        }
+        $results[$nextOid] = ['tag' => $step['tag'], 'value' => $step['value']];
+        $currentOid = $nextOid;
+    }
+
+    return $results;
+}
+
+function app_mgs_snmp_if_index_from_oid(string $oid, string $baseOid): ?int
+{
+    $prefix = $baseOid . '.';
+    if (!str_starts_with($oid, $prefix)) {
+        return null;
+    }
+    $suffix = substr($oid, strlen($prefix));
+
+    return ctype_digit($suffix) ? (int) $suffix : null;
+}
+
+/**
+ * Discovers (or re-syncs) one device's IF-MIB interface inventory via a real
+ * SNMP walk and stores it in device_interfaces. This is the "interfeys
+ * inventarı" step docs/39_MGS_NODE_CONSOLIDATION.md Faza 1 calls out as the
+ * prerequisite for an interface-traffic collector -- deliberately built with
+ * a real writer (this function) in the same change as the schema, not left
+ * as an empty table.
+ */
+function app_mgs_discover_device_interfaces(array $device, ?PDO $db = null, array $actor = [], int $maxInterfaces = 128): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $deviceKey = (string) ($device['device_key'] ?? '');
+    $ip = trim((string) ($device['ip_address'] ?? ''));
+    if ($deviceKey === '' || $ip === '') {
+        return ['ok' => false, 'reason' => 'missing_device_target'];
+    }
+    $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('probe_device', $authorization);
+    }
+
+    $accessProfile = app_mgs_device_access_profile($device, $db, $actor, 'probe_device');
+    $community = (string) ($accessProfile['read_community'] ?? '');
+    $port = (int) ($accessProfile['port'] ?? 161);
+    if ($community === '') {
+        return ['ok' => false, 'reason' => 'missing_snmp_config'];
+    }
+
+    $columns = app_mgs_if_mib_columns();
+    $rowsByIndex = [];
+    foreach ($columns as $field => $baseOid) {
+        $walked = app_mgs_snmp_walk_column($ip, $community, $port, $baseOid, 700, $maxInterfaces);
+        if ($walked === [] && $field === 'if_descr') {
+            // ifDescr is the defining column; if the walk can't even read that,
+            // the device is unreachable/unsupported for this pass -- fail fast
+            // instead of silently persisting a "0 interfaces" result.
+            return ['ok' => false, 'reason' => 'snmp_walk_unreachable_or_empty'];
+        }
+        foreach ($walked as $oid => $entry) {
+            $index = app_mgs_snmp_if_index_from_oid($oid, $baseOid);
+            if ($index === null) {
+                continue;
+            }
+            $rowsByIndex[$index][$field] = $entry['value'];
+        }
+    }
+
+    $adminStatusMap = [1 => 'up', 2 => 'down', 3 => 'testing'];
+    $operStatusMap = [1 => 'up', 2 => 'down', 3 => 'testing', 4 => 'unknown', 5 => 'dormant', 6 => 'not_present', 7 => 'lower_layer_down'];
+
+    $upsert = $db->prepare(
+        'INSERT INTO device_interfaces
+            (device_key, if_index, if_descr, if_type, if_speed_bps, if_phys_address, if_admin_status, if_oper_status, last_polled_at)
+         VALUES (:device_key, :if_index, :if_descr, :if_type, :if_speed_bps, :if_phys_address, :if_admin_status, :if_oper_status, NOW())
+         ON DUPLICATE KEY UPDATE
+            if_descr = VALUES(if_descr),
+            if_type = VALUES(if_type),
+            if_speed_bps = VALUES(if_speed_bps),
+            if_phys_address = VALUES(if_phys_address),
+            if_admin_status = VALUES(if_admin_status),
+            if_oper_status = VALUES(if_oper_status),
+            last_polled_at = NOW()'
+    );
+
+    $stored = 0;
+    foreach ($rowsByIndex as $index => $row) {
+        $physRaw = (string) ($row['if_phys_address'] ?? '');
+        $physFormatted = strlen($physRaw) === 6 ? strtoupper(implode(':', str_split(bin2hex($physRaw), 2))) : '';
+        $upsert->execute([
+            'device_key' => $deviceKey,
+            'if_index' => $index,
+            'if_descr' => clean_text((string) ($row['if_descr'] ?? '')),
+            'if_type' => (int) ($row['if_type'] ?? 0),
+            'if_speed_bps' => (int) ($row['if_speed'] ?? 0),
+            'if_phys_address' => $physFormatted,
+            'if_admin_status' => $adminStatusMap[(int) ($row['if_admin_status'] ?? 0)] ?? 'unknown',
+            'if_oper_status' => $operStatusMap[(int) ($row['if_oper_status'] ?? 0)] ?? 'unknown',
+        ]);
+        $stored++;
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'device_interface_discovery',
+        'entity_type' => 'device_learning_profiles',
+        'entity_id' => $deviceKey,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => $stored . ' interfeys aşkarlandı/yeniləndi',
+        'payload' => ['device_key' => $deviceKey, 'interface_count' => $stored],
+    ]);
+
+    return ['ok' => true, 'device_key' => $deviceKey, 'interface_count' => $stored];
+}
+
+/**
+ * Read-only listing for a device's discovered interfaces (UI + smoke). Same
+ * authorization as reading any other device detail.
+ */
+function app_mgs_device_interfaces(string $deviceKey, ?PDO $db = null, array $actor = []): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $deviceKey === '') {
+        return [];
+    }
+    $authorization = app_noc_authorize($actor, 'read_device', ['device_key' => $deviceKey], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
+    $statement = $db->prepare('SELECT * FROM device_interfaces WHERE device_key = :device_key ORDER BY if_index ASC');
+    $statement->execute(['device_key' => $deviceKey]);
+
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/**
+ * Sends one raw SNMPv1 GET for $oid and decodes the single varbind that
+ * comes back. Same unauthenticated low-level layering as
+ * app_mgs_snmp_getnext_raw() -- callers authorize once, not per request.
+ */
+function app_mgs_snmp_get_raw(string $ip, string $community, int $port, string $oid, int $timeoutMs, ?int $version = null): array
+{
+    static $versionCache = [];
+    $cacheKey = $ip . ':' . $port . ':' . hash('sha256', $community);
+    $versions = in_array($version, [0, 1], true)
+        ? [(int) $version]
+        : (isset($versionCache[$cacheKey])
+            ? [(int) $versionCache[$cacheKey], (int) $versionCache[$cacheKey] === 0 ? 1 : 0]
+            : [0, 1]);
+    $lastError = 'snmp_timeout';
+
+    foreach ($versions as $candidateVersion) {
+        $requestId = random_int(100000, 9999999);
+        $packet = app_mgs_snmp_build_get_request($community, $oid, $requestId, $candidateVersion);
+        $errno = 0;
+        $errstr = '';
+        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000));
+        if (!is_resource($socket)) {
+            $lastError = $errstr !== '' ? $errstr : 'socket_open_failed';
+            continue;
+        }
+        stream_set_timeout($socket, 0, max(100000, $timeoutMs * 1000));
+        $written = @fwrite($socket, $packet);
+        if ($written === false || $written <= 0) {
+            fclose($socket);
+            $lastError = 'socket_write_failed';
+            continue;
+        }
+        $response = @fread($socket, 4096);
+        $meta = stream_get_meta_data($socket);
+        fclose($socket);
+        if (!is_string($response) || $response === '' || ($meta['timed_out'] ?? false) === true) {
+            $lastError = ($meta['timed_out'] ?? false) ? 'snmp_timeout' : 'empty_snmp_response';
+            continue;
+        }
+
+        $decoded = app_mgs_snmp_decode_response($response);
+        if (empty($decoded['ok']) || $decoded['varbinds'] === []) {
+            $lastError = (string) ($decoded['error'] ?? 'decode_failed');
+            continue;
+        }
+        if (($decoded['community'] ?? null) !== $community ||
+            (int) ($decoded['version'] ?? -1) !== $candidateVersion ||
+            (int) ($decoded['request_id'] ?? -1) !== $requestId ||
+            (int) ($decoded['pdu_tag'] ?? 0) !== 0xA2) {
+            $lastError = 'snmp_response_mismatch';
+            continue;
+        }
+        if ((int) $decoded['error_status'] !== 0) {
+            $lastError = 'snmp_error_status_' . $decoded['error_status'];
+            continue;
+        }
+        $varbind = $decoded['varbinds'][0];
+        $versionCache[$cacheKey] = $candidateVersion;
+
+        return [
+            'ok' => true,
+            'oid' => (string) $varbind['oid'],
+            'tag' => (int) $varbind['tag'],
+            'value' => app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']),
+            'version' => $candidateVersion,
+            'bytes' => strlen($response),
+        ];
+    }
+
+    return ['ok' => false, 'error' => $lastError];
+}
+
+/**
+ * IF-MIB 32-bit octet counters and ifXTable (RFC2863) 64-bit "high capacity"
+ * counters for the same columns. HC counters are tried first: a 32-bit
+ * Counter32 wraps every ~34s on a saturated 1Gbps link, which is exactly the
+ * kind of interface this collector needs to poll -- ifSpeed already reports
+ * 1Gbps+ links in this dataset (see device_interfaces). Devices too old to
+ * support ifXTable fall back to the 32-bit pair.
+ */
+function app_mgs_interface_octet_oids(): array
+{
+    return [
+        'hc_in' => '1.3.6.1.2.1.31.1.1.1.6',
+        'hc_out' => '1.3.6.1.2.1.31.1.1.1.10',
+        'in' => '1.3.6.1.2.1.2.2.1.10',
+        'out' => '1.3.6.1.2.1.2.2.1.16',
+    ];
+}
+
+/**
+ * Reads one interface's in/out octet counters, preferring the 64-bit HC
+ * pair and falling back to the 32-bit pair only if either HC OID doesn't
+ * resolve (both must succeed together so a delta is never computed across
+ * mismatched counter widths).
+ */
+function app_mgs_read_interface_octets(string $ip, string $community, int $port, int $ifIndex, int $timeoutMs): array
+{
+    $oids = app_mgs_interface_octet_oids();
+    $hcIn = app_mgs_snmp_get_raw($ip, $community, $port, $oids['hc_in'] . '.' . $ifIndex, $timeoutMs);
+    $hcOut = app_mgs_snmp_get_raw($ip, $community, $port, $oids['hc_out'] . '.' . $ifIndex, $timeoutMs);
+    if (!empty($hcIn['ok']) && !empty($hcOut['ok']) && is_int($hcIn['value']) && is_int($hcOut['value'])) {
+        return ['ok' => true, 'in_octets' => $hcIn['value'], 'out_octets' => $hcOut['value'], 'counter_bits' => 64];
+    }
+
+    $in = app_mgs_snmp_get_raw($ip, $community, $port, $oids['in'] . '.' . $ifIndex, $timeoutMs);
+    $out = app_mgs_snmp_get_raw($ip, $community, $port, $oids['out'] . '.' . $ifIndex, $timeoutMs);
+    if (!empty($in['ok']) && !empty($out['ok']) && is_int($in['value']) && is_int($out['value'])) {
+        return ['ok' => true, 'in_octets' => $in['value'], 'out_octets' => $out['value'], 'counter_bits' => 32];
+    }
+
+    return ['ok' => false, 'error' => 'octet_counters_unreadable'];
+}
+
+/**
+ * Bits-per-second rate between two octet counter readings of the same
+ * width, wraparound-aware for 32-bit Counter32 (the only width that can
+ * realistically wrap between two polls). Returns null when a rate can't be
+ * trusted: no previous sample, a counter-width change (device rebooted
+ * ifXTable support, or vice versa), a non-positive time delta, a gap long
+ * enough that a wrapped 32-bit counter would be indistinguishable from a
+ * real decrease, or a counter reset (current < previous on a 64-bit counter,
+ * which never legitimately wraps within any realistic poll gap).
+ */
+function app_mgs_interface_traffic_bps(int $currentOctets, int $previousOctets, int $counterBits, int $elapsedSeconds): ?int
+{
+    if ($elapsedSeconds <= 0) {
+        return null;
+    }
+    if ($counterBits === 32) {
+        if ($elapsedSeconds > 900) {
+            // A gap this long makes a single wraparound indistinguishable
+            // from several -- refuse to guess rather than report a wrong rate.
+            return null;
+        }
+        $delta = $currentOctets >= $previousOctets
+            ? $currentOctets - $previousOctets
+            : (4294967296 - $previousOctets) + $currentOctets;
+    } else {
+        if ($currentOctets < $previousOctets) {
+            return null;
+        }
+        $delta = $currentOctets - $previousOctets;
+    }
+
+    return (int) round(($delta * 8) / $elapsedSeconds);
+}
+
+/**
+ * Polls in/out octet counters for every known interface (device_interfaces)
+ * of every monitored device, computes a bits-per-second rate against the
+ * previous sample, and stores it. Dry-run by default -- $apply=false reports
+ * what would be polled/stored without writing, matching this codebase's
+ * cron-worker convention (tools/billing-maintenance.php et al).
+ */
+function app_mgs_poll_device_interface_traffic(
+    PDO $db,
+    array $actor,
+    bool $apply,
+    ?string $onlyDeviceKey = null,
+    int $maxInterfacesPerDevice = 200
+): array {
+    $hasSamplesTable = (int) $db->query(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "device_interface_traffic_samples"'
+    )->fetchColumn() > 0;
+    if (!$hasSamplesTable) {
+        return ['ok' => false, 'reason' => 'device_interface_traffic_samples_not_migrated'];
+    }
+
+    $deviceKeyStatement = $onlyDeviceKey !== null
+        ? $db->prepare('SELECT DISTINCT device_key FROM device_interfaces WHERE device_key = :device_key')
+        : $db->prepare('SELECT DISTINCT device_key FROM device_interfaces');
+    $deviceKeyStatement->execute($onlyDeviceKey !== null ? ['device_key' => $onlyDeviceKey] : []);
+    $deviceKeys = $deviceKeyStatement->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+    $sampledAt = date('Y-m-d H:i:s');
+    $insertSample = $db->prepare(
+        'INSERT INTO device_interface_traffic_samples
+            (device_key, if_index, sampled_at, in_octets, out_octets, in_bps, out_bps, counter_bits)
+         VALUES (:device_key, :if_index, :sampled_at, :in_octets, :out_octets, :in_bps, :out_bps, :counter_bits)
+         ON DUPLICATE KEY UPDATE
+            in_octets = VALUES(in_octets), out_octets = VALUES(out_octets),
+            in_bps = VALUES(in_bps), out_bps = VALUES(out_bps), counter_bits = VALUES(counter_bits)'
+    );
+    $previousStatement = $db->prepare(
+        'SELECT in_octets, out_octets, counter_bits, sampled_at
+         FROM device_interface_traffic_samples
+         WHERE device_key = :device_key AND if_index = :if_index
+         ORDER BY sampled_at DESC LIMIT 1'
+    );
+
+    $polled = 0;
+    $stored = 0;
+    $failed = 0;
+    $skipped = 0;
+    $deviceFailures = [];
+    $details = [];
+
+    foreach ($deviceKeys as $deviceKey) {
+        $device = app_mgs_device_learning_profile_by_key((string) $deviceKey, $db, $actor);
+        if (!is_array($device) || empty($device['monitoring_enabled'])) {
+            continue;
+        }
+        $ip = trim((string) ($device['ip_address'] ?? ''));
+        if ($ip === '') {
+            continue;
+        }
+        $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+        if (empty($authorization['ok'])) {
+            continue;
+        }
+        $accessProfile = app_mgs_device_access_profile($device, $db, $actor, 'probe_device');
+        $community = (string) ($accessProfile['read_community'] ?? '');
+        $port = (int) ($accessProfile['port'] ?? 161);
+        if ($community === '') {
+            continue;
+        }
+
+        $ifaceStatement = $db->prepare('SELECT if_index FROM device_interfaces WHERE device_key = :device_key ORDER BY if_index ASC LIMIT ' . max(1, $maxInterfacesPerDevice));
+        $ifaceStatement->execute(['device_key' => $deviceKey]);
+        $interfaceIndexes = $ifaceStatement->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+        $consecutiveFailures = 0;
+        $interfaceCount = count($interfaceIndexes);
+        foreach ($interfaceIndexes as $position => $ifIndex) {
+            $ifIndex = (int) $ifIndex;
+            $polled++;
+            $reading = app_mgs_read_interface_octets($ip, $community, $port, $ifIndex, 700);
+            if (empty($reading['ok'])) {
+                $failed++;
+                $consecutiveFailures++;
+                // A device-wide SNMP outage previously caused one scheduled
+                // pass to spend minutes retrying every known interface. Three
+                // consecutive failures are enough evidence to stop this
+                // device for the current pass while allowing the remaining
+                // devices to be sampled and the supervisor to stay healthy.
+                if ($consecutiveFailures >= 3) {
+                    $remaining = max(0, $interfaceCount - ((int) $position + 1));
+                    $skipped += $remaining;
+                    $deviceFailures[] = [
+                        'device_key' => (string) $deviceKey,
+                        'reason' => 'snmp_consecutive_failures',
+                        'failed_attempts' => $consecutiveFailures,
+                        'skipped_interfaces' => $remaining,
+                    ];
+                    break;
+                }
+                continue;
+            }
+            $consecutiveFailures = 0;
+
+            $previousStatement->execute(['device_key' => $deviceKey, 'if_index' => $ifIndex]);
+            $previous = $previousStatement->fetch(PDO::FETCH_ASSOC);
+            $inBps = null;
+            $outBps = null;
+            if (is_array($previous) && (int) $previous['counter_bits'] === (int) $reading['counter_bits']) {
+                $elapsedSeconds = strtotime($sampledAt) - strtotime((string) $previous['sampled_at']);
+                $inBps = app_mgs_interface_traffic_bps((int) $reading['in_octets'], (int) $previous['in_octets'], (int) $reading['counter_bits'], $elapsedSeconds);
+                $outBps = app_mgs_interface_traffic_bps((int) $reading['out_octets'], (int) $previous['out_octets'], (int) $reading['counter_bits'], $elapsedSeconds);
+            }
+
+            if ($apply) {
+                $insertSample->execute([
+                    'device_key' => $deviceKey,
+                    'if_index' => $ifIndex,
+                    'sampled_at' => $sampledAt,
+                    'in_octets' => $reading['in_octets'],
+                    'out_octets' => $reading['out_octets'],
+                    'in_bps' => $inBps,
+                    'out_bps' => $outBps,
+                    'counter_bits' => $reading['counter_bits'],
+                ]);
+                $stored++;
+            }
+            $details[] = ['device_key' => $deviceKey, 'if_index' => $ifIndex, 'in_bps' => $inBps, 'out_bps' => $outBps, 'counter_bits' => $reading['counter_bits']];
+        }
+    }
+
+    if ($apply) {
+        app_mgs_record_operation_action([
+            'action_type' => 'device_interface_traffic_poll',
+            'entity_type' => 'device_interface_traffic_samples',
+            'entity_id' => $onlyDeviceKey ?? 'all',
+            'status' => 'executed',
+            'actor' => $actor,
+            'summary' => $stored . '/' . $polled . ' interfeys trafik nümunəsi saxlanıldı',
+            'payload' => ['polled' => $polled, 'stored' => $stored, 'failed' => $failed,
+                          'skipped' => $skipped, 'device_failures' => $deviceFailures],
+        ]);
+    }
+
+    return ['ok' => true, 'mode' => $apply ? 'apply' : 'dry_run', 'sampled_at' => $sampledAt,
+            'polled' => $polled, 'stored' => $stored, 'failed' => $failed, 'skipped' => $skipped,
+            'device_failures' => $deviceFailures, 'details' => $details];
+}
+
+/**
+ * Re-aggregates the last $lookbackHours of raw samples into
+ * device_interface_traffic_hourly. Idempotent (ON DUPLICATE KEY UPDATE) and
+ * always re-covers a small trailing window rather than tracking "last
+ * rolled-up hour" state, so a missed/late worker run self-heals on the next
+ * one instead of leaving a permanent gap.
+ */
+function app_mgs_rollup_device_interface_traffic_hourly(PDO $db, int $lookbackHours = 25): array
+{
+    $statement = $db->prepare(
+        'INSERT INTO device_interface_traffic_hourly
+            (device_key, if_index, hour_start, avg_in_bps, avg_out_bps, max_in_bps, max_out_bps, sample_count)
+         SELECT device_key, if_index,
+                DATE_FORMAT(sampled_at, "%Y-%m-%d %H:00:00") AS hour_start,
+                COALESCE(AVG(in_bps), 0), COALESCE(AVG(out_bps), 0),
+                COALESCE(MAX(in_bps), 0), COALESCE(MAX(out_bps), 0),
+                COUNT(*)
+         FROM device_interface_traffic_samples
+         WHERE sampled_at >= (NOW() - INTERVAL :lookback_hours HOUR)
+         GROUP BY device_key, if_index, hour_start
+         ON DUPLICATE KEY UPDATE
+            avg_in_bps = VALUES(avg_in_bps), avg_out_bps = VALUES(avg_out_bps),
+            max_in_bps = VALUES(max_in_bps), max_out_bps = VALUES(max_out_bps),
+            sample_count = VALUES(sample_count)'
+    );
+    $statement->execute(['lookback_hours' => max(1, $lookbackHours)]);
+
+    return ['ok' => true, 'rows_affected' => $statement->rowCount()];
+}
+
+/**
+ * Same idempotent re-aggregation as the hourly rollup, one level up
+ * (hourly -> daily).
+ */
+function app_mgs_rollup_device_interface_traffic_daily(PDO $db, int $lookbackDays = 3): array
+{
+    $statement = $db->prepare(
+        'INSERT INTO device_interface_traffic_daily
+            (device_key, if_index, day_start, avg_in_bps, avg_out_bps, max_in_bps, max_out_bps, sample_count)
+         SELECT device_key, if_index,
+                DATE(hour_start) AS day_start,
+                COALESCE(AVG(avg_in_bps), 0), COALESCE(AVG(avg_out_bps), 0),
+                COALESCE(MAX(max_in_bps), 0), COALESCE(MAX(max_out_bps), 0),
+                SUM(sample_count)
+         FROM device_interface_traffic_hourly
+         WHERE hour_start >= (NOW() - INTERVAL :lookback_days DAY)
+         GROUP BY device_key, if_index, day_start
+         ON DUPLICATE KEY UPDATE
+            avg_in_bps = VALUES(avg_in_bps), avg_out_bps = VALUES(avg_out_bps),
+            max_in_bps = VALUES(max_in_bps), max_out_bps = VALUES(max_out_bps),
+            sample_count = VALUES(sample_count)'
+    );
+    $statement->execute(['lookback_days' => max(1, $lookbackDays)]);
+
+    return ['ok' => true, 'rows_affected' => $statement->rowCount()];
+}
+
+/**
+ * Deletes raw samples older than $retainDays. Hourly/daily rollups (already
+ * aggregated, orders of magnitude smaller) are kept indefinitely -- this
+ * only bounds the high-volume raw table, matching the vision doc's "yüksək
+ * həcmli trafik jurnalları əməliyyat bazasını yükləməməlidir" guidance
+ * (docs/00_VISION.md 5.3, written about CGNAT logs but the same concern
+ * applies here).
+ */
+function app_mgs_prune_device_interface_traffic_samples(PDO $db, int $retainDays = 30): array
+{
+    $statement = $db->prepare('DELETE FROM device_interface_traffic_samples WHERE sampled_at < (NOW() - INTERVAL :retain_days DAY)');
+    $statement->execute(['retain_days' => max(1, $retainDays)]);
+
+    return ['ok' => true, 'deleted' => $statement->rowCount()];
+}
+
+/**
+ * SNMPv1 standard generic-trap codes (RFC1157). Only these -- never
+ * enterprise-specific (6) or vendor-specific v2c trap OIDs, which need a
+ * per-vendor catalog we don't have -- are eligible for the conservative
+ * alarm bridge in app_mgs_record_snmp_trap(). linkUp is deliberately
+ * excluded: it is a recovery signal, not a problem, and auto-alarming on
+ * recovery is exactly the alert-fatigue pattern docs/00_VISION.md 6.2 warns
+ * against ("40 ayrı problem yaratmamalı").
+ */
+function app_mgs_snmp_v1_generic_trap_labels(): array
+{
+    return [0 => 'coldStart', 1 => 'warmStart', 2 => 'linkDown', 3 => 'linkUp', 4 => 'authenticationFailure', 5 => 'egpNeighborLoss', 6 => 'enterpriseSpecific'];
+}
+
+function app_mgs_snmp_v1_generic_trap_alarm_severity(int $genericTrap): ?string
+{
+    return match ($genericTrap) {
+        2 => 'critical', // linkDown
+        0, 1 => 'warning', // coldStart / warmStart -- unexpected reboot
+        4 => 'warning', // authenticationFailure -- security-relevant
+        default => null, // linkUp, egpNeighborLoss, enterpriseSpecific: log-only
+    };
+}
+
+/**
+ * Decodes an SNMPv1 Trap-PDU's content (already unwrapped from its 0xA4
+ * outer TLV): enterprise(OID), agent-addr(IpAddress), generic-trap(INTEGER),
+ * specific-trap(INTEGER), time-stamp(TimeTicks), variable-bindings(SEQUENCE).
+ * Structurally different from a GetResponse-PDU, so it needs its own parser
+ * rather than reusing app_mgs_snmp_decode_response().
+ */
+function app_mgs_snmp_decode_v1_trap_pdu(string $pduBody): array
+{
+    $enterprise = app_mgs_snmp_ber_read_tlv($pduBody, 0);
+    if ($enterprise === null || $enterprise['tag'] !== 0x06) {
+        return ['ok' => false, 'error' => 'malformed_trap_enterprise'];
+    }
+    $agentAddr = app_mgs_snmp_ber_read_tlv($pduBody, $enterprise['next']);
+    if ($agentAddr === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_agent_addr'];
+    }
+    $genericTrap = app_mgs_snmp_ber_read_tlv($pduBody, $agentAddr['next']);
+    if ($genericTrap === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_generic'];
+    }
+    $specificTrap = app_mgs_snmp_ber_read_tlv($pduBody, $genericTrap['next']);
+    if ($specificTrap === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_specific'];
+    }
+    $timeStamp = app_mgs_snmp_ber_read_tlv($pduBody, $specificTrap['next']);
+    if ($timeStamp === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_timestamp'];
+    }
+    $varbindList = app_mgs_snmp_ber_read_tlv($pduBody, $timeStamp['next']);
+    if ($varbindList === null || $varbindList['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_trap_varbind_list'];
+    }
+
+    $varbinds = [];
+    $offset = 0;
+    $listBody = $varbindList['value'];
+    $listLength = strlen($listBody);
+    while ($offset < $listLength) {
+        $pair = app_mgs_snmp_ber_read_tlv($listBody, $offset);
+        if ($pair === null || $pair['tag'] !== 0x30) {
+            break;
+        }
+        $offset = $pair['next'];
+        $oidTlv = app_mgs_snmp_ber_read_tlv($pair['value'], 0);
+        if ($oidTlv === null || $oidTlv['tag'] !== 0x06) {
+            break;
+        }
+        $valueTlv = app_mgs_snmp_ber_read_tlv($pair['value'], $oidTlv['next']);
+        if ($valueTlv === null) {
+            break;
+        }
+        $varbinds[] = ['oid' => app_mgs_snmp_ber_decode_oid($oidTlv['value']), 'tag' => $valueTlv['tag'], 'raw' => $valueTlv['value']];
+    }
+
+    $agentAddrBytes = (string) $agentAddr['value'];
+    $agentAddrText = strlen($agentAddrBytes) === 4 ? implode('.', array_map('ord', str_split($agentAddrBytes))) : '';
+
+    return [
+        'ok' => true,
+        'enterprise_oid' => app_mgs_snmp_ber_decode_oid($enterprise['value']),
+        'agent_addr' => $agentAddrText,
+        'generic_trap' => app_mgs_snmp_ber_decode_unsigned($genericTrap['value']),
+        'specific_trap' => app_mgs_snmp_ber_decode_unsigned($specificTrap['value']),
+        'uptime_ticks' => app_mgs_snmp_ber_decode_unsigned($timeStamp['value']),
+        'varbinds' => $varbinds,
+    ];
+}
+
+/**
+ * Decodes a full incoming SNMP trap datagram (v1 Trap-PDU tag 0xA4, or
+ * v2c SNMPv2-Trap-PDU/InformRequest tags 0xA7/0xA6 which share
+ * GetResponse-PDU's shape and so reuse app_mgs_snmp_decode_response()).
+ * Never throws -- an unrecognised or malformed datagram from the network
+ * returns ok=false, exactly like the rest of this module's SNMP decoders.
+ */
+function app_mgs_snmp_decode_trap_packet(string $packet): array
+{
+    $outer = app_mgs_snmp_ber_read_tlv($packet, 0);
+    if ($outer === null || $outer['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_packet'];
+    }
+    $body = $outer['value'];
+    $version = app_mgs_snmp_ber_read_tlv($body, 0);
+    if ($version === null) {
+        return ['ok' => false, 'error' => 'malformed_version'];
+    }
+    $community = app_mgs_snmp_ber_read_tlv($body, $version['next']);
+    if ($community === null) {
+        return ['ok' => false, 'error' => 'malformed_community'];
+    }
+    $pdu = app_mgs_snmp_ber_read_tlv($body, $community['next']);
+    if ($pdu === null) {
+        return ['ok' => false, 'error' => 'malformed_pdu'];
+    }
+
+    $versionNumber = app_mgs_snmp_ber_decode_unsigned($version['value']);
+    $communityText = (string) $community['value'];
+
+    if ($pdu['tag'] === 0xA4) {
+        $decoded = app_mgs_snmp_decode_v1_trap_pdu($pdu['value']);
+        if (empty($decoded['ok'])) {
+            return $decoded;
+        }
+
+        return [
+            'ok' => true,
+            'version' => 'v1',
+            'community' => $communityText,
+            'generic_trap' => (int) $decoded['generic_trap'],
+            'specific_trap' => (int) $decoded['specific_trap'],
+            'enterprise_oid' => (string) $decoded['enterprise_oid'],
+            'trap_oid' => (string) $decoded['enterprise_oid'] . '.' . (int) $decoded['specific_trap'],
+            'uptime_ticks' => (int) $decoded['uptime_ticks'],
+            'varbinds' => $decoded['varbinds'],
+        ];
+    }
+
+    if ($pdu['tag'] === 0xA7 || $pdu['tag'] === 0xA6) {
+        $decoded = app_mgs_snmp_decode_response($packet);
+        if (empty($decoded['ok'])) {
+            return $decoded;
+        }
+        $uptimeTicks = null;
+        $trapOid = null;
+        foreach ($decoded['varbinds'] as $varbind) {
+            $oid = (string) ($varbind['oid'] ?? '');
+            if ($oid === '1.3.6.1.2.1.1.3.0') { // sysUpTime.0
+                $uptimeTicks = app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']);
+            } elseif ($oid === '1.3.6.1.6.3.1.1.4.1.0') { // snmpTrapOID.0
+                $trapOid = app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']);
+            }
+        }
+
+        return [
+            'ok' => true,
+            'version' => 'v2c',
+            'community' => $communityText,
+            'generic_trap' => null,
+            'specific_trap' => null,
+            'enterprise_oid' => null,
+            'trap_oid' => is_string($trapOid) ? $trapOid : null,
+            'uptime_ticks' => is_int($uptimeTicks) ? $uptimeTicks : null,
+            'varbinds' => array_map(
+                static fn (array $vb): array => ['oid' => $vb['oid'], 'tag' => $vb['tag'], 'raw' => $vb['raw']],
+                $decoded['varbinds']
+            ),
+        ];
+    }
+
+    return ['ok' => false, 'error' => 'unsupported_pdu_tag_' . $pdu['tag']];
+}
+
+/**
+ * Stores one already-decoded trap (app_mgs_snmp_decode_trap_packet()'s
+ * output) plus its network origin. Resolves device_key by source IP against
+ * device_learning_profiles (best-effort; a trap from an unknown/unregistered
+ * source is still logged, never dropped -- audit visibility over blind
+ * trust, matching docs/00_VISION.md 19.1's "menyunun gizlədilməsi
+ * təhlükəsizlik deyil" principle applied to network input). Community is
+ * checked against the configured expected trap community but a mismatch
+ * only flags community_valid=0, it does not suppress the row.
+ */
+function app_mgs_record_snmp_trap(PDO $db, array $trap, string $sourceIp, int $sourcePort, array $actor = []): array
+{
+    $hasTable = (int) $db->query(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "snmp_trap_log"'
+    )->fetchColumn() > 0;
+    if (!$hasTable) {
+        return ['ok' => false, 'reason' => 'snmp_trap_log_not_migrated'];
+    }
+
+    $expectedCommunity = trim((string) app_mgs_runtime_setting('snmp_trap_expected_community', ''));
+    if ($expectedCommunity === '') {
+        $expectedCommunity = trim((string) app_mgs_snmp_defaults()['read_community']);
+    }
+    $communityValid = $expectedCommunity !== '' && hash_equals($expectedCommunity, (string) ($trap['community'] ?? ''));
+
+    $deviceKey = null;
+    $deviceRow = $db->prepare('SELECT device_key FROM device_learning_profiles WHERE ip_address = :ip LIMIT 1');
+    $deviceRow->execute(['ip' => $sourceIp]);
+    $foundKey = $deviceRow->fetchColumn();
+    if (is_string($foundKey) && $foundKey !== '') {
+        $deviceKey = $foundKey;
+    }
+
+    $alarmBridged = false;
+    $genericTrap = $trap['generic_trap'] ?? null;
+    if ((string) ($trap['version'] ?? '') === 'v1' && is_int($genericTrap)) {
+        $severity = app_mgs_snmp_v1_generic_trap_alarm_severity($genericTrap);
+        if ($severity !== null) {
+            $label = app_mgs_snmp_v1_generic_trap_labels()[$genericTrap] ?? ('generic_trap_' . $genericTrap);
+            $alarmActor = $actor !== [] ? $actor : ['id' => 0, 'role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'is_active' => 1, 'full_name' => 'SNMP Trap Listener (daemon)'];
+            $alarmResult = app_mgs_record_alarm_event([
+                'alarm_type' => 'SNMP_TRAP_' . strtoupper($label),
+                'severity' => $severity,
+                'source' => 'snmp_trap',
+                'object_type' => 'device',
+                'object_id' => $deviceKey ?? $sourceIp,
+                'title' => 'SNMP trap: ' . $label . ' (' . $sourceIp . ')',
+                'device_name' => $deviceKey ?? $sourceIp,
+                'telegram_bot_key' => 'network',
+            ], false, true, $alarmActor, $db);
+            $alarmBridged = !empty($alarmResult['ok']);
+        }
+    }
+
+    $statement = $db->prepare(
+        'INSERT INTO snmp_trap_log
+            (source_ip, source_port, device_key, snmp_version, community_valid, generic_trap, specific_trap, enterprise_oid, trap_oid, uptime_ticks, varbinds_json, alarm_bridged)
+         VALUES (:source_ip, :source_port, :device_key, :snmp_version, :community_valid, :generic_trap, :specific_trap, :enterprise_oid, :trap_oid, :uptime_ticks, :varbinds_json, :alarm_bridged)'
+    );
+    $statement->execute([
+        'source_ip' => $sourceIp,
+        'source_port' => $sourcePort,
+        'device_key' => $deviceKey,
+        'snmp_version' => (string) ($trap['version'] ?? 'v1'),
+        'community_valid' => $communityValid ? 1 : 0,
+        'generic_trap' => $trap['generic_trap'] ?? null,
+        'specific_trap' => $trap['specific_trap'] ?? null,
+        'enterprise_oid' => $trap['enterprise_oid'] ?? null,
+        'trap_oid' => $trap['trap_oid'] ?? null,
+        'uptime_ticks' => $trap['uptime_ticks'] ?? null,
+        'varbinds_json' => app_db_json_encode($trap['varbinds'] ?? []),
+        'alarm_bridged' => $alarmBridged ? 1 : 0,
+    ]);
+
+    return ['ok' => true, 'id' => (int) $db->lastInsertId(), 'device_key' => $deviceKey, 'community_valid' => $communityValid, 'alarm_bridged' => $alarmBridged];
+}
+
+/**
+ * LLDP-MIB (IEEE 802.1AB, OID root 1.0.8802.1.1.2) lldpRemEntry columns.
+ * The table's real SNMP index is the 3-part {lldpRemTimeMark,
+ * lldpRemLocalPortNum, lldpRemIndex} -- app_mgs_discover_device_neighbors()
+ * groups rows by that raw trailing OID suffix (not by parsing it into
+ * ifIndex) because lldpRemLocalPortNum is only usually, not guaranteed,
+ * equal to the IF-MIB ifIndex used elsewhere in this module; see
+ * docs/39_MGS_NODE_CONSOLIDATION.md for that caveat.
+ */
+function app_mgs_lldp_mib_columns(): array
+{
+    return [
+        'remote_chassis_id' => '1.0.8802.1.1.2.1.4.1.1.5',
+        'remote_port_id' => '1.0.8802.1.1.2.1.4.1.1.7',
+        'remote_port_desc' => '1.0.8802.1.1.2.1.4.1.1.8',
+        'remote_sys_name' => '1.0.8802.1.1.2.1.4.1.1.9',
+    ];
+}
+
+/**
+ * CISCO-CDP-MIB (OID root 1.3.6.1.4.1.9.9.23, Cisco enterprise 9) cdpCacheEntry
+ * columns. Table index is {cdpCacheIfIndex, cdpCacheDeviceIndex} -- unlike
+ * LLDP, cdpCacheIfIndex genuinely is the IF-MIB ifIndex (Cisco's own MIB
+ * documents this), so local_if_index is reliable for CDP rows.
+ */
+function app_mgs_cdp_mib_columns(): array
+{
+    return [
+        'remote_chassis_id' => '1.3.6.1.4.1.9.9.23.1.2.1.1.6',
+        'remote_port_id' => '1.3.6.1.4.1.9.9.23.1.2.1.1.7',
+        'remote_platform' => '1.3.6.1.4.1.9.9.23.1.2.1.1.8',
+    ];
+}
+
+function app_mgs_snmp_oid_index_suffix(string $oid, string $baseOid): ?string
+{
+    $prefix = $baseOid . '.';
+
+    return str_starts_with($oid, $prefix) ? substr($oid, strlen($prefix)) : null;
+}
+
+/**
+ * Best-effort MAC formatting shared by interface (ifPhysAddress) and
+ * neighbor (LLDP chassis/port ID when chassisIdSubtype/portIdSubtype
+ * indicates a MAC address) discovery: a 6-byte OCTET STRING is formatted as
+ * AA:BB:CC:DD:EE:FF, anything else is returned as-is (already a readable
+ * string in most other subtype cases).
+ */
+function app_mgs_format_possible_mac(string $raw): string
+{
+    return strlen($raw) === 6 ? strtoupper(implode(':', str_split(bin2hex($raw), 2))) : $raw;
+}
+
+/**
+ * Discovers (or re-syncs) one device's LLDP and/or CDP neighbor table via a
+ * real SNMP walk and stores it in device_neighbors -- the last Faza 1 gap
+ * docs/39_MGS_NODE_CONSOLIDATION.md calls out. Tries both protocols (a
+ * device can run both, and they are stored as distinct protocol rows keyed
+ * on the same device_key, so neither suppresses the other); a protocol with
+ * an empty remote_chassis_id column simply contributes zero rows rather
+ * than failing the whole call, since plenty of real devices only speak one
+ * of the two.
+ */
+function app_mgs_discover_device_neighbors(array $device, ?PDO $db = null, array $actor = [], int $maxNeighbors = 128): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $deviceKey = (string) ($device['device_key'] ?? '');
+    $ip = trim((string) ($device['ip_address'] ?? ''));
+    if ($deviceKey === '' || $ip === '') {
+        return ['ok' => false, 'reason' => 'missing_device_target'];
+    }
+    $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('probe_device', $authorization);
+    }
+
+    $accessProfile = app_mgs_device_access_profile($device, $db, $actor, 'probe_device');
+    $community = (string) ($accessProfile['read_community'] ?? '');
+    $port = (int) ($accessProfile['port'] ?? 161);
+    if ($community === '') {
+        return ['ok' => false, 'reason' => 'missing_snmp_config'];
+    }
+
+    $upsert = $db->prepare(
+        'INSERT INTO device_neighbors
+            (device_key, protocol, local_index_key, local_if_index, remote_chassis_id, remote_port_id, remote_port_desc, remote_sys_name, remote_platform, last_seen_at)
+         VALUES (:device_key, :protocol, :local_index_key, :local_if_index, :remote_chassis_id, :remote_port_id, :remote_port_desc, :remote_sys_name, :remote_platform, NOW())
+         ON DUPLICATE KEY UPDATE
+            local_if_index = VALUES(local_if_index),
+            remote_chassis_id = VALUES(remote_chassis_id),
+            remote_port_id = VALUES(remote_port_id),
+            remote_port_desc = VALUES(remote_port_desc),
+            remote_sys_name = VALUES(remote_sys_name),
+            remote_platform = VALUES(remote_platform),
+            last_seen_at = NOW()'
+    );
+
+    $stored = 0;
+    $byProtocol = ['lldp' => 0, 'cdp' => 0];
+
+    foreach (['lldp' => app_mgs_lldp_mib_columns(), 'cdp' => app_mgs_cdp_mib_columns()] as $protocol => $columns) {
+        $rowsByIndexKey = [];
+        foreach ($columns as $field => $baseOid) {
+            $walked = app_mgs_snmp_walk_column($ip, $community, $port, $baseOid, 700, $maxNeighbors);
+            foreach ($walked as $oid => $entry) {
+                $indexKey = app_mgs_snmp_oid_index_suffix($oid, $baseOid);
+                if ($indexKey === null) {
+                    continue;
+                }
+                $rowsByIndexKey[$indexKey][$field] = $entry['value'];
+            }
+        }
+
+        foreach ($rowsByIndexKey as $indexKey => $row) {
+            $chassisRaw = (string) ($row['remote_chassis_id'] ?? '');
+            if ($chassisRaw === '') {
+                continue; // no identity for this row -- not a usable neighbor entry
+            }
+            $indexParts = array_map('intval', explode('.', $indexKey));
+            $localIfIndex = $protocol === 'cdp'
+                ? ($indexParts[0] ?? null) // cdpCacheIfIndex: real ifIndex
+                : ($indexParts[count($indexParts) - 2] ?? null); // lldpRemLocalPortNum: usually ifIndex, not guaranteed
+
+            $upsert->execute([
+                'device_key' => $deviceKey,
+                'protocol' => $protocol,
+                'local_index_key' => $indexKey,
+                'local_if_index' => $localIfIndex,
+                'remote_chassis_id' => app_mgs_format_possible_mac($chassisRaw),
+                'remote_port_id' => app_mgs_format_possible_mac((string) ($row['remote_port_id'] ?? '')),
+                'remote_port_desc' => clean_text((string) ($row['remote_port_desc'] ?? '')),
+                'remote_sys_name' => clean_text((string) ($row['remote_sys_name'] ?? '')),
+                'remote_platform' => clean_text((string) ($row['remote_platform'] ?? '')),
+            ]);
+            $stored++;
+            $byProtocol[$protocol]++;
+        }
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'device_neighbor_discovery',
+        'entity_type' => 'device_learning_profiles',
+        'entity_id' => $deviceKey,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => $stored . ' qonşu aşkarlandı/yeniləndi (lldp=' . $byProtocol['lldp'] . ', cdp=' . $byProtocol['cdp'] . ')',
+        'payload' => ['device_key' => $deviceKey, 'neighbor_count' => $stored, 'by_protocol' => $byProtocol],
+    ]);
+
+    return ['ok' => true, 'device_key' => $deviceKey, 'neighbor_count' => $stored, 'by_protocol' => $byProtocol];
+}
+
+/**
+ * Read-only listing for a device's discovered neighbors (UI + smoke). Same
+ * authorization as reading any other device detail.
+ */
+function app_mgs_device_neighbors(string $deviceKey, ?PDO $db = null, array $actor = []): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $deviceKey === '') {
+        return [];
+    }
+    $authorization = app_noc_authorize($actor, 'read_device', ['device_key' => $deviceKey], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
+    $statement = $db->prepare('SELECT * FROM device_neighbors WHERE device_key = :device_key ORDER BY protocol ASC, local_index_key ASC');
+    $statement->execute(['device_key' => $deviceKey]);
+
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/**
+ * Read-only, paginated listing of legacy_mgs_ont_inventory (the Node MGS
+ * import from docs/39_MGS_NODE_CONSOLIDATION.md Faza 2 -- 730 historical
+ * OLT-discovered ONT records with no real customer linkage; see that doc
+ * for why they were never wired into customer_equipment_assignments). Not
+ * a live monitoring source -- purely for admins/NOC to browse what was
+ * imported. Same read_device authorization as any other device detail.
+ */
+function app_mgs_legacy_ont_inventory_rows(PDO $db, array $actor, array $filters = [], int $page = 1, int $perPage = 50): array
+{
+    $authorization = app_noc_authorize($actor, 'read_device', [], $db);
+    if (empty($authorization['ok'])) {
+        return ['ok' => false, 'rows' => [], 'total' => 0, 'page' => 1, 'per_page' => $perPage, 'total_pages' => 1, 'olts' => []];
+    }
+
+    $hasTable = (int) $db->query(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "legacy_mgs_ont_inventory"'
+    )->fetchColumn() > 0;
+    if (!$hasTable) {
+        return ['ok' => false, 'rows' => [], 'total' => 0, 'page' => 1, 'per_page' => $perPage, 'total_pages' => 1, 'olts' => []];
+    }
+
+    $where = [];
+    $params = [];
+    $oltFilter = trim((string) ($filters['olt_device_key'] ?? ''));
+    if ($oltFilter !== '') {
+        $where[] = 'olt_device_key = :olt_device_key';
+        $params['olt_device_key'] = $oltFilter;
+    }
+    $statusFilter = trim((string) ($filters['status'] ?? ''));
+    if ($statusFilter !== '') {
+        $where[] = 'status = :status';
+        $params['status'] = $statusFilter;
+    }
+    $search = trim((string) ($filters['q'] ?? ''));
+    if ($search !== '') {
+        $where[] = '(serial_number LIKE :search OR port_key LIKE :search OR source_ont_id LIKE :search)';
+        $params['search'] = '%' . $search . '%';
+    }
+    $whereSql = $where !== [] ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $countStatement = $db->prepare("SELECT COUNT(*) FROM legacy_mgs_ont_inventory $whereSql");
+    $countStatement->execute($params);
+    $total = (int) $countStatement->fetchColumn();
+
+    $perPage = max(10, min(200, $perPage));
+    $totalPages = max(1, (int) ceil($total / $perPage));
+    $page = max(1, min($totalPages, $page));
+    $offset = ($page - 1) * $perPage;
+
+    $rowsStatement = $db->prepare(
+        "SELECT * FROM legacy_mgs_ont_inventory $whereSql ORDER BY olt_device_key ASC, port_key ASC LIMIT $perPage OFFSET $offset"
+    );
+    $rowsStatement->execute($params);
+
+    $olts = $db->query(
+        'SELECT olt_device_key, COUNT(*) AS c FROM legacy_mgs_ont_inventory GROUP BY olt_device_key ORDER BY olt_device_key ASC'
+    )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    return [
+        'ok' => true,
+        'rows' => $rowsStatement->fetchAll(PDO::FETCH_ASSOC) ?: [],
+        'total' => $total,
+        'page' => $page,
+        'per_page' => $perPage,
+        'total_pages' => $totalPages,
+        'olts' => $olts,
+    ];
 }
 
 function app_mgs_probe_device_services(
@@ -8996,6 +10586,7 @@ function app_mgs_default_device_profiles(): array
         ['olt-hsgq-kurdexani-21', 'kurdexani 21', '172.16.5.21', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 1, 1, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
         ['olt-hsgq-kurdexani-22', 'kurdexani 22', '172.16.5.22', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 0, 0, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
         ['olt-hsgq-172-16-5-26', 'HSGQ 172.16.5.26', '172.16.5.26', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 1, 1, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
+        ['olt-hsgq-172-16-5-29', 'HSGQ 172.16.5.29', '172.16.5.29', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 1, 1, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
         ['switch-cisco-2960-172-16-5-41', 'kurdexaniOfissvitch', '172.16.5.41', 'switch', 'Cisco', '2960', 'CiscoSwitchAdapter', 'vlan550', 1, 1, ['interfaces', 'mac_table', 'vlan_list', 'stp_status', 'port_shutdown']],
     ];
 }
@@ -9577,21 +11168,21 @@ function app_mgs_render_alarm_message(array $alarm): string
     $severity = ucfirst(strtolower((string) ($alarm['severity'] ?? 'Info')));
     $device = trim((string) ($alarm['device_name'] ?? $alarm['object_id'] ?? '-'));
     $ip = trim((string) ($alarm['device_ip'] ?? ''));
-    $problem = trim((string) ($alarm['human_problem'] ?? $alarm['title'] ?? 'Emeliyyat xeberdarligi'));
-    $recommendation = trim((string) ($alarm['recommendation'] ?? 'Ilk olaraq konteksti, son deyisiklikleri ve asili servisleri yoxla.'));
+    $problem = trim((string) ($alarm['human_problem'] ?? $alarm['title'] ?? 'Əməliyyat xəbərdarlığı'));
+    $recommendation = trim((string) ($alarm['recommendation'] ?? 'Əvvəl hadisənin kontekstini, son dəyişiklikləri və asılı xidmətləri yoxlayın.'));
 
     $lines = [
-        ($severity === 'Critical' ? 'KRITIK' : 'SEBEKE') . ' XEBERDARLIGI',
+        ($severity === 'Critical' ? 'KRİTİK ŞƏBƏKƏ' : 'ŞƏBƏKƏ') . ' XƏBƏRDARLIĞI',
         '',
-        'Seviyye: ' . $severity,
-        'Avadanliq: ' . $device,
+        'Səviyyə: ' . $severity,
+        'Avadanlıq: ' . $device,
     ];
     if ($ip !== '') {
         $lines[] = 'IP: ' . $ip;
     }
     $lines[] = 'Problem: ' . $problem;
     $lines[] = '';
-    $lines[] = 'Tovsiye:';
+    $lines[] = 'Tövsiyə:';
     $lines[] = $recommendation;
 
     $ticketNo = clean_text((string) ($alarm['ticket_no'] ?? ''));
@@ -9601,7 +11192,7 @@ function app_mgs_render_alarm_message(array $alarm): string
         $ticket = app_portal_ticket_find($ticketNo);
         $closeLink = is_array($ticket) ? app_portal_ticket_close_link($ticket) : '';
         if ($closeLink !== '') {
-            $lines[] = 'Bagla: ' . $closeLink;
+            $lines[] = 'Bağla: ' . $closeLink;
         }
     }
 
@@ -9675,6 +11266,17 @@ function app_mgs_record_alarm_event(
         'object_id' => $objectId,
     ]);
 
+    $normalizedSeverity = in_array($severity, ['info', 'warning', 'critical', 'emergency'], true) ? $severity : 'info';
+
+    $beforeAlarm = null;
+    try {
+        $existingAlarm = $db->prepare('SELECT id, status, severity, seen_count FROM mgs_alarm_events WHERE dedup_key = :dedup_key');
+        $existingAlarm->execute(['dedup_key' => $dedupKey]);
+        $beforeAlarm = $existingAlarm->fetch(PDO::FETCH_ASSOC) ?: null;
+    } catch (Throwable) {
+        $beforeAlarm = null;
+    }
+
     $statement = $db->prepare(
         'INSERT INTO mgs_alarm_events (
             dedup_key, alarm_type, severity, source, object_type, object_id, title, message, status, ticket_no,
@@ -9693,7 +11295,7 @@ function app_mgs_record_alarm_event(
     $ok = $statement->execute([
         'dedup_key' => $dedupKey,
         'alarm_type' => $alarmType,
-        'severity' => in_array($severity, ['info', 'warning', 'critical', 'emergency'], true) ? $severity : 'info',
+        'severity' => $normalizedSeverity,
         'source' => $source,
         'object_type' => $objectType,
         'object_id' => $objectId,
@@ -9705,10 +11307,40 @@ function app_mgs_record_alarm_event(
         'payload_json' => app_db_json_encode($alarm),
     ]);
 
-    $alarmId = (int) $db->lastInsertId();
+    // $beforeAlarm === null means this dedup_key had no existing row, so the
+    // statement above was a genuine INSERT and lastInsertId() is reliable;
+    // ON DUPLICATE KEY UPDATE does not otherwise populate it (MySQL/MariaDB
+    // only does that when the UPDATE clause itself calls LAST_INSERT_ID()).
+    $alarmId = $beforeAlarm !== null ? (int) $beforeAlarm['id'] : (int) $db->lastInsertId();
     if ($queueMessage) {
         $notificationEvent['metadata']['alarm_id'] = $alarmId;
         app_notification_route_event($notificationEvent, $testMode, true);
+    }
+
+    // Best-effort append-only history (docs/39_MGS_NODE_CONSOLIDATION.md Faza 1):
+    // mgs_alarm_events only ever holds current state; this keeps every
+    // create/re-occurrence transition so an alarm's timeline can be
+    // reconstructed. Swallowed if the migration hasn't run yet, matching
+    // app_ai_team_record_agenda_run()'s best-effort-telemetry pattern.
+    if ($ok && $alarmId > 0) {
+        try {
+            $db->prepare(
+                'INSERT INTO mgs_alarm_state_events
+                    (alarm_event_id, dedup_key, from_status, to_status, from_severity, to_severity, seen_count, test_mode)
+                 VALUES (:alarm_event_id, :dedup_key, :from_status, :to_status, :from_severity, :to_severity, :seen_count, :test_mode)'
+            )->execute([
+                'alarm_event_id' => $alarmId,
+                'dedup_key' => $dedupKey,
+                'from_status' => $beforeAlarm['status'] ?? null,
+                'to_status' => $status,
+                'from_severity' => $beforeAlarm['severity'] ?? null,
+                'to_severity' => $normalizedSeverity,
+                'seen_count' => $beforeAlarm !== null ? ((int) $beforeAlarm['seen_count'] + 1) : 1,
+                'test_mode' => $testMode ? 1 : 0,
+            ]);
+        } catch (Throwable) {
+            // Migration not applied yet or table unavailable -- alarm recording itself must not fail.
+        }
     }
 
     app_mgs_record_operation_action([
@@ -9858,6 +11490,10 @@ function app_mgs_resolve_olt_device_from_text(string $oltName, array $deviceInde
 function app_mgs_ont_signal_findings(array $ont, array $thresholds): array
 {
     $findings = [];
+    $ontStatus = mb_strtolower(trim(app_mgs_search_profile_field($ont, ['status', 'state', 'online_status'], '')));
+    if (in_array($ontStatus, ['offline', 'down', 'los', 'dying-gasp', 'inactive'], true)) {
+        $findings[] = 'ONT bağlantısı yoxdur (' . $ontStatus . ')';
+    }
     $checks = [
         'ont_rx' => ['label' => 'ONT RX', 'mode' => 'min', 'limit' => (float) $thresholds['ont_rx_min_dbm']],
         'olt_rx' => ['label' => 'OLT RX', 'mode' => 'min', 'limit' => (float) $thresholds['olt_rx_min_dbm']],
@@ -10098,7 +11734,7 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
  */
 function app_mgs_auto_close_resolved_olt_tickets(array $activeDedupKeys, PDO $db, array $actor = [], bool $testMode = false): array
 {
-    $prefixes = ['device-offline:', 'pon-mass-optical:'];
+    $prefixes = ['device-offline:', 'pon-mass-optical:', 'core-bottleneck:'];
     $likeClauses = [];
     $params = [];
     foreach ($prefixes as $i => $prefix) {
@@ -10362,10 +11998,10 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             'device_ip' => (string) ($device['ip_address'] ?? ''),
             'device_type' => (string) ($device['device_type'] ?? 'unknown'),
             'area' => 'Sebeke',
-            'title' => (string) ($device['device_name'] ?? $deviceKey) . ' offline',
-            'human_problem' => 'Monitorinq aktivdir, amma cihaz cavab vermir.',
-            'recommendation' => 'Uplink, enerji, VLAN 550 management yolu ve SNMP/SSH cavabini yoxla.',
-            'message' => strtoupper((string) ($device['device_type'] ?? 'device')) . ' ' . (string) ($device['device_name'] ?? $deviceKey) . ' offline gorunur. IP: ' . (string) ($device['ip_address'] ?? ''),
+            'title' => (string) ($device['device_name'] ?? $deviceKey) . ' ilə əlaqə kəsilib',
+            'human_problem' => 'Monitorinq aktivdir, amma cihaz cavab vermir. Bu cihazdan asılı xidmətlər təsirlənə bilər.',
+            'recommendation' => 'Enerji və uplink-i, sonra VLAN 550 idarəetmə yolunu və SNMP/SSH cavabını yoxlayın.',
+            'message' => strtoupper((string) ($device['device_type'] ?? 'device')) . ' ' . (string) ($device['device_name'] ?? $deviceKey) . ' ilə əlaqə kəsilib. IP: ' . (string) ($device['ip_address'] ?? ''),
         ];
     }
 
@@ -10422,14 +12058,69 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             'device_name' => (string) ($group['device_name'] ?? ''),
             'device_ip' => (string) ($group['device_ip'] ?? ''),
             'area' => 'Sebeke',
-            'title' => 'PON sebeke problemi: ' . (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? ''),
-            'human_problem' => $issueCount . ' ONT eyni PON uzerinde optical/temperatur threshold-u kecib.',
-            'recommendation' => 'Tek-tek musteri bileti acma. PON splitter, feeder/drop kabel, OLT port optic, kabinet enerji/temperatur ve patchleri yoxla.',
-            'message' => (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ': ' . $issueCount . ' ONT threshold kecib.',
+            'title' => 'Kütləvi PON problemi: ' . (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? ''),
+            'human_problem' => $issueCount . ' abunəçinin ONT-si eyni PON üzərində oflayndır və ya optik/temperatur həddini keçib.',
+            'recommendation' => 'Ayrı-ayrı müştəri bileti açmayın. PON portunu, splitteri, feeder/drop kabelini, kabinet enerjisini və optik patchləri vahid hadisə kimi yoxlayın.',
+            'message' => (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ': ' . $issueCount . ' abunəçi eyni səbəbdən təsirlənir.',
             'samples' => $samples,
             'issue_count' => $issueCount,
             'thresholds' => $thresholds,
         ];
+    }
+
+    // Core/router dar boğazı yalnız ən azı üç son nümunənin orta yükü
+    // interfeys tutumunun 85%-ni keçəndə hadisəyə çevrilir. Tək sıçrayış ticket açmır.
+    try {
+        $trafficReady = (int) $db->query(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME IN ("device_interfaces", "device_interface_traffic_samples")'
+        )->fetchColumn() === 2;
+        if ($trafficReady) {
+            $trafficRows = $db->query(
+                'SELECT s.device_key, s.if_index, i.if_descr, i.if_speed_bps,
+                        d.device_name, d.ip_address, d.device_type,
+                        COUNT(*) AS sample_count,
+                        ROUND(AVG(GREATEST(COALESCE(s.in_bps,0), COALESCE(s.out_bps,0)) / i.if_speed_bps * 100), 1) AS avg_utilization,
+                        ROUND(MAX(GREATEST(COALESCE(s.in_bps,0), COALESCE(s.out_bps,0)) / i.if_speed_bps * 100), 1) AS peak_utilization
+                   FROM device_interface_traffic_samples s
+                   JOIN device_interfaces i ON i.device_key = s.device_key AND i.if_index = s.if_index
+                   JOIN device_learning_profiles d ON d.device_key = s.device_key
+                  WHERE s.sampled_at >= (NOW() - INTERVAL 20 MINUTE)
+                    AND i.if_speed_bps > 0
+                    AND d.device_type = "router"
+                  GROUP BY s.device_key, s.if_index, i.if_descr, i.if_speed_bps,
+                           d.device_name, d.ip_address, d.device_type
+                 HAVING COUNT(*) >= 3 AND avg_utilization >= 85'
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($trafficRows as $traffic) {
+                $deviceKey = (string) $traffic['device_key'];
+                $ifIndex = (int) $traffic['if_index'];
+                $avg = (float) $traffic['avg_utilization'];
+                $peak = (float) $traffic['peak_utilization'];
+                $alerts[] = [
+                    'dedup_key' => 'core-bottleneck:' . $deviceKey . ':' . $ifIndex,
+                    'alarm_type' => 'CORE_INTERFACE_BOTTLENECK',
+                    'severity' => $avg >= 95 ? 'critical' : 'warning',
+                    'object_type' => 'interface',
+                    'object_id' => $deviceKey . '/' . $ifIndex,
+                    'device_key' => $deviceKey,
+                    'device_name' => (string) ($traffic['device_name'] ?: $deviceKey),
+                    'device_ip' => (string) ($traffic['ip_address'] ?? ''),
+                    'interface_name' => (string) ($traffic['if_descr'] ?: 'ifIndex ' . $ifIndex),
+                    'area' => 'Şəbəkə',
+                    'title' => (string) ($traffic['device_name'] ?: $deviceKey) . ' üzərində dar boğaz',
+                    'human_problem' => 'Core interfeysinin son 20 dəqiqəlik orta yükü ' . $avg . '%, pik yükü ' . $peak . '% olub.',
+                    'recommendation' => 'Trafik istiqamətini, top talker-ləri və uplink tutumunu yoxlayın; yük davamlıdırsa balanslama və ya tutum artımı planlayın.',
+                    'message' => (string) ($traffic['device_name'] ?: $deviceKey) . ' / ' . (string) ($traffic['if_descr'] ?: $ifIndex) . ': orta ' . $avg . '%, pik ' . $peak . '%.',
+                    'avg_utilization' => $avg,
+                    'peak_utilization' => $peak,
+                    'sample_count' => (int) $traffic['sample_count'],
+                ];
+            }
+        }
+    } catch (Throwable) {
+        // Traffic migration or telemetry may not be available yet; OLT rules continue safely.
     }
 
     $createdTickets = 0;
@@ -10442,7 +12133,7 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
         if ($createTickets) {
             $ticket = app_mgs_network_create_ticket([
                 'dedup_key' => (string) ($alert['dedup_key'] ?? ''),
-                'subject' => 'Texniki destek',
+                'subject' => 'Şəbəkə hadisəsi',
                 'customer_name' => 'NOC avtomatik',
                 'area' => (string) ($alert['area'] ?? 'Sebeke'),
                 'address' => (string) ($alert['device_name'] ?? ''),
@@ -10835,7 +12526,7 @@ function app_mgs_inventory_active_assignment_exists(PDO $db, int $assetId): bool
     return (int) $statement->fetchColumn() > 0;
 }
 
-function app_mgs_inventory_install_asset(PDO $db, int $assetId, string $customerCode, string $technicianCode, string $ticketNo, string $ownershipType = 'company'): int
+function app_mgs_inventory_install_asset(PDO $db, int $assetId, string $customerCode, string $technicianCode, string $ticketNo, string $ownershipType = 'company', bool $recordMovement = true): int
 {
     if ($ownershipType !== 'customer_owned' && app_mgs_inventory_active_assignment_exists($db, $assetId)) {
         throw new RuntimeException('duplicate_active_assignment');
@@ -10869,7 +12560,7 @@ function app_mgs_inventory_install_asset(PDO $db, int $assetId, string $customer
     ]);
     $assignmentId = (int) $db->lastInsertId();
 
-    if ($ownershipType !== 'customer_owned') {
+    if ($ownershipType !== 'customer_owned' && $recordMovement) {
         app_mgs_inventory_record_lifecycle_movement($db, [
             'movement_no' => 'INSTALL-ASSET-' . $assetId . '-' . $assignmentId,
             'movement_type' => 'customer_install',
@@ -11415,6 +13106,13 @@ function app_mgs_backup_payload_for_device(
                 'keywords' => app_mgs_json_decode_array($discovery['keywords'] ?? []),
                 'sample_ont_id' => (string) ($discovery['sample_ont_id'] ?? ''),
                 'welcome' => (string) ($discovery['welcome'] ?? ''),
+                // The 5 fields above are HSGQ's original discovery shape,
+                // kept as-is so nothing already reading them breaks. Other
+                // vendors' probes (e.g. Cisco's outputs/hostname/
+                // is_cisco_ios/privileged_mode) don't fit that shape, so the
+                // full raw probe result is captured here too rather than
+                // silently dropped for every vendor added after HSGQ.
+                'raw' => $discovery,
             ],
             'derived_command_map' => $learnedCommandMap,
             'metadata' => [

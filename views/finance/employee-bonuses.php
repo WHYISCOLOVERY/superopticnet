@@ -155,13 +155,13 @@ $bonusUrl = static fn (string $view, array $params = []): string => app_finance_
         </tbody></table></div>
         <?php require __DIR__ . '/_pagination.php'; ?>
     <?php elseif ($bonusView === 'customer-traces'): ?>
-        <div class="portal-card-head"><div><strong>Musteri-bonus izleri</strong><small>Finder, installer, erazi mesulu ve bonus sahibini musteriye baglayin.</small></div></div>
+        <div class="portal-card-head"><div><strong>Musteri-bonus izleri</strong><small>Her musteri ucun yalniz bir bonus sahibi secilir. Aylıq ve yeni qosulma bonusu hemin emekdasa yazilir.</small></div></div>
         <?php if ($canCalculate): ?>
             <form class="bonus-form-inline" method="post">
                 <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>"><input type="hidden" name="action" value="save_customer_bonus_assignment"><input type="hidden" name="finance_tab" value="employee-bonuses"><input type="hidden" name="bonus_view" value="customer-traces">
                 <div class="portal-form-row"><label>Musteri kodu</label><input name="subscriber_code" placeholder="100001" required></div>
-                <?php foreach (['finder_employee_id' => 'Tapan/satis', 'installer_employee_id' => 'Qosan', 'area_responsible_employee_id' => 'Erazi mesulu', 'bonus_owner_employee_id' => 'Bonus sahibi'] as $field => $label): ?>
-                    <div class="portal-form-row"><label><?= e($label); ?></label><select name="<?= e($field); ?>"><option value="">Sec</option><?php foreach ($employees as $employee): ?><option value="<?= e((string) ($employee['id'] ?? 0)); ?>"><?= e((string) ($employee['full_name'] ?? '-')); ?></option><?php endforeach; ?></select></div>
+                <?php foreach (['finder_employee_id' => 'Tapan/satis', 'installer_employee_id' => 'Qosan', 'area_responsible_employee_id' => 'Erazi mesulu', 'bonus_owner_employee_id' => 'Tek bonus sahibi'] as $field => $label): ?>
+                    <div class="portal-form-row"><label><?= e($label); ?></label><select name="<?= e($field); ?>"<?= $field === 'bonus_owner_employee_id' ? ' required' : ''; ?>><option value="">Sec</option><?php foreach ($employees as $employee): ?><option value="<?= e((string) ($employee['id'] ?? 0)); ?>"><?= e((string) ($employee['full_name'] ?? '-')); ?></option><?php endforeach; ?></select></div>
                 <?php endforeach; ?>
                 <div class="portal-form-row"><label>Erazi</label><input name="assigned_area_id" placeholder="Baki / Astara"></div>
                 <div class="portal-form-row"><label>Qeyd</label><input name="note" placeholder="Sebeb"></div>

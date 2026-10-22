@@ -77,8 +77,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'snmpPort' => max(1, (int) ($_POST['snmp_port'] ?? 161)),
             'snmpTrapPort' => max(1, (int) ($_POST['snmp_trap_port'] ?? 162)),
             'snmpVersion' => clean_text((string) ($_POST['snmp_version'] ?? '2c')),
-            'snmpReadCommunity' => clean_text((string) ($_POST['snmp_read_community'] ?? 'public')),
-            'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? 'private')),
+            'snmpReadCommunity' => clean_text((string) ($_POST['snmp_read_community'] ?? '')),
+            'snmpWriteCommunity' => clean_text((string) ($_POST['snmp_write_community'] ?? '')),
             'driverMode' => clean_text((string) ($_POST['driver_mode'] ?? 'real')),
         ];
         $result = app_mgs_noc_service_request_json(
@@ -144,6 +144,34 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 )
                 : 'Cihaz probe xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
         ];
+    } elseif ($action === 'discover_device_interfaces') {
+        $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
+        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
+        if (!is_array($device)) {
+            $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
+        } else {
+            $deviceActionResult = app_mgs_discover_device_interfaces($device, $db, $user);
+            $flash = [
+                'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
+                'message' => !empty($deviceActionResult['ok'])
+                    ? ((string) ($device['device_name'] ?? $deviceKey)) . ': ' . (int) ($deviceActionResult['interface_count'] ?? 0) . ' interfeys askarlandi/yenilendi'
+                    : 'Interfeys kesfi xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
+            ];
+        }
+    } elseif ($action === 'discover_device_neighbors') {
+        $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
+        $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $user);
+        if (!is_array($device)) {
+            $flash = ['type' => 'error', 'message' => 'Cihaz profili tapilmadi.'];
+        } else {
+            $deviceActionResult = app_mgs_discover_device_neighbors($device, $db, $user);
+            $flash = [
+                'type' => !empty($deviceActionResult['ok']) ? 'success' : 'error',
+                'message' => !empty($deviceActionResult['ok'])
+                    ? ((string) ($device['device_name'] ?? $deviceKey)) . ': ' . (int) ($deviceActionResult['neighbor_count'] ?? 0) . ' qonşu askarlandi/yenilendi'
+                    : 'Qonşu kesfi xetasi: ' . (string) ($deviceActionResult['reason'] ?? 'unknown'),
+            ];
+        }
     } elseif ($action === 'backup_single_device') {
         $deviceKey = clean_text((string) ($_POST['device_key'] ?? ''));
         $backupType = clean_text((string) ($_POST['backup_type'] ?? 'profile_snapshot'));
@@ -348,7 +376,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 }
 
 $ontQuery = $submittedOntQuery;
-$validNocViews = ['monitor', 'devices', 'backups', 'ont-search'];
+$validNocViews = ['monitor', 'devices', 'backups', 'ont-search', 'legacy-onts'];
 $activeNocView = clean_text((string) ($_GET['view'] ?? 'monitor'));
 if ($ontQuery !== '') {
     $activeNocView = 'ont-search';
@@ -359,12 +387,26 @@ if (!in_array($activeNocView, $validNocViews, true)) {
 $selectedDeviceKey = clean_text((string) ($_GET['device'] ?? ''));
 $needsDeviceRows = in_array($activeNocView, ['monitor', 'devices'], true);
 $needsBackupRows = $activeNocView === 'backups';
+$needsLegacyOntRows = $activeNocView === 'legacy-onts';
 
 $summary = $db instanceof PDO ? app_mgs_summary($db, false, $user) : ['db' => false];
 $devices = ($db instanceof PDO && $needsDeviceRows) ? app_mgs_device_learning_rows($db, $user) : [];
 $bridge = app_mgs_bridge_status();
 $backups = $needsBackupRows ? app_mgs_noc_recent_rows('device_config_backups', 10, $user) : [];
 $dedupRows = $needsBackupRows ? app_mgs_noc_recent_rows('mgs_dedup_registry', 8, $user) : [];
+$legacyOntInventory = ['ok' => false, 'rows' => [], 'total' => 0, 'page' => 1, 'per_page' => 50, 'total_pages' => 1, 'olts' => []];
+if ($needsLegacyOntRows && $db instanceof PDO) {
+    $legacyOntInventory = app_mgs_legacy_ont_inventory_rows(
+        $db,
+        $user,
+        [
+            'olt_device_key' => clean_text((string) ($_GET['legacy_olt'] ?? '')),
+            'status' => clean_text((string) ($_GET['legacy_status'] ?? '')),
+            'q' => clean_text((string) ($_GET['legacy_q'] ?? '')),
+        ],
+        max(1, (int) ($_GET['legacy_page'] ?? 1))
+    );
+}
 $managementPathReady = app_mgs_management_path_ready();
 $snmpDefaults = app_mgs_snmp_defaults();
 $scanResults = app_noc_scan_results_from_state($scanState);
@@ -1039,6 +1081,56 @@ function noc_attach_device_context(PDO $db, array $rows, array $user): array
 
     return $rows;
 }
+
+function noc_merge_declared_network_nodes(array $devices): array
+{
+    $path = __DIR__ . '/config/network_nodes.json';
+    if (!is_file($path)) {
+        return $devices;
+    }
+    $registry = json_decode((string) file_get_contents($path), true);
+    if (!is_array($registry) || !is_array($registry['nodes'] ?? null)) {
+        return $devices;
+    }
+    $known = [];
+    foreach ($devices as $device) {
+        $ip = trim((string) ($device['ip_address'] ?? ''));
+        if ($ip !== '') {
+            $known[$ip] = true;
+        }
+    }
+    foreach ($registry['nodes'] as $node) {
+        if (!is_array($node)) {
+            continue;
+        }
+        $ip = trim((string) ($node['ip'] ?? ''));
+        if ($ip === '' || isset($known[$ip])) {
+            continue;
+        }
+        $devices[] = [
+            'id' => 0,
+            'device_key' => (string) ($node['id'] ?? 'declared-' . str_replace('.', '-', $ip)),
+            'device_name' => (string) ($node['name'] ?? $ip),
+            'ip_address' => $ip,
+            'device_type' => (string) ($node['type'] ?? 'unknown'),
+            'vendor' => (string) ($node['vendor'] ?? 'unknown'),
+            'model' => '',
+            'adapter_key' => '',
+            'management_network' => (string) ($node['management_network'] ?? ''),
+            'expected_reachability' => 1,
+            'monitoring_enabled' => 1,
+            'reachability_state' => 'not_registered',
+            'status' => 'not_registered',
+            'last_probe_error' => 'device_not_registered',
+            'features_json' => '{}',
+            'service_probe_json' => '{}',
+            'registered' => false,
+        ];
+        $known[$ip] = true;
+    }
+
+    return $devices;
+}
 }
 
 $ontResults = [];
@@ -1053,6 +1145,7 @@ if ($ontQuery !== '') {
         $modemBotPreview = app_mgs_build_modem_search_reply($ontQuery, true, $db, $user);
     }
 }
+$devices = $needsDeviceRows ? noc_merge_declared_network_nodes($devices) : $devices;
 $monitorPoints = $needsDeviceRows ? noc_monitor_points($devices) : [];
 $monitorCounts = ['up' => 0, 'down' => 0, 'maintenance' => 0, 'unknown' => 0];
 if ($needsDeviceRows) {
@@ -1090,6 +1183,8 @@ if ($needsDeviceRows) {
         .noc-device-actions .portal-inline-link,.noc-device-actions button{width:100%;min-height:38px;padding:8px 10px;font-size:.82rem}
         .noc-device-actions form{margin:0;max-width:100%;display:flex;gap:8px;flex-wrap:wrap;min-width:0}
         .noc-device-actions select{max-width:100%;min-width:0}
+        .noc-node-pending{display:grid;gap:4px;padding:11px 12px;border:1px dashed rgba(245,158,11,.55);border-radius:14px;background:rgba(255,251,235,.8);color:#92400e}
+        .noc-node-pending strong{font-size:.82rem}.noc-node-pending small{color:#a16207;line-height:1.4}
         .portal-layout.is-loading [data-noc-content]{opacity:.55;pointer-events:none}
         .noc-ajax-status{min-height:20px;color:#64748b;font-weight:800}
         .noc-native-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:16px;margin-top:16px}
@@ -1321,7 +1416,7 @@ if ($needsDeviceRows) {
         $nocLink = static fn (string $key, string $label, string $href): array => ['key'=>$key,'label'=>$label,'href'=>$href];
         $moduleNavGroups = [
             ['label'=>'Monitor','icon'=>'fa-display','links'=>[$nocLink('monitor','Network monitor','noc-devices.php?view=monitor')]],
-            ['label'=>'Cihazlar','icon'=>'fa-network-wired','links'=>[$nocLink('devices','OLT / ONT paneli','noc-devices.php?view=devices'),$nocLink('ont-search','ONT axtarisi','noc-devices.php?view=ont-search')]],
+            ['label'=>'Cihazlar','icon'=>'fa-network-wired','links'=>[$nocLink('devices','OLT / ONT paneli','noc-devices.php?view=devices'),$nocLink('ont-search','ONT axtarisi','noc-devices.php?view=ont-search'),$nocLink('legacy-onts','Kohne MGS ONT arxivi','noc-devices.php?view=legacy-onts')]],
             ['label'=>'Backup','icon'=>'fa-box-archive','links'=>[$nocLink('backups','Backup / dedup','noc-devices.php?view=backups')]],
             ['label'=>'Sebeke tenzimlemeleri','icon'=>'fa-route','links'=>[$nocLink('definitions','MPLS / VLAN','network-definitions.php')]],
         ];
@@ -1474,8 +1569,8 @@ if ($needsDeviceRows) {
                 </form>
 
                 <?php app_noc_render_scan_results($scanResults, $scanTarget, [
-                    'snmp_read_community' => (string) $snmpDefaults['read_community'],
-                    'snmp_write_community' => (string) $snmpDefaults['write_community'],
+                    'snmp_read_community' => (string) ($snmpDefaults['read_community'] ?? ''),
+                    'snmp_write_community' => (string) ($snmpDefaults['write_community'] ?? ''),
                     'snmp_port' => (int) $snmpDefaults['port'],
                     'snmp_trap_port' => (int) $snmpDefaults['trap_port'],
                 ]); ?>
@@ -1526,11 +1621,11 @@ if ($needsDeviceRows) {
                         </div>
                         <div class="portal-form-row">
                             <label>SNMP read</label>
-                            <input type="text" name="snmp_read_community" value="<?= e((string) $snmpDefaults['read_community']); ?>">
+                            <input type="text" name="snmp_read_community" value="<?= e((string) ($snmpDefaults['read_community'] ?? '')); ?>">
                         </div>
                         <div class="portal-form-row">
                             <label>SNMP write</label>
-                            <input type="text" name="snmp_write_community" value="<?= e((string) $snmpDefaults['write_community']); ?>">
+                            <input type="text" name="snmp_write_community" value="<?= e((string) ($snmpDefaults['write_community'] ?? '')); ?>">
                         </div>
                         <div class="portal-form-row">
                             <label>SNMP port</label>
@@ -1607,7 +1702,10 @@ if ($needsDeviceRows) {
                         $learnedCommandMap = is_array($cliDiscovery['derived_command_map'] ?? null) ? $cliDiscovery['derived_command_map'] : [];
                         $savedPasswordState = noc_secret_status((string) ($accessProfile['ssh_password'] ?? ''));
                         $deviceKey = (string) ($device['device_key'] ?? '');
-                        $isSelectedDevice = $selectedDeviceKey !== '' && $deviceKey !== '' && hash_equals($deviceKey, $selectedDeviceKey);
+                        $deviceInterfaces = app_mgs_device_interfaces($deviceKey, $db, $user);
+                        $deviceNeighbors = app_mgs_device_neighbors($deviceKey, $db, $user);
+                        $isRegistered = ($device['registered'] ?? true) !== false;
+                        $isSelectedDevice = $isRegistered && $selectedDeviceKey !== '' && $deviceKey !== '' && hash_equals($deviceKey, $selectedDeviceKey);
                         $deviceDetailParams = ['view' => 'devices', 'device' => $deviceKey];
                         if ($lang !== 'az') {
                             $deviceDetailParams['lang'] = $lang;
@@ -1683,12 +1781,38 @@ if ($needsDeviceRows) {
                             <?php if ($learnedCommandMap !== []): ?>
                                 <small>Learned map: <?= e(implode(', ', array_map(static fn ($key, $value): string => (string) $key . '=' . (string) $value, array_keys($learnedCommandMap), array_values($learnedCommandMap)))); ?></small>
                             <?php endif; ?>
+                            <?php if ($deviceInterfaces !== []): ?>
+                                <?php $interfacesUpCount = count(array_filter($deviceInterfaces, static fn (array $row): bool => (string) ($row['if_oper_status'] ?? '') === 'up')); ?>
+                                <small>Interfeyslər: <?= (int) count($deviceInterfaces); ?> (<?= $interfacesUpCount; ?> up) -
+                                    <?= e(implode(', ', array_map(static fn (array $row): string => (string) ($row['if_descr'] ?? ('if' . $row['if_index'])), array_slice($deviceInterfaces, 0, 6)))); ?>
+                                </small>
+                            <?php endif; ?>
+                            <?php if ($deviceNeighbors !== []): ?>
+                                <small>Qonşular: <?= (int) count($deviceNeighbors); ?> -
+                                    <?= e(implode(', ', array_map(
+                                        static fn (array $row): string => strtoupper((string) $row['protocol']) . ':' . ((string) ($row['remote_sys_name'] ?? '') !== '' ? (string) $row['remote_sys_name'] : (string) $row['remote_chassis_id']),
+                                        array_slice($deviceNeighbors, 0, 6)
+                                    ))); ?>
+                                </small>
+                            <?php endif; ?>
                             <div class="noc-device-safe-actions">
                                 <form class="noc-inline-action" method="post">
                                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                     <input type="hidden" name="action" value="probe_single_device">
                                     <input type="hidden" name="device_key" value="<?= e((string) ($device['device_key'] ?? '')); ?>">
                                     <button class="portal-primary-btn" type="submit">Probe</button>
+                                </form>
+                                <form class="noc-inline-action" method="post">
+                                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                    <input type="hidden" name="action" value="discover_device_interfaces">
+                                    <input type="hidden" name="device_key" value="<?= e((string) ($device['device_key'] ?? '')); ?>">
+                                    <button class="portal-ghost-btn" type="submit">Interfeysləri kəşf et</button>
+                                </form>
+                                <form class="noc-inline-action" method="post">
+                                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                    <input type="hidden" name="action" value="discover_device_neighbors">
+                                    <input type="hidden" name="device_key" value="<?= e((string) ($device['device_key'] ?? '')); ?>">
+                                    <button class="portal-ghost-btn" type="submit">Qonşuları kəşf et</button>
                                 </form>
                                 <form class="noc-inline-action" method="post">
                                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
@@ -1799,9 +1923,16 @@ if ($needsDeviceRows) {
                                 </div>
                             </details>
                             <?php endif; ?>
-                            <div class="noc-device-actions">
-                                <a class="portal-ghost-btn" href="<?= e($deviceDetailHref); ?>" data-noc-open-device-detail>Detallar</a>
-                            </div>
+                            <?php if ($isRegistered): ?>
+                                <div class="noc-device-actions">
+                                    <a class="portal-ghost-btn" href="<?= e($deviceDetailHref); ?>" data-noc-open-device-detail>Detallar</a>
+                                </div>
+                            <?php else: ?>
+                                <div class="noc-node-pending">
+                                    <strong>Node qeydiyyatda deyil</strong>
+                                    <small>Görünürlük aktivdir. Access profili yaradıldıqdan sonra probe, SNMP walk və agent əməliyyatları açılacaq.</small>
+                                </div>
+                            <?php endif; ?>
                         </article>
                     <?php endforeach; ?>
                 </div>
@@ -1990,6 +2121,103 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
                         </article>
                     <?php endforeach; ?>
                 </div>
+            <?php endif; ?>
+        </section>
+        <?php endif; ?>
+        <?php if ($activeNocView === 'legacy-onts'): ?>
+        <section id="legacy-onts" class="portal-card portal-reveal">
+            <div class="portal-card-head">
+                <h2>Kohne MGS ONT arxivi</h2>
+                <small>Ayrica Node MGS proqramindan (docs/39_MGS_NODE_CONSOLIDATION.md Faza 2) kocurulmus 730 tarixi ONT qeydi. Bu, canli monitorinq deyil ve hec bir muster hesabi ile baglanmayib (menbe datada real musteri elaqesi hec vaxt olmayib) — yalniz OLT/PON kontekstinde tarixi referansdir.</small>
+            </div>
+            <form method="get" class="portal-stacked-form" data-noc-auto-filter>
+                <input type="hidden" name="view" value="legacy-onts">
+                <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
+                <div class="billing-filter-grid">
+                    <div class="portal-form-row">
+                        <label>OLT</label>
+                        <select name="legacy_olt">
+                            <option value="">Butun OLT-lar</option>
+                            <?php foreach ($legacyOntInventory['olts'] as $oltOption): ?>
+                                <?php
+                                $oltKey = (string) $oltOption['olt_device_key'];
+                                $oltDevice = app_mgs_device_learning_profile_by_key($oltKey, $db, $user);
+                                $oltLabel = (is_array($oltDevice) ? (string) ($oltDevice['device_name'] ?? '') : '') ?: $oltKey;
+                                ?>
+                                <option value="<?= e($oltKey); ?>" <?= ($_GET['legacy_olt'] ?? '') === $oltKey ? 'selected' : ''; ?>><?= e($oltLabel); ?> (<?= (int) $oltOption['c']; ?>)</option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="portal-form-row">
+                        <label>Status</label>
+                        <select name="legacy_status">
+                            <option value="">Hamisi</option>
+                            <?php foreach (['online', 'offline', 'flapping', 'disabled'] as $statusOption): ?>
+                                <option value="<?= e($statusOption); ?>" <?= ($_GET['legacy_status'] ?? '') === $statusOption ? 'selected' : ''; ?>><?= e($statusOption); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="portal-form-row">
+                        <label>Axtaris</label>
+                        <input type="text" name="legacy_q" value="<?= e((string) ($_GET['legacy_q'] ?? '')); ?>" placeholder="Serial ve ya port">
+                    </div>
+                    <div class="billing-filter-actions">
+                        <button type="submit" class="portal-primary-btn">Axtar</button>
+                        <a class="portal-ghost-btn portal-inline-link" href="noc-devices.php?view=legacy-onts">Sifirla</a>
+                    </div>
+                </div>
+            </form>
+            <?php if ($legacyOntInventory['rows'] === []): ?>
+                <?php billing_render_empty_state('Netice yoxdur', 'Filterlere uygun kohne ONT qeydi tapilmadi.', 'fa-box-archive'); ?>
+            <?php else: ?>
+                <div class="portal-badge-list" style="margin-bottom:12px">
+                    <span><?= (int) $legacyOntInventory['total']; ?> qeyd</span>
+                    <span>Sehife <?= (int) $legacyOntInventory['page']; ?> / <?= (int) $legacyOntInventory['total_pages']; ?></span>
+                </div>
+                <div class="portal-table-wrap">
+                    <table class="portal-table">
+                        <thead><tr><th>OLT</th><th>Port</th><th>Serial</th><th>Status</th><th>RX / TX / OLT-RX (dBm)</th><th>Mesafe</th><th>Vendor</th><th>Menbe yenilenme</th></tr></thead>
+                        <tbody>
+                            <?php foreach ($legacyOntInventory['rows'] as $ontInventoryRow): ?>
+                                <?php
+                                $rowOltDevice = app_mgs_device_learning_profile_by_key((string) $ontInventoryRow['olt_device_key'], $db, $user);
+                                $rowOltLabel = (is_array($rowOltDevice) ? (string) ($rowOltDevice['device_name'] ?? '') : '') ?: (string) $ontInventoryRow['olt_device_key'];
+                                ?>
+                                <tr>
+                                    <td data-label="OLT"><?= e($rowOltLabel); ?></td>
+                                    <td data-label="Port"><?= e((string) $ontInventoryRow['port_key']); ?></td>
+                                    <td data-label="Serial"><?= e((string) $ontInventoryRow['serial_number']); ?></td>
+                                    <?php
+                                    $legacyOntTone = match ((string) $ontInventoryRow['status']) {
+                                        'online' => 'success',
+                                        'offline' => 'danger',
+                                        'flapping' => 'warning',
+                                        'disabled' => 'muted',
+                                        default => 'muted',
+                                    };
+                                    ?>
+                                    <td data-label="Status"><span class="noc-pill noc-pill-<?= e($legacyOntTone); ?>"><?= e((string) $ontInventoryRow['status']); ?></span></td>
+                                    <td data-label="RX/TX/OLT-RX"><?= e((string) ($ontInventoryRow['rx_dbm'] ?? '-')); ?> / <?= e((string) ($ontInventoryRow['tx_dbm'] ?? '-')); ?> / <?= e((string) ($ontInventoryRow['olt_rx_dbm'] ?? '-')); ?></td>
+                                    <td data-label="Mesafe"><?= (int) $ontInventoryRow['distance_meters']; ?> m</td>
+                                    <td data-label="Vendor"><?= e((string) $ontInventoryRow['ont_vendor']); ?></td>
+                                    <td data-label="Menbe yenilenme"><?= e(billing_datetime($ontInventoryRow['source_updated_at'] ?? null)); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php if ((int) $legacyOntInventory['total_pages'] > 1): ?>
+                    <?php
+                    $legacyPageParams = $_GET;
+                    unset($legacyPageParams['legacy_page']);
+                    $legacyPrevParams = $legacyPageParams + ['legacy_page' => max(1, (int) $legacyOntInventory['page'] - 1)];
+                    $legacyNextParams = $legacyPageParams + ['legacy_page' => min((int) $legacyOntInventory['total_pages'], (int) $legacyOntInventory['page'] + 1)];
+                    ?>
+                    <div class="billing-filter-actions" style="margin-top:12px">
+                        <a class="portal-ghost-btn portal-inline-link" href="noc-devices.php?<?= e(http_build_query($legacyPrevParams)); ?>">Evvelki</a>
+                        <a class="portal-ghost-btn portal-inline-link" href="noc-devices.php?<?= e(http_build_query($legacyNextParams)); ?>">Novbeti</a>
+                    </div>
+                <?php endif; ?>
             <?php endif; ?>
         </section>
         <?php endif; ?>

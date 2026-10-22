@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-09-10T03:51:15.706519+00:00",
+  "nodes": {
+    "inventory": {
+      "code_fingerprint": "6de4238d14c933465ce9c0a3a09f71c395ec997698449d0ea1a1d0bb33fc7680",
+      "label": "inventory.php",
+      "last": "2026-09-07T14:04:05.595931+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-07T14:04:05.595931+00:00",
+          "outcome": "useful",
+          "q": "What workflows should SuperOptic agents learn from the PHP system?"
+        }
+      ],
+      "score": 0.94225269,
+      "source_file": "inventory.php",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

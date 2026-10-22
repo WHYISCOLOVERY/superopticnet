@@ -97,7 +97,7 @@ if ($db instanceof PDO) {
         $flash = ['type' => 'error', 'message' => 'Router registry cedvelleri hazir deyil.'];
     }
     $nasStats['nas_total'] = (int) $db->query('SELECT COUNT(*) FROM nas')->fetchColumn();
-    $nasStats['active_sessions'] = (int) $db->query('SELECT COUNT(*) FROM radacct WHERE acctstoptime IS NULL')->fetchColumn();
+    $nasStats['active_sessions'] = (int) $db->query('SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)')->fetchColumn();
     $nasStats['sessions_24h'] = (int) $db->query('SELECT COUNT(*) FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)')->fetchColumn();
     $nasStats['traffic_24h'] = (float) $db->query('SELECT COALESCE(SUM(COALESCE(acctinputoctets,0)+COALESCE(acctoutputoctets,0)),0) FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)')->fetchColumn();
 
@@ -109,9 +109,10 @@ if ($db instanceof PDO) {
                 nr.reloadtime
          FROM nas n
          LEFT JOIN (
-             SELECT nasipaddress, COUNT(*) AS total
+             SELECT nasipaddress, COUNT(DISTINCT username) AS total
              FROM radacct
              WHERE acctstoptime IS NULL
+               AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
              GROUP BY nasipaddress
          ) active_sessions ON active_sessions.nasipaddress = n.nasname
          LEFT JOIN (
@@ -194,7 +195,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
 
         <section class="mgs-stat-grid portal-reveal">
             <?php billing_render_stat_card('Router', (string) count($routerRows), $activeRouterCount . ' aktiv registry qeydi', 'fa-server', 'blue'); ?>
-            <?php billing_render_stat_card('Online sessiya', (string) $nasStats['active_sessions'], 'radacct open', 'fa-signal', 'green'); ?>
+            <?php billing_render_stat_card('Son 20 dəq online', (string) $nasStats['active_sessions'], 'RADIUS accounting yeniləməsi', 'fa-signal', 'green'); ?>
             <?php billing_render_stat_card('24h sessiya', (string) $nasStats['sessions_24h'], 'son accounting', 'fa-clock-rotate-left', 'orange'); ?>
             <?php billing_render_stat_card('24h trafik', billing_bytes($nasStats['traffic_24h']), 'download + upload', 'fa-chart-line', 'navy'); ?>
         </section>

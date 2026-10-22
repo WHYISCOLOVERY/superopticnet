@@ -9,6 +9,12 @@ $positions = (array) ($hrContext['data']['positions'] ?? []);
 $query = (array) ($hrContext['query'] ?? []);
 $canWrite = !empty($hrContext['data']['can_write']);
 $canManagePositions = !empty($hrContext['data']['can_manage_positions']);
+$serviceAreas = app_service_areas();
+$positionIdsByTitle = [];
+foreach ($positions as $position) {
+    $title = trim((string) ($position['title'] ?? ''));
+    if ($title !== '') $positionIdsByTitle[mb_strtolower($title)] = (int) ($position['id'] ?? 0);
+}
 ?>
 <div data-hr-employees>
     <div class="portal-card-head">
@@ -62,11 +68,13 @@ $canManagePositions = !empty($hrContext['data']['can_manage_positions']);
                         'id' => (int) ($row['id'] ?? 0),
                         'full_name' => $row['full_name'] ?? '',
                         'login' => $row['login'] ?? '',
-                        'position_id' => (int) ($row['position_id'] ?? 0),
+                        'position_id' => (int) ($row['position_id'] ?? 0)
+                            ?: (int) ($positionIdsByTitle[mb_strtolower(trim((string) ($row['job_title'] ?? '')))] ?? 0),
                         'hire_date' => $row['hire_date'] ?? '',
                         'phone' => $row['phone'] ?? '',
                         'email' => $row['email'] ?? '',
                         'area' => $row['area'] ?? '',
+                        'responsible_areas' => app_db_account_areas((int) ($row['id'] ?? 0)),
                         'branch_id' => $row['branch_id'] ?? '',
                         'address' => $row['address'] ?? '',
                     ];
@@ -136,7 +144,11 @@ $canManagePositions = !empty($hrContext['data']['can_manage_positions']);
                             <input type="email" name="email" placeholder="E-mail">
                         </div>
                         <div class="portal-form-row portal-grid-slim">
-                            <input name="area" placeholder="Ərazi">
+                            <select name="responsible_areas[]" required multiple size="5" aria-label="Məsul ərazilər">
+                                <?php foreach ($serviceAreas as $area): ?>
+                                    <option value="<?= e($area); ?>"><?= e($area); ?></option>
+                                <?php endforeach; ?>
+                            </select>
                             <select name="branch_id">
                                 <option value="">Filial seç</option>
                                 <?php foreach ($branches as $branch): ?>
@@ -198,7 +210,11 @@ $canManagePositions = !empty($hrContext['data']['can_manage_positions']);
                             <input type="email" name="email" placeholder="E-mail">
                         </div>
                         <div class="portal-form-row portal-grid-slim">
-                            <input name="area" placeholder="Ərazi">
+                            <select name="responsible_areas[]" required multiple size="5" aria-label="Məsul ərazilər">
+                                <?php foreach ($serviceAreas as $area): ?>
+                                    <option value="<?= e($area); ?>"><?= e($area); ?></option>
+                                <?php endforeach; ?>
+                            </select>
                             <select name="branch_id">
                                 <option value="">Filial seç</option>
                                 <?php foreach ($branches as $branch): ?>

@@ -40,7 +40,12 @@ function app_load_environment_file(): void
             if (preg_match('/^[A-Z][A-Z0-9_]{1,127}$/', $key) !== 1) {
                 continue;
             }
-            if (getenv($key) !== false) {
+            // Apache/cPanel templates commonly export optional variables as
+            // empty strings. Treat an empty process value as unset so the
+            // protected local .env can supply the configured secret; a real
+            // non-empty process value still has precedence over the file.
+            $currentValue = getenv($key);
+            if ($currentValue !== false && trim((string) $currentValue) !== '') {
                 continue;
             }
             $value = trim(substr($line, $separator + 1));
@@ -515,19 +520,75 @@ function app_session_boot(): void
     ]);
 }
 
+/**
+ * Only trust forwarded headers when the direct peer is an explicitly
+ * configured reverse proxy.  Trusting X-Forwarded-* from every client lets an
+ * internet user spoof the client IP (bypassing rate limits and health-detail
+ * guards) and can also create host-header redirects.
+ */
+function app_ip_in_cidr(string $ip, string $cidr): bool
+{
+    $ip = trim($ip);
+    $cidr = trim($cidr);
+    if ($ip === '' || $cidr === '') {
+        return false;
+    }
+    [$network, $prefix] = array_pad(explode('/', $cidr, 2), 2, null);
+    $network = trim((string) $network);
+    $packedIp = @inet_pton($ip);
+    $packedNetwork = @inet_pton($network);
+    if ($packedIp === false || $packedNetwork === false || strlen($packedIp) !== strlen($packedNetwork)) {
+        return false;
+    }
+    $bits = strlen($packedIp) * 8;
+    $prefixLength = $prefix === null || $prefix === '' ? $bits : (int) $prefix;
+    if ($prefixLength < 0 || $prefixLength > $bits) {
+        return false;
+    }
+    $fullBytes = intdiv($prefixLength, 8);
+    $remainingBits = $prefixLength % 8;
+    if ($fullBytes > 0 && substr($packedIp, 0, $fullBytes) !== substr($packedNetwork, 0, $fullBytes)) {
+        return false;
+    }
+    if ($remainingBits === 0) {
+        return true;
+    }
+    $mask = (0xFF << (8 - $remainingBits)) & 0xFF;
+    return (ord($packedIp[$fullBytes]) & $mask) === (ord($packedNetwork[$fullBytes]) & $mask);
+}
+
+function app_trusted_proxy_request(): bool
+{
+    $remote = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+    if (filter_var($remote, FILTER_VALIDATE_IP) === false) {
+        return false;
+    }
+    $configured = trim((string) app_setting('trusted_proxy_ips', '127.0.0.1,::1'));
+    foreach (preg_split('/\s*,\s*/', $configured, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $entry) {
+        if (app_ip_in_cidr($remote, trim((string) $entry))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function app_request_is_https(): bool
 {
     if (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') {
         return true;
     }
 
-    $proto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
-    return $proto === 'https';
+    if (app_trusted_proxy_request()) {
+        $proto = strtolower(trim((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
+        return $proto === 'https';
+    }
+    return false;
 }
 
 function app_request_host(): string
 {
-    $host = (string) ($_SERVER['HTTP_X_FORWARDED_HOST'] ?? $_SERVER['HTTP_HOST'] ?? 'localhost');
+    $forwardedHost = app_trusted_proxy_request() ? (string) ($_SERVER['HTTP_X_FORWARDED_HOST'] ?? '') : '';
+    $host = $forwardedHost !== '' ? $forwardedHost : (string) ($_SERVER['HTTP_HOST'] ?? 'localhost');
     $host = trim(explode(',', $host)[0] ?? 'localhost');
     if (str_contains($host, ':')) {
         [$host] = explode(':', $host, 2);
@@ -541,13 +602,70 @@ function app_request_is_localhost(): bool
     return in_array(app_request_host(), ['localhost', '127.0.0.1', '::1'], true);
 }
 
+/**
+ * Return the host names that this installation is expected to serve.
+ * A raw Host header must never become the destination of a security redirect.
+ */
+function app_allowed_request_hosts(): array
+{
+    static $hosts = null;
+    if (is_array($hosts)) {
+        return $hosts;
+    }
+
+    $configured = trim((string) app_setting('app_allowed_hosts', ''));
+    $candidates = $configured !== ''
+        ? preg_split('/\s*,\s*/', $configured, -1, PREG_SPLIT_NO_EMPTY)
+        : [
+            app_config('app_url', ''),
+            app_config('public_site_url', ''),
+            app_config('ticket_close_base_url', ''),
+        ];
+
+    $hosts = ['localhost', '127.0.0.1', '::1'];
+    foreach ($candidates ?: [] as $candidate) {
+        $candidate = trim((string) $candidate);
+        if ($candidate === '') {
+            continue;
+        }
+        $host = str_contains($candidate, '://')
+            ? (string) parse_url($candidate, PHP_URL_HOST)
+            : $candidate;
+        $host = strtolower(trim($host, " []\t\r\n"));
+        if ($host !== '' && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) {
+            $hosts[] = $host;
+        } elseif (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            $hosts[] = $host;
+        }
+    }
+
+    return $hosts = array_values(array_unique($hosts));
+}
+
+function app_safe_redirect_host(): string
+{
+    $current = strtolower(trim(app_request_host()));
+    $allowed = app_allowed_request_hosts();
+    if (in_array($current, $allowed, true)) {
+        return $current;
+    }
+
+    foreach ($allowed as $host) {
+        if (!in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+            return $host;
+        }
+    }
+
+    return 'localhost';
+}
+
 function app_enforce_https(bool $enabled = true): void
 {
     if (!$enabled || app_request_is_https() || app_request_is_localhost() || headers_sent()) {
         return;
     }
 
-    $host = app_request_host();
+    $host = app_safe_redirect_host();
     $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/');
     header('Location: https://' . $host . $uri, true, 301);
     exit;
@@ -555,11 +673,9 @@ function app_enforce_https(bool $enabled = true): void
 
 function app_client_ip(): string
 {
-    $candidates = [
-        $_SERVER['HTTP_CF_CONNECTING_IP'] ?? '',
-        $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '',
-        $_SERVER['REMOTE_ADDR'] ?? '',
-    ];
+    $candidates = app_trusted_proxy_request()
+        ? [$_SERVER['HTTP_CF_CONNECTING_IP'] ?? '', $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '', $_SERVER['REMOTE_ADDR'] ?? '']
+        : [$_SERVER['REMOTE_ADDR'] ?? ''];
 
     foreach ($candidates as $candidate) {
         if (!is_string($candidate) || $candidate === '') {
@@ -2188,6 +2304,12 @@ function app_portal_ticket_close_link(array $ticket): string
 
 function app_portal_send_ticket_to_telegram(array $ticket): array
 {
+    // Tickets are delivered to assigned staff through the application. Telegram
+    // is retained only as an opt-in legacy channel, never as an implicit route.
+    if (!app_message_channel_is_enabled('telegram')) {
+        return [];
+    }
+
     $messageIds = [];
     $summaryResponse = app_telegram_send_message(app_portal_ticket_summary($ticket), 'customer');
     $summaryMessageId = (int) ($summaryResponse['result']['message_id'] ?? 0);

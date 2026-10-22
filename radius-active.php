@@ -44,7 +44,7 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 if ($db instanceof PDO) {
     $stats['total'] = (int) $db->query("SELECT COUNT(*) FROM portal_accounts WHERE role = 'customer'")->fetchColumn();
     $stats['active'] = (int) $db->query("SELECT COUNT(*) FROM billing_radius_services WHERE status = 'active'")->fetchColumn();
-    $stats['online'] = (int) $db->query("SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)")->fetchColumn();
+    $stats['online'] = (int) $db->query("SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)")->fetchColumn();
     $stats['traffic24'] = (float) $db->query("SELECT COALESCE(SUM(COALESCE(acctinputoctets,0)+COALESCE(acctoutputoctets,0)),0) FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")->fetchColumn();
 
     $sql = "SELECT s.username, s.service_type, s.assigned_ip, s.static_ip, s.status, s.expires_at,
@@ -213,7 +213,7 @@ unset($queryBase['page']);
         <section class="mgs-stat-grid portal-reveal">
             <?php billing_render_stat_card('Cəmi istifadəçi', (string) $stats['total'], 'portal customer', 'fa-users', 'blue'); ?>
             <?php billing_render_stat_card('Aktiv servis', (string) $stats['active'], 'billing_radius_services', 'fa-circle-check', 'green'); ?>
-            <?php billing_render_stat_card('Hazırda online', (string) $stats['online'], 'radacct open', 'fa-signal', 'orange'); ?>
+            <?php billing_render_stat_card('Son 20 dəq online', (string) $stats['online'], 'RADIUS accounting yeniləməsi', 'fa-signal', 'orange'); ?>
             <?php billing_render_stat_card('24 saat trafik', billing_bytes($stats['traffic24']), 'download + upload', 'fa-chart-line', 'navy'); ?>
         </section>
 

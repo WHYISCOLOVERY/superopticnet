@@ -395,6 +395,36 @@ function router_registry_actor_can_manage_bindings(array $actor): bool
     return !empty(app_noc_authorize($actor, 'bind_router')['ok']);
 }
 
+function router_registry_actor_can_create_customer(array $actor): bool
+{
+    if (router_registry_actor_can_manage_bindings($actor)) {
+        return true;
+    }
+
+    $role = strtolower(trim((string) ($actor['employee_role'] ?? '')));
+    return app_noc_is_active_employee($actor)
+        && in_array($role, ['operator', 'support'], true);
+}
+
+function router_registry_customer_creation_routers(PDO $db, array $actor): array
+{
+    if (!router_registry_actor_can_create_customer($actor)) {
+        return [];
+    }
+
+    return $db->query(
+        'SELECT r.*, COALESCE(bindings.customer_count, 0) AS customer_count
+         FROM router_registry r
+         LEFT JOIN (
+             SELECT router_id, COUNT(*) AS customer_count
+             FROM customer_router_bindings
+             GROUP BY router_id
+         ) bindings ON bindings.router_id = r.id
+         WHERE r.is_active = 1
+         ORDER BY r.branch_name, r.router_name, r.id'
+    )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
 function router_registry_safe_router_snapshot(?array $router): ?array
 {
     if (!is_array($router)) {
@@ -486,12 +516,14 @@ function router_registry_bind_customer(
     int $customerId,
     int $routerId,
     array $actor = [],
-    string $reason = ''
+    string $reason = '',
+    bool $customerCreationContext = false
 ): array {
     if ($customerId <= 0 || $routerId <= 0) {
         return ['ok' => false, 'error' => 'binding_invalid'];
     }
-    if (!router_registry_actor_can_manage_bindings($actor)) {
+    if (!router_registry_actor_can_manage_bindings($actor)
+        && !($customerCreationContext && router_registry_actor_can_create_customer($actor))) {
         return ['ok' => false, 'error' => 'binding_authorization_required'];
     }
 
@@ -516,7 +548,9 @@ function router_registry_bind_customer(
             }
             return ['ok' => false, 'error' => 'router_inactive_or_missing'];
         }
-        $authorization = app_noc_authorize($actor, 'bind_router', $newRouter, $db);
+        $authorization = $customerCreationContext && router_registry_actor_can_create_customer($actor)
+            ? ['ok' => true]
+            : app_noc_authorize($actor, 'bind_router', $newRouter, $db);
         if (empty($authorization['ok'])) {
             if ($startedTransaction && $db->inTransaction()) {
                 $db->rollBack();
@@ -616,7 +650,7 @@ function router_registry_create_customer_with_binding(
     ?string $radiusPassword,
     int $selectedRouterId
 ): array {
-    if (!router_registry_actor_can_manage_bindings($actor)) {
+    if (!router_registry_actor_can_create_customer($actor)) {
         return ['ok' => false, 'error' => 'binding_authorization_required'];
     }
     foreach ([
@@ -700,7 +734,8 @@ function router_registry_create_customer_with_binding(
             $customerId,
             (int) $routerResolution['router_id'],
             $actor,
-            'Router assigned during atomic customer creation'
+            'Router assigned during atomic customer creation',
+            true
         );
         if (empty($binding['ok'])) {
             throw new RuntimeException((string) ($binding['error'] ?? 'binding_persistence_failed'));

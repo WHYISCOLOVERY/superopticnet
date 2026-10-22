@@ -60,6 +60,14 @@ function old_billing_request(string $method, string $url, array $data = [], arra
         CURLOPT_HTTPHEADER => $headers,
     ]);
 
+    $resolveIp = trim((string) getenv('OLD_BILLING_RESOLVE_IP'));
+    $urlHost = (string) (parse_url($url, PHP_URL_HOST) ?? '');
+    $urlScheme = strtolower((string) (parse_url($url, PHP_URL_SCHEME) ?? 'https'));
+    if ($resolveIp !== '' && filter_var($resolveIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false && $urlHost !== '') {
+        $resolvePort = $urlScheme === 'http' ? 80 : 443;
+        curl_setopt($ch, CURLOPT_RESOLVE, [$urlHost . ':' . $resolvePort . ':' . $resolveIp]);
+    }
+
     if (strtoupper($method) === 'POST') {
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));

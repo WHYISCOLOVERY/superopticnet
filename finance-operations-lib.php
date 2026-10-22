@@ -75,7 +75,19 @@ function app_finance_required_reason(mixed $value): string
 
 function app_finance_actor_can_write(array $actor): bool
 {
-    return app_portal_is_admin($actor) || strtolower((string) ($actor['employee_role'] ?? '')) === 'finance';
+    if (app_portal_is_admin($actor) || strtolower((string) ($actor['employee_role'] ?? '')) === 'finance') {
+        return true;
+    }
+    $payload = json_decode((string) ($actor['payload_json'] ?? ''), true);
+    $payload = is_array($payload) ? $payload : [];
+    $capabilities = is_array($payload['mobile_capabilities'] ?? null)
+        ? array_map(static fn(mixed $value): string => strtolower(trim((string) $value)), $payload['mobile_capabilities'])
+        : [];
+    $access = is_array($payload['access'] ?? null) ? $payload['access'] : [];
+    $modules = is_array($access['module_keys'] ?? null)
+        ? array_map(static fn(mixed $value): string => strtolower(trim((string) $value)), $access['module_keys'])
+        : [];
+    return in_array('finance', $capabilities, true) || in_array('finance', $modules, true);
 }
 
 function app_finance_stage1_schema_ready(PDO $db): bool
@@ -303,8 +315,9 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
     $currency = strtoupper(clean_text((string) ($input['currency'] ?? 'AZN')));
     $parsedDate = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
     if (!in_array($type,['income','expense'],true) || $title==='' || $amount<=0 || !$parsedDate || $parsedDate->format('Y-m-d') !== $date || !preg_match('/^[A-Z]{3}$/', $currency)) return ['ok'=>false,'error'=>'invalid_entry'];
+    $ownsTransaction = !$db->inTransaction();
     try {
-        $db->beginTransaction();
+        if ($ownsTransaction) $db->beginTransaction();
         $record=[
             'entry_type'=>$type,'title'=>$title,'category'=>clean_text((string)($input['category']??'manual'))?:'manual','amount'=>$amount,
             'currency'=>$currency,'transaction_date'=>$date,
@@ -314,8 +327,8 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
         ];
         if ($id > 0) {
             $lock=$db->prepare('SELECT * FROM finance_entries WHERE id=:id FOR UPDATE');$lock->execute(['id'=>$id]);$existing=$lock->fetch(PDO::FETCH_ASSOC);
-            if(!$existing){$db->rollBack();return['ok'=>false,'error'=>'entry_not_found'];}
-            if(($existing['status']??'')==='void'){$db->rollBack();return['ok'=>false,'error'=>'entry_void'];}
+            if(!$existing){if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'entry_not_found'];}
+            if(($existing['status']??'')==='void'){if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'entry_void'];}
             $statement=$db->prepare('UPDATE finance_entries SET entry_type=:entry_type,title=:title,category=:category,amount=:amount,currency=:currency,transaction_date=:transaction_date,branch_id=:branch_id,counterparty_id=:counterparty_id,payment_source=:payment_source,reference_no=:reference_no,note=:note WHERE id=:id');
             unset($record['actor_id'],$record['actor_name']);$record['id']=$id;$statement->execute($record);$auditType='finance_entry_updated';
             $afterStatement=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$afterStatement->execute(['id'=>$id]);$after=$afterStatement->fetch(PDO::FETCH_ASSOC)?:[];
@@ -339,7 +352,7 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
                     $duplicate->execute(['idempotency_key' => $idempotencyKey]);
                     $duplicateRow = $duplicate->fetch(PDO::FETCH_ASSOC);
                     if (is_array($duplicateRow)) {
-                        $db->commit();
+                        if ($ownsTransaction) $db->commit();
                         return ['ok'=>true,'id'=>(int)$duplicateRow['id'],'existing'=>true,'record'=>$duplicateRow];
                     }
                 }
@@ -359,9 +372,9 @@ function app_finance_save_entry(PDO $db, array $input, array $actor): array
             $existing=null;$afterStatement=$db->prepare('SELECT * FROM finance_entries WHERE id=:id');$afterStatement->execute(['id'=>$id]);$after=$afterStatement->fetch(PDO::FETCH_ASSOC)?:[];
         }
         app_finance_record_audit($db,$auditType,(string)$id,$actor,'Finance '.$type.': '.$title,['entryType'=>$type,'amount'=>$amount,'currency'=>$currency,'transaction_date'=>$date],$reason,is_array($existing)?$existing:null,$after,$id>0?'entry':'entry');
-        $db->commit();
+        if ($ownsTransaction) $db->commit();
         return ['ok'=>true,'id'=>$id];
-    } catch (Throwable $e) { if($db->inTransaction())$db->rollBack();try{app_mgs_record_operation_action(['action_type'=>'finance_entry_created','entity_type'=>'finance','status'=>'failed','actor'=>$actor,'summary'=>'Finance entry save failed','payload'=>['entryType'=>$type,'title'=>$title,'amount'=>$amount]]);}catch(Throwable){}return ['ok'=>false,'error'=>'entry_save_failed']; }
+    } catch (Throwable $e) { if (!$ownsTransaction) throw $e; if($db->inTransaction())$db->rollBack();try{app_mgs_record_operation_action(['action_type'=>'finance_entry_created','entity_type'=>'finance','status'=>'failed','actor'=>$actor,'summary'=>'Finance entry save failed','payload'=>['entryType'=>$type,'title'=>$title,'amount'=>$amount]]);}catch(Throwable){}return ['ok'=>false,'error'=>'entry_save_failed']; }
 }
 
 function app_finance_link_legacy_counterparty(PDO $db,array $input,array $actor):array

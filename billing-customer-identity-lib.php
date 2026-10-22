@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/customer-operator-policy.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 
 function app_billing_identity_audit(PDO $db,string $status,int $accountId,array $actor,string $summary,array $payload=[],?array $before=null,?array $after=null):void
@@ -144,6 +145,13 @@ function app_billing_save_customer_identity(PDO $db,int $accountId,array $input,
 
 function app_billing_upsert_customer_with_identity(PDO $db,array $accountPayload,array $identityInput,array $actor=[],?string $radiusPassword=null):array
 {
+    $existingId = (int) ($accountPayload['id'] ?? 0);
+    if ($existingId > 0) {
+        $existing = app_db_account_by_id($existingId);
+        if ($existing && !app_customer_identity_change_allowed($existing, array_intersect_key($accountPayload, array_flip(['full_name','address'])) + array_intersect_key($identityInput, array_flip(['fin_code'])), $actor)) {
+            return ['ok' => false, 'error' => 'identity_super_admin_required'];
+        }
+    }
     app_billing_ensure_identity_schema($db);
     app_mgs_ensure_schema($db);
     if($db->inTransaction())return ['ok'=>false,'error'=>'transaction_already_active'];

@@ -167,13 +167,19 @@ function app_public_storage_dir(): string
     $configured = app_config('storage_path');
     $path = $configured !== '' ? $configured : dirname(__DIR__) . '/superoptic-private/data';
     if (!is_dir($path)) {
-        @mkdir($path, 0755, true);
+        @mkdir($path, 0700, true);
+    }
+    if (is_dir($path)) {
+        @chmod($path, 0700);
     }
     // Konfiqurasiya edilmiş qovluq yazıla bilmirsə (məs. yanlış icazə), sistem temp-ə keç.
     if (!is_writable($path)) {
         $fallback = sys_get_temp_dir() . '/superoptic-public';
         if (!is_dir($fallback)) {
-            @mkdir($fallback, 0755, true);
+            @mkdir($fallback, 0700, true);
+        }
+        if (is_dir($fallback)) {
+            @chmod($fallback, 0700);
         }
         if (is_writable($fallback)) {
             return $fallback;

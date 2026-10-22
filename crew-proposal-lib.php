@@ -73,14 +73,29 @@ function app_crew_proposal_ingest(PDO $db, array $payload): array
         $summary = (string) $safe['text'];
     }
 
-    $evidence = is_array($payload['evidence'] ?? null) ? $payload['evidence'] : [];
+    $now = app_db_now();
+    $evidence = is_array($payload['evidence'] ?? null) ? array_values($payload['evidence']) : [];
+    if ($evidence === []) {
+        return ['ok' => false, 'reason' => 'evidence_required'];
+    }
+    // Server-side backstop: callers that do not use the Python governance
+    // envelope still receive explicit human-gate fields before persistence.
+    $firstEvidence = is_array($evidence[0] ?? null) ? $evidence[0] : [];
+    $firstEvidence['source'] = mb_substr((string) ($firstEvidence['source'] ?? ($payload['source_agent'] ?? 'crewai')), 0, 120);
+    $firstEvidence['detail'] = mb_substr((string) ($firstEvidence['detail'] ?? $summary), 0, 1200);
+    $firstEvidence['observed_at'] = (string) ($firstEvidence['observed_at'] ?? ($payload['generated_at'] ?? $now ?? ''));
+    $firstEvidence['freshness'] = (string) ($firstEvidence['freshness'] ?? 'not_provided');
+    $firstEvidence['classification'] = (string) ($firstEvidence['classification'] ?? 'proposal_review');
+    $firstEvidence['rollback_plan'] = (string) ($firstEvidence['rollback_plan'] ?? 'Tətbiq yoxdur; təsdiqdən əvvəl rollback planı tələb olunur.');
+    $firstEvidence['verification_plan'] = (string) ($firstEvidence['verification_plan'] ?? 'Təsdiqdən sonra read-only yoxlama tələb olunur.');
+    $firstEvidence['approval_required'] = true;
+    $evidence[0] = $firstEvidence;
     $evidenceJson = json_encode(array_values($evidence), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[]';
     if (strlen($evidenceJson) > APP_CREW_PROPOSAL_MAX_EVIDENCE_BYTES) {
         return ['ok' => false, 'reason' => 'evidence_too_large'];
     }
     $reason = mb_substr((string) ($evidence[0]['detail'] ?? $summary), 0, APP_CREW_PROPOSAL_MAX_SUMMARY);
 
-    $now = app_db_now();
     $payload['created_at'] = $now;
     $risk = app_crew_proposal_clamp_risk($module, (string) ($payload['risk'] ?? 'medium'));
     $id = app_crew_proposal_id($payload + ['risk' => $risk]);
@@ -105,7 +120,9 @@ function app_crew_proposal_ingest(PDO $db, array $payload): array
             ':reason' => $reason,
             ':evidence' => $evidenceJson,
             ':risk' => $risk,
-            ':next_action' => mb_substr((string) ($payload['next_action'] ?? 'manual_review'), 0, 120),
+            // Crew proposals are advisory only. Never persist a model supplied
+            // executable next_action that a future consumer could misread.
+            ':next_action' => 'manual_review',
             ':agent' => mb_substr((string) ($payload['source_agent'] ?? 'crewai'), 0, 120),
             ':created' => $now,
         ]);

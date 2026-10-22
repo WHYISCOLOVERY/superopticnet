@@ -13,7 +13,8 @@ $summary = [
     'down' => 0,
 ];
 $clientIp = app_client_ip();
-$detailAllowed = in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
+$detailEnabled = in_array(strtolower(trim((string) app_setting('health_detail_enabled', '0'))), ['1', 'true', 'yes', 'on'], true);
+$detailAllowed = $detailEnabled && in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
     || str_starts_with($clientIp, '10.')
     || str_starts_with($clientIp, '192.168.')
     || preg_match('/^172\.(1[6-9]|2[0-9]|3[0-1])\./', $clientIp) === 1;

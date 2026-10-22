@@ -66,18 +66,46 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $endIp = clean_text((string) ($_POST['end_ip'] ?? ''));
         $startNum = app_ip_to_num($startIp);
         $endNum = app_ip_to_num($endIp);
-        if ($name === '' || !in_array($type, ['local', 'nat_public', 'static_public'], true) || $startNum === null || $endNum === null || $endNum < $startNum) {
+        if ($name === '' || !in_array($type, ['local', 'nat_public', 'static_public'], true)
+            || !in_array($serviceType, ['pppoe', 'ipoe'], true)
+            || $startNum === null || $endNum === null || $endNum < $startNum) {
             $flash = ['type' => 'error', 'message' => 'Pool adi, tipi ve IP araligi duzgun olmalidir.'];
         } else {
-            $statement = $db->prepare(
+            $db->beginTransaction();
+            try {
+                $billingPool = $db->prepare(
+                    'INSERT INTO billing_ip_pools
+                        (name, service_type, pool_type, range_start, range_end, gateway, netmask, status)
+                     VALUES
+                        (:name, :service_type, :pool_type, :range_start, :range_end, :gateway, :netmask, "active")
+                     ON DUPLICATE KEY UPDATE
+                        service_type=VALUES(service_type), pool_type=VALUES(pool_type),
+                        range_start=VALUES(range_start), range_end=VALUES(range_end), gateway=VALUES(gateway),
+                        netmask=VALUES(netmask), status="active"'
+                );
+                $billingPool->execute([
+                    'name' => $name,
+                    'service_type' => $serviceType,
+                    'pool_type' => $type === 'static_public' ? 'static' : 'dynamic',
+                    'range_start' => $startIp,
+                    'range_end' => $endIp,
+                    'gateway' => clean_text((string) ($_POST['gateway'] ?? '')),
+                    'netmask' => clean_text((string) ($_POST['netmask'] ?? '')),
+                ]);
+                $billingPoolLookup = $db->prepare('SELECT id FROM billing_ip_pools WHERE name=:name LIMIT 1');
+                $billingPoolLookup->execute(['name' => $name]);
+                $billingPoolId = (int) ($billingPoolLookup->fetchColumn() ?: 0);
+
+                $statement = $db->prepare(
                 'INSERT INTO ip_pools (
-                    name, type, service_type, start_ip, end_ip, start_ip_num, end_ip_num,
+                    legacy_billing_pool_id, name, type, service_type, start_ip, end_ip, start_ip_num, end_ip_num,
                     gateway, netmask, zone_name, branch_name, status, metadata_json
                  ) VALUES (
-                    :name, :type, :service_type, :start_ip, :end_ip, :start_ip_num, :end_ip_num,
+                    :legacy_billing_pool_id, :name, :type, :service_type, :start_ip, :end_ip, :start_ip_num, :end_ip_num,
                     :gateway, :netmask, :zone_name, :branch_name, "active", :metadata_json
                  )
                  ON DUPLICATE KEY UPDATE
+                    legacy_billing_pool_id = VALUES(legacy_billing_pool_id),
                     type = VALUES(type),
                     service_type = VALUES(service_type),
                     start_ip = VALUES(start_ip),
@@ -92,9 +120,10 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     metadata_json = VALUES(metadata_json)'
             );
             $statement->execute([
+                'legacy_billing_pool_id' => $billingPoolId > 0 ? $billingPoolId : null,
                 'name' => $name,
                 'type' => $type,
-                'service_type' => in_array($serviceType, ['pppoe', 'ipoe', 'both'], true) ? $serviceType : 'pppoe',
+                'service_type' => $serviceType,
                 'start_ip' => $startIp,
                 'end_ip' => $endIp,
                 'start_ip_num' => $startNum,
@@ -111,8 +140,15 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $poolLookup->execute(['name' => $name]);
                 $poolId = (int) ($poolLookup->fetchColumn() ?: 0);
             }
+            $db->commit();
             $generated = $poolId > 0 ? app_ip_ensure_pool_addresses($db, $poolId) : 0;
             $flash = ['type' => 'success', 'message' => 'IP pool saxlandi. Kicik araliq ucun yaradilan IP: ' . $generated];
+            } catch (Throwable $exception) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                $flash = ['type' => 'error', 'message' => 'IP pool saxlanmadi; RADIUS ve IP kataloqu birlikde geri qaytarildi.'];
+            }
         }
     } elseif ($action === 'generate_addresses') {
         $poolId = (int) ($_POST['pool_id'] ?? 0);
@@ -296,7 +332,6 @@ foreach ($pools as $pool) {
                         <select name="service_type">
                             <option value="pppoe">PPPoE</option>
                             <option value="ipoe">IPoE</option>
-                            <option value="both">PPPoE + IPoE</option>
                         </select>
                         <input type="text" name="zone_name" placeholder="Zona">
                     </div>
