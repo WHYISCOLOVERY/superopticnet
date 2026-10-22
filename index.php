@@ -1320,7 +1320,7 @@ $toSearchKey = static function (string $value): string {
     <meta name="twitter:image" content="<?= e($seoImage); ?>">
     <link rel="shortcut icon" href="images/favicon.png">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
-    <link rel="stylesheet" href="css/fontawesome-lite.css">
+    <?php if (!empty($flash)): ?><link rel="stylesheet" href="css/fontawesome-lite.css"><?php endif; ?>
     <link rel="stylesheet" href="<?= e(app_asset('css/fiber-site.css')); ?>">
     <script type="application/ld+json"><?= json_encode(['@context' => 'https://schema.org', '@graph' => $schemaGraph], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?></script>
 </head>
