@@ -4251,3 +4251,13 @@ body.admin-modal-open .billing-copilot-widget {
     outline: 3px solid rgba(11, 123, 135, 0.35);
     outline-offset: 2px;
 }
+
+/* Toxunma ekranlarında kiçik keçid düymələri */
+@media (pointer: coarse) {
+    .mgs-ticket-actions a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 38px;
+        padding: 6px 12px;
+    }
+}

@@ -1294,8 +1294,9 @@ if ($needsDeviceRows) {
         .monitor-node-name{font-size:1rem;font-weight:900;color:#10233f;overflow-wrap:anywhere}
         .monitor-node-meta,.monitor-node-ip{font-size:.84rem;color:#64748b;overflow-wrap:anywhere}
         .monitor-node-note{width:100%;min-height:42px;resize:vertical;border:1px solid rgba(148,163,184,.24);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,.82);color:#10233f;font-size:.8rem;line-height:1.35;user-select:text}
+        @media (pointer:coarse){.monitor-node-tool{width:40px;height:40px}}
         .monitor-node-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px}
-        .monitor-node-tool{width:28px;height:28px;border:0;border-radius:10px;background:#e2e8f0;color:#10233f;font-weight:900;cursor:pointer}
+        .monitor-node-tool{width:28px;height:28px;touch-action:manipulation;border:0;border-radius:10px;background:#e2e8f0;color:#10233f;font-weight:900;cursor:pointer}
         .monitor-node-scale{min-width:42px;text-align:center;font-size:.72rem;font-weight:900;color:#64748b}
         .monitor-node-tooltip{position:absolute;z-index:12;left:calc(100% + 10px);top:8px;width:min(270px,72vw);display:none;gap:4px;padding:10px 12px;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 18px 38px rgba(15,23,42,.24);pointer-events:none}
         .monitor-node-tooltip strong{color:#fff;font-size:.86rem}
