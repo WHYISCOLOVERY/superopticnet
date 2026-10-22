@@ -205,7 +205,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $sessionStatement = $db->prepare(
                     'SELECT username, framedipaddress, nasipaddress, nasportid, callingstationid
                      FROM radacct
-                     WHERE username = :username AND acctstoptime IS NULL
+                     WHERE username = :username AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
                      ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
                      LIMIT 1'
                 );

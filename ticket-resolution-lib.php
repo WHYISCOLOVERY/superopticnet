@@ -198,7 +198,7 @@ function app_ticket_resolution_probe(PDO $db, array $ticket, array $actor, ?call
                     'SELECT framedipaddress, nasipaddress,
                             COALESCE(acctupdatetime, acctstarttime) AS last_activity_at
                        FROM radacct
-                      WHERE username = :username AND acctstoptime IS NULL
+                      WHERE username = :username AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
                       ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
                       LIMIT 1'
                 );

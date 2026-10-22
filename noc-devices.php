@@ -974,7 +974,7 @@ function noc_radius_session_map(PDO $db, array $usernames): array
             SELECT username, MAX(radacctid) AS max_id
             FROM radacct
             WHERE username IN (' . $clause . ')
-              AND acctstoptime IS NULL
+              AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
             GROUP BY username
          ) current_session ON current_session.max_id = r1.radacctid'
     );

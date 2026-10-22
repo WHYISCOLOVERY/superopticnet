@@ -13,9 +13,9 @@ $db = app_db();
 
 // 1. Get RADIUS service details
 $stmtRad = $db->prepare(
-    "SELECT username, ip_mode, framed_ip_address, status, mac_address, olt_name, pon_port 
-     FROM billing_radius_services 
-     WHERE customer_account_id = ? 
+    "SELECT username, ip_mode, framed_ip_address, status, mac_address, olt_name, pon_port
+     FROM billing_radius_services
+     WHERE customer_account_id = ?
      ORDER BY id DESC LIMIT 1"
 );
 $stmtRad->execute([$accountId]);
@@ -32,9 +32,9 @@ $stepGateway = [
 // 3. Step 2: Optical Signal check
 // Check if optical telemetry exists in customer_equipment_assignments or live ONT
 $stmtEq = $db->prepare(
-    "SELECT serial_number, mac_address, optical_rx_dbm, updated_at 
-     FROM customer_equipment_assignments 
-     WHERE customer_account_id = ? 
+    "SELECT serial_number, mac_address, optical_rx_dbm, updated_at
+     FROM customer_equipment_assignments
+     WHERE customer_account_id = ?
      ORDER BY id DESC LIMIT 1"
 );
 $stmtEq->execute([$accountId]);
@@ -66,9 +66,9 @@ $isOnline = false;
 $sessionIp = null;
 if ($radius && !empty($radius['username'])) {
     $stmtAcct = $db->prepare(
-        "SELECT framedipaddress, acctstarttime 
-         FROM radacct 
-         WHERE username = ? AND acctstoptime IS NULL 
+        "SELECT framedipaddress, acctstarttime
+         FROM radacct
+         WHERE username = ? AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
          ORDER BY radacctid DESC LIMIT 1"
     );
     $stmtAcct->execute([$radius['username']]);
@@ -84,8 +84,8 @@ $stepSession = [
     'title' => 'Modem və İnternet Sessiyası',
     'status' => $isOnline ? 'ok' : 'offline',
     'session_ip' => $sessionIp,
-    'message' => $isOnline 
-        ? 'Modeminiz internet şəbəkəsinə uğurla qoşuludur.' 
+    'message' => $isOnline
+        ? 'Modeminiz internet şəbəkəsinə uğurla qoşuludur.'
         : 'Modeminiz hazırda şəbəkəyə bağlı deyil. Zəhmət olmasa modemin enerjisini yoxlayın.',
 ];
 

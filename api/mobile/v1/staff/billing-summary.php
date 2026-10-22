@@ -45,7 +45,7 @@ $paidCustomers = $scalar($db,
 $onlineCustomers = $scalar($db,
     "SELECT COUNT(DISTINCT r.username)
        FROM radacct r
-      WHERE r.acctstoptime IS NULL
+      WHERE r.acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
         AND COALESCE(r.acctupdatetime, r.acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)"
 );
 

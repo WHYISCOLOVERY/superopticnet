@@ -7989,7 +7989,7 @@ function app_mgs_modem_search_candidates(string $query, int $limit = 8, ?PDO $db
                             acctinputoctets, acctoutputoctets
                        FROM radacct
                       WHERE username = :username
-                        AND acctstoptime IS NULL
+                        AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
                       ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
                       LIMIT 1'
                 );

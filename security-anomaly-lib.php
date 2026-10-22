@@ -270,7 +270,7 @@ function app_security_anomaly_fetch_session_findings(PDO $db, array $options): a
          FROM radacct r
          LEFT JOIN billing_radius_services s ON s.username = r.username
          LEFT JOIN portal_accounts a ON a.id = s.account_id
-         WHERE r.acctstoptime IS NULL
+         WHERE r.acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
          GROUP BY r.username
          HAVING COUNT(*) >= {$threshold}
          ORDER BY active_sessions DESC

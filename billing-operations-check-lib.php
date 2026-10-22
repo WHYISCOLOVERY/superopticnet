@@ -226,7 +226,7 @@ function billing_ops_run_checks(?PDO $db): array
     billing_ops_check_add($checks, 'radius', 'radreply_rows', 'critical', $radreplyCount > 0, $radreplyCount . ' radreply rows.');
     billing_ops_check_add($checks, 'radius', 'active_radius_services', 'warning', $activeRadiusServices > 0, $activeRadiusServices . ' active billing radius services.');
 
-    $onlineSessions = (int) (billing_ops_scalar($db, "SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL") ?? 0);
+    $onlineSessions = (int) (billing_ops_scalar($db, "SELECT COUNT(DISTINCT username) FROM radacct WHERE acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)") ?? 0);
     billing_ops_check_add($checks, 'radius', 'accounting_visibility', 'info', $onlineSessions >= 0, $onlineSessions . ' current online sessions in radacct.');
 
     $templateChecks = [

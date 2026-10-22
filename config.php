@@ -3105,7 +3105,7 @@ function app_mgs_service_native_fallback(string $path): ?array
         'inventoryItems' => app_mgs_service_native_count($db, 'SELECT COUNT(*) FROM inventory_stock_items'),
         'inventoryMovements' => app_mgs_service_native_count($db, 'SELECT COUNT(*) FROM inventory_stock_movements'),
         'employees' => app_mgs_service_native_count($db, "SELECT COUNT(*) FROM portal_accounts WHERE role = 'employee'"),
-        'radiusOnline' => app_mgs_service_native_count($db, 'SELECT COUNT(*) FROM radacct WHERE acctstoptime IS NULL'),
+        'radiusOnline' => app_mgs_service_native_count($db, 'SELECT COUNT(*) FROM radacct WHERE acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)'),
     ];
     $summaryRows = [
         ['title' => 'Musteriler', 'value' => $summary['customers'], 'note' => 'Portal accounts'],

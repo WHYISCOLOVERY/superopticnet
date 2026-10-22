@@ -10,8 +10,8 @@ $db = app_db();
 
 // Fetch subscriber account details
 $stmt = $db->prepare(
-    "SELECT id, subscriber_code, contract_no, full_name, phone, plan, status, address, area, billing_debt_amount, created_at 
-     FROM portal_accounts 
+    "SELECT id, subscriber_code, contract_no, full_name, phone, plan, status, address, area, billing_debt_amount, created_at
+     FROM portal_accounts
      WHERE id = ? LIMIT 1"
 );
 $stmt->execute([$accountId]);
@@ -23,9 +23,9 @@ if (!$account) {
 
 // Fetch active RADIUS internet service
 $stmtRad = $db->prepare(
-    "SELECT username, ip_mode, framed_ip_address, status, mac_address, olt_name, pon_port 
-     FROM billing_radius_services 
-     WHERE customer_account_id = ? 
+    "SELECT username, ip_mode, framed_ip_address, status, mac_address, olt_name, pon_port
+     FROM billing_radius_services
+     WHERE customer_account_id = ?
      ORDER BY id DESC LIMIT 1"
 );
 $stmtRad->execute([$accountId]);
@@ -36,9 +36,9 @@ $isOnline = false;
 $sessionIp = null;
 if ($radiusService && !empty($radiusService['username'])) {
     $stmtAcct = $db->prepare(
-        "SELECT framedipaddress, acctstarttime 
-         FROM radacct 
-         WHERE username = ? AND acctstoptime IS NULL 
+        "SELECT framedipaddress, acctstarttime
+         FROM radacct
+         WHERE username = ? AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
          ORDER BY radacctid DESC LIMIT 1"
     );
     $stmtAcct->execute([$radiusService['username']]);
@@ -51,7 +51,7 @@ if ($radiusService && !empty($radiusService['username'])) {
 
 // Fetch open tickets count
 $stmtTickets = $db->prepare(
-    "SELECT COUNT(*) FROM portal_tickets 
+    "SELECT COUNT(*) FROM portal_tickets
      WHERE customer_account_id = ? AND status IN ('open', 'assigned', 'in_progress')"
 );
 $stmtTickets->execute([$accountId]);
@@ -59,9 +59,9 @@ $openTicketsCount = (int) $stmtTickets->fetchColumn();
 
 // Fetch latest payment
 $stmtPay = $db->prepare(
-    "SELECT amount, payment_method, created_at 
-     FROM billing_payments 
-     WHERE customer_account_id = ? 
+    "SELECT amount, payment_method, created_at
+     FROM billing_payments
+     WHERE customer_account_id = ?
      ORDER BY id DESC LIMIT 1"
 );
 $stmtPay->execute([$accountId]);

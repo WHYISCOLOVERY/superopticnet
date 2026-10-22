@@ -4988,7 +4988,7 @@ function app_radius_request_account_disconnect(PDO $db, array $account, string $
         'SELECT username, framedipaddress, nasipaddress, nasportid, callingstationid,
                 acctsessionid, acctuniqueid AS acctuniquesessionid, nasidentifier, calledstationid
            FROM radacct
-          WHERE username = :username AND acctstoptime IS NULL
+          WHERE username = :username AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
           ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
           LIMIT 1'
     );
