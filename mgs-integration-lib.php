@@ -6193,6 +6193,18 @@ function app_mgs_resolve_update_package(string $input, array $channelStatus = []
             return ['ok' => false, 'error' => 'update_package_not_found'];
         }
 
+        // Only packages inside the updates folder may be applied; absolute or
+        // UNC paths elsewhere on the host are rejected.
+        $rootReal = realpath($updatesRoot);
+        $insideRoot = $rootReal !== false
+            && str_starts_with(strtolower($resolved), strtolower(rtrim($rootReal, '\\/') . DIRECTORY_SEPARATOR));
+        $uploadsDir = realpath(__DIR__ . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'update-packages');
+        $insideUploads = $uploadsDir !== false
+            && str_starts_with(strtolower($resolved), strtolower(rtrim($uploadsDir, '\\/') . DIRECTORY_SEPARATOR));
+        if (!$insideRoot && !$insideUploads) {
+            return ['ok' => false, 'error' => 'update_package_outside_updates_root'];
+        }
+
         return ['ok' => true, 'path' => $resolved, 'downloaded' => false];
     }
 

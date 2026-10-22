@@ -7401,7 +7401,7 @@ function app_sso_provider_config(string $provider = 'mygov'): array
     return [
         'provider' => 'mygov',
         'enabled' => (string) app_setting('mygov_enabled', '0') === '1',
-        'mock_enabled' => (string) app_setting('mygov_mock_enabled', '0') === '1',
+        'mock_enabled' => app_demo_fixtures_enabled() && (string) app_setting('mygov_mock_enabled', '0') === '1',
         'client_id' => app_config('mygov_client_id'),
         'client_secret' => app_environment_secret('MYGOV_CLIENT_SECRET'),
         'authorize_url' => app_config('mygov_authorize_url'),

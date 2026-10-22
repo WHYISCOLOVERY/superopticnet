@@ -28,6 +28,17 @@ if (strlen($deviceUuid) > 64 || preg_match('/^[A-Za-z0-9._:-]+$/', $deviceUuid) 
 
 $db = app_db();
 
+$rateScopes = [
+    'mobile-login-ip:' . app_client_ip(),
+    'mobile-login:' . app_client_ip() . ':' . strtolower($login),
+];
+foreach ($rateScopes as $rateScope) {
+    if (app_rate_limit_is_blocked($rateScope, 8, 300)) {
+        header('Retry-After: ' . max(1, app_rate_limit_retry_after($rateScope, 300)));
+        app_mobile_json_response(null, 429, 'Çox sayda uğursuz cəhd oldu. 5 dəqiqə sonra yenidən yoxlayın.');
+    }
+}
+
 // Search by login, phone, or subscriber_code
 $stmt = $db->prepare(
     "SELECT * FROM portal_accounts 
@@ -55,9 +66,15 @@ if (!$account || !password_verify($password, (string) ($account['password_hash']
         ]);
     } catch (Throwable) {
     }
-    // Audit failed attempt & rate-limit
+    foreach ($rateScopes as $rateScope) {
+        app_rate_limit_hit($rateScope, 300);
+    }
     usleep(150000); // Timing defense
     app_mobile_json_response(null, 401, 'İstifadəçi adı və ya parol yanlışdır.');
+}
+
+foreach ($rateScopes as $rateScope) {
+    app_rate_limit_clear($rateScope);
 }
 
 $accountId = (int) $account['id'];
