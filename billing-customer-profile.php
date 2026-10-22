@@ -903,7 +903,16 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
         .customer-profile-nav{margin-top:18px}
         .customer-profile-nav a.is-active{background:rgba(14,132,141,.13);border-color:rgba(14,132,141,.32);color:#075c63}
         .customer-profile-section[hidden],.customer-profile-section-group[hidden]{display:none!important}
-        .customer-context-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+        .customer-context-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+        .mgs-stat-grid.customer-profile-stats{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+        .customer-context-action{min-width:0;overflow-wrap:anywhere;line-height:1.25}
+        .customer-activity-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+        .customer-activity-card{display:grid;gap:6px;align-content:start;min-width:0;padding:16px;border:1px solid rgba(148,163,184,.26);border-radius:18px;background:#fff;color:var(--portal-text);text-decoration:none}
+        .customer-activity-card span{font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;color:var(--portal-muted)}
+        .customer-activity-card strong{font-size:1.6rem}
+        .customer-activity-card small{color:var(--portal-muted);overflow-wrap:anywhere}
+        .customer-activity-card:hover,.customer-activity-card:focus-visible{border-color:rgba(11,123,135,.4)}
+        @media (max-width:860px){.customer-activity-grid{grid-template-columns:1fr}}
         .customer-context-action{display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid rgba(148,163,184,.28);border-radius:15px;background:rgba(248,250,252,.82);color:var(--portal-text);font-weight:900;text-decoration:none}
         .customer-context-action-form{margin:0}
         .customer-context-action-form .customer-context-action{width:100%;border:1px solid rgba(148,163,184,.28);cursor:pointer;font:inherit;text-align:left}
@@ -1026,7 +1035,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
             </article>
         </section>
 
-        <section class="mgs-stat-grid portal-reveal">
+        <section class="mgs-stat-grid customer-profile-stats portal-reveal">
             <?php billing_render_stat_card('Servis', (string) (max(count($services), count($radiusServices)) + count($extraServices)), 'Internet + elave xidmetler', 'fa-network-wired', 'blue', billing_profile_tab_url($account, $lang, 'network', 'profile-services')); ?>
             <?php billing_render_stat_card('Online sessiya', (string) $onlineSessionCount, 'Aciq RADIUS accounting', 'fa-signal', 'green', billing_profile_tab_url($account, $lang, 'network', 'profile-radius-accounting')); ?>
             <?php billing_render_stat_card('Modem/ONT', (string) count($onts), $activeOntCount . ' aktiv qeyd', 'fa-wifi', 'orange', billing_profile_tab_url($account, $lang, 'devices', 'profile-modems')); ?>
@@ -1038,22 +1047,6 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
 
         <section class="mgs-profile-shell portal-reveal">
             <aside class="mgs-profile-sidebar">
-                <article class="mgs-profile-card">
-                    <h2>Musteri xulasesi</h2>
-                    <div class="mgs-profile-kv">
-                        <div><span>Kod</span><strong><?= e($subscriberCode ?: '-'); ?></strong></div>
-                        <div><span>Status</span><strong><?= e($displayStatus); ?></strong></div>
-                        <div><span>Qalan gun</span><strong><?= e($displayDaysLeft); ?></strong></div>
-                        <div><span>Balans</span><strong><?= e($displayBalance); ?></strong></div>
-                    </div>
-                </article>
-                <article class="mgs-profile-card">
-                    <h2>Saglamliq</h2>
-                    <div class="mgs-health-score">
-                        <strong><?= e((string) $qoeScore); ?></strong>
-                        <span>QoE hesabi status, risk bali, aciq ticket ve aktiv sessiya melumatlarina esasen operativ gosterici kimi gosterilir.</span>
-                    </div>
-                </article>
                 <article class="mgs-profile-card">
                     <h2>Kontekst emeliyyatlari</h2>
                     <div class="customer-context-actions">
@@ -1148,6 +1141,35 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                     <div><span>Odenis sayi / cem</span><strong><?= e((string) ($billing['payment_count'] ?? 0)); ?> / <?= e(billing_profile_money($billing['payment_total'] ?? 0)); ?></strong></div>
                 </div>
             </article>
+        </section>
+        <?php endif; ?>
+
+        <?php if ($activeProfileTab === 'overview'): ?>
+        <?php
+        $lastTicket = $tickets[0] ?? null;
+        $lastMessage = $messageRows[0] ?? null;
+        $equipmentCount = count($customerEquipmentLifecycle);
+        $firstEquipment = $customerEquipmentLifecycle[0] ?? null;
+        ?>
+        <section class="portal-card portal-reveal customer-profile-section" id="profile-activity">
+            <div class="portal-card-head"><h2>Son fealiyyet</h2><small>Ticket, mesaj ve musteriye verilmis avadanliq. Basaraq etrafli bax.</small></div>
+            <div class="customer-activity-grid">
+                <a class="customer-activity-card" href="<?= e(billing_profile_tab_url($account, $lang, 'tickets', 'profile-tickets')); ?>">
+                    <span>Ticketler</span>
+                    <strong><?= e((string) count($tickets)); ?></strong>
+                    <small><?= is_array($lastTicket) ? e((string) ($lastTicket['subject'] ?? 'Ticket')) . ' / ' . e((string) ($lastTicket['status'] ?? '-')) . ' / ' . e((string) ($lastTicket['opened_at'] ?? $lastTicket['updated_at'] ?? '-')) : 'Bu musteriye ticket acilmayib.'; ?></small>
+                </a>
+                <a class="customer-activity-card" href="<?= e(billing_profile_tab_url($account, $lang, 'communication', 'profile-messages')); ?>">
+                    <span>Mesajlar</span>
+                    <strong><?= e((string) count($messageRows)); ?></strong>
+                    <small><?= is_array($lastMessage) ? e(billing_profile_datetime($lastMessage['created_at'] ?? null)) . ' / ' . e((string) ($lastMessage['channel'] ?? '-')) . ' / ' . e((string) ($lastMessage['status'] ?? '-')) : 'Bu musteriye mesaj gonderilmeyib.'; ?></small>
+                </a>
+                <a class="customer-activity-card" href="<?= e(billing_profile_tab_url($account, $lang, 'devices', 'profile-modems')); ?>">
+                    <span>Verilmis avadanliq</span>
+                    <strong><?= e((string) $equipmentCount); ?></strong>
+                    <small><?= is_array($firstEquipment) ? e(trim((string) (($firstEquipment['vendor'] ?? '') . ' ' . ($firstEquipment['model'] ?? '')))) . ' / SN: ' . e((string) ($firstEquipment['serial_number'] ?? '-')) : 'Bu musteriye avadanliq baglanmayib.'; ?></small>
+                </a>
+            </div>
         </section>
         <?php endif; ?>
 
