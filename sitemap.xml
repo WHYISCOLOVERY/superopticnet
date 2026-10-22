@@ -1,14 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://superoptic.net/</loc>
+    <xhtml:link rel="alternate" hreflang="az" href="https://superoptic.net/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://superoptic.net/?lang=en"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://superoptic.net/?lang=ru"/>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://superoptic.net/portal-login.php</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
   </url>
   <url>
     <loc>https://superoptic.net/haqqimizda.php</loc>

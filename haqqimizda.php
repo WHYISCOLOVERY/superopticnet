@@ -14,17 +14,17 @@ $copy = [
         'intro' => 'Super Optik Tech müştəri məmnuniyyətini, sabit infrastrukturun qurulmasını və texniki dəstəyin operativ təşkilini əsas fəaliyyət prinsipi kimi saxlayır. Məqsədimiz abonentlərə və biznes tərəfdaşlarına dayanıqlı internet, TV və sistem həlləri təqdim etməkdir.',
         'values' => [
             [
-                'icon' => 'fa-solid fa-handshake-angle',
+                'icon' => 'handshake',
                 'title' => 'Müştəriyönümlülük',
                 'text' => 'Qərarlarımızı istifadə rahatlığı, xidmətin aydınlığı və operativ geridönüş prinsipi ilə qururuq. Sadə qoşulma prosesi və şəffaf xidmət qaydaları əsas prioritetdir.',
             ],
             [
-                'icon' => 'fa-solid fa-shield-halved',
+                'icon' => 'shield',
                 'title' => 'Yenilikçilik',
                 'text' => 'Fiber infrastruktur, dual-band modemlər, TV xidmətləri və biznes üçün şəbəkə həllərini praktik ehtiyaca görə yeniləyirik. Məqsəd texnologiyanı sadəcə göstərmək yox, işlək etməkdir.',
             ],
             [
-                'icon' => 'fa-regular fa-eye',
+                'icon' => 'eye',
                 'title' => 'Etibarlılıq',
                 'text' => 'Şəbəkə sabitliyi, keyfiyyətli dəstək, aydın ödəniş qaydası və hüquqi şəffaflıq brendin etibar hissəsini formalaşdırır. Super Optik bu xətti qoruyur.',
             ],
@@ -38,17 +38,17 @@ $copy = [
         'intro' => 'Super Optik Tech keeps customer satisfaction, stable infrastructure and responsive technical support as core operating principles. Our goal is to provide reliable internet, TV and system solutions for subscribers and business clients.',
         'values' => [
             [
-                'icon' => 'fa-solid fa-handshake-angle',
+                'icon' => 'handshake',
                 'title' => 'Customer focus',
                 'text' => 'We build decisions around ease of use, service clarity and fast response. A simple connection process and transparent service rules remain core priorities.',
             ],
             [
-                'icon' => 'fa-solid fa-shield-halved',
+                'icon' => 'shield',
                 'title' => 'Innovation',
                 'text' => 'We update fiber infrastructure, dual-band modem choices, TV services and business network solutions based on practical demand. The goal is not to show technology, but to make it work.',
             ],
             [
-                'icon' => 'fa-regular fa-eye',
+                'icon' => 'eye',
                 'title' => 'Reliability',
                 'text' => 'Network stability, quality support, clear payment rules and legal transparency build brand trust. Super Optik keeps that line.',
             ],
@@ -62,17 +62,17 @@ $copy = [
         'intro' => 'Super Optik Tech рассматривает удовлетворенность клиентов, стабильную инфраструктуру и оперативную техническую поддержку как базовые принципы работы. Наша цель — предоставлять надежный интернет, ТВ и системные решения для абонентов и бизнеса.',
         'values' => [
             [
-                'icon' => 'fa-solid fa-handshake-angle',
+                'icon' => 'handshake',
                 'title' => 'Клиентоориентированность',
                 'text' => 'Мы строим решения вокруг удобства использования, понятности сервиса и быстрого ответа. Простое подключение и прозрачные правила обслуживания остаются приоритетом.',
             ],
             [
-                'icon' => 'fa-solid fa-shield-halved',
+                'icon' => 'shield',
                 'title' => 'Инновационность',
                 'text' => 'Мы обновляем fiber-инфраструктуру, выбор dual-band модемов, ТВ-сервисы и сетевые решения для бизнеса по практической потребности. Цель — не показывать технологию, а делать ее рабочей.',
             ],
             [
-                'icon' => 'fa-regular fa-eye',
+                'icon' => 'eye',
                 'title' => 'Надежность',
                 'text' => 'Стабильность сети, качественная поддержка, понятные правила оплаты и юридическая прозрачность формируют доверие к бренду. Super Optik держит эту линию.',
             ],
@@ -84,7 +84,7 @@ $page = $copy[$lang] ?? $copy['az'];
 
 page_render_header($lang, $page['title'], $page['description'], 'about');
 ?>
-<main>
+<main id="main">
     <section class="section inner-page-hero">
         <div class="container inner-page-hero-content">
             <span class="eyebrow"><?= e($page['eyebrow']); ?></span>
@@ -98,12 +98,13 @@ page_render_header($lang, $page['title'], $page['description'], 'about');
             <div class="info-card-grid">
                 <?php foreach ($page['values'] as $item): ?>
                     <article class="info-card">
-                        <div class="info-card-icon"><i class="<?= e($item['icon']); ?>"></i></div>
+                        <div class="info-card-icon"><?= page_icon((string) $item['icon']); ?></div>
                         <h2><?= e($item['title']); ?></h2>
                         <p><?= e($item['text']); ?></p>
                     </article>
                 <?php endforeach; ?>
             </div>
+            <?php page_render_cta($lang); ?>
         </div>
     </section>
 </main>

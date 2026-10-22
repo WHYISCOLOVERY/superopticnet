@@ -86,7 +86,7 @@ $page = $copy[$lang] ?? $copy['az'];
 
 page_render_header($lang, $page['title'], $page['description'], 'devices');
 ?>
-<main>
+<main id="main">
     <section class="section inner-page-hero">
         <div class="container inner-page-hero-content">
             <span class="eyebrow"><?= e($page['eyebrow']); ?></span>
@@ -101,12 +101,14 @@ page_render_header($lang, $page['title'], $page['description'], 'devices');
                 <?php foreach ($devices as $device): ?>
                     <article class="device-card">
                         <span class="featured-offer-tag"><?= e($device['badge'][$lang] ?? $device['badge']['az']); ?></span>
-                        <h2><?= e($device['name'][$lang] ?? $device['name']['az']); ?></h2>
+                        <h2><?= e(str_replace('dual-band', 'dual‑band', $device['name'][$lang] ?? $device['name']['az'])); ?></h2>
                         <strong><?= e((string) $device['price']); ?> AZN</strong>
                         <p><?= e($device['text'][$lang] ?? $device['text']['az']); ?></p>
+                        <a class="button button-secondary" href="https://wa.me/994512055566?text=<?= rawurlencode(($device['name'][$lang] ?? $device['name']['az']) . ' - ' . $device['price'] . ' AZN'); ?>" target="_blank" rel="noopener"><?= e(['az' => 'Soruş', 'en' => 'Ask about it', 'ru' => 'Узнать'][$lang] ?? 'Soruş'); ?></a>
                     </article>
                 <?php endforeach; ?>
             </div>
+            <?php page_render_cta($lang); ?>
         </div>
     </section>
 </main>

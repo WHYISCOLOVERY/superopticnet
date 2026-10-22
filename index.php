@@ -119,7 +119,7 @@ $content = [
         'news' => [
             'eyebrow' => 'Xəbərlər və yeniliklər',
             'title' => 'Müştərilər üçün faydalı informasiya lenti',
-            'subtitle' => 'İnternet, sistem təhlükəsizliyi və kripto bazar mövzularını ayrıca lentdə göstərən səliqəli struktur.',
+            'subtitle' => 'İnternet və sistem təhlükəsizliyi ilə bağlı qısa və faydalı məsləhətlər.',
             'tabs' => ['İnternet və şəbəkə', 'Sistem və təhlükəsizlik', 'Kripto bazar icmalı'],
             'disclaimer' => 'Kripto bölməsi məlumat xarakterlidir, investisiya məsləhəti deyil.',
             'items' => [
@@ -237,7 +237,7 @@ $content = [
         'news' => [
             'eyebrow' => 'News and updates',
             'title' => 'Useful information feed for customers',
-            'subtitle' => 'A clean structure that separates internet, system security and crypto market topics.',
+            'subtitle' => 'Short, practical tips on internet service and system security.',
             'tabs' => ['Internet and network', 'Systems and security', 'Crypto market review'],
             'disclaimer' => 'The crypto section is for information only and is not investment advice.',
             'items' => [
@@ -355,7 +355,7 @@ $content = [
         'news' => [
             'eyebrow' => 'Новости и обновления',
             'title' => 'Полезная информационная лента для клиентов',
-            'subtitle' => 'Аккуратная структура, где отдельно показываются темы интернета, системной безопасности и крипторынка.',
+            'subtitle' => 'Короткие и полезные советы по интернет-сервису и безопасности систем.',
             'tabs' => ['Интернет и сеть', 'Системы и безопасность', 'Обзор крипторынка'],
             'disclaimer' => 'Крипто-раздел носит информационный характер и не является инвестиционной рекомендацией.',
             'items' => [
@@ -1325,6 +1325,7 @@ $toSearchKey = static function (string $value): string {
     <script type="application/ld+json"><?= json_encode(['@context' => 'https://schema.org', '@graph' => $schemaGraph], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?></script>
 </head>
     <body>
+    <a class="skip-link" href="#main"><?= e(['az' => 'Əsas məzmuna keç', 'en' => 'Skip to content', 'ru' => 'К основному содержимому'][$lang] ?? 'Skip to content'); ?></a>
     <div id="fiber-loader"><div><div class="loader-mark">Super <span>Optik</span> Tech</div><div class="loader-line"><i></i></div></div></div>
     <script>try{var _t=localStorage.getItem('so-theme');if(_t)document.documentElement.setAttribute('data-theme',_t);}catch(e){}</script>
     <canvas id="fiber-bg" aria-hidden="true"></canvas>
@@ -1458,7 +1459,7 @@ $toSearchKey = static function (string $value): string {
         </div>
     </header>
 
-    <main>
+    <main id="main">
         <!-- HERO -->
         <section class="hero-section" id="home">
             <div class="container hero-grid">
@@ -1513,10 +1514,10 @@ $toSearchKey = static function (string $value): string {
         <section class="section" id="stats" style="padding-top:14px">
             <div class="container">
                 <div class="stats-band" data-stats>
-                    <div class="stat"><div class="stat-num" data-count="99.98" data-suffix="%">0</div><div class="stat-lab"><?= e($sl[0]); ?></div></div>
-                    <div class="stat"><div class="stat-num" data-count="8" data-suffix=" ms">0</div><div class="stat-lab"><?= e($sl[1]); ?></div></div>
-                    <div class="stat"><div class="stat-num" data-count="120" data-suffix=" Gbps">0</div><div class="stat-lab"><?= e($sl[2]); ?></div></div>
-                    <div class="stat"><div class="stat-num" data-count="18450" data-suffix="+">0</div><div class="stat-lab"><?= e($sl[3]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="99.98" data-suffix="%">99.98%</div><div class="stat-lab"><?= e($sl[0]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="8" data-suffix=" ms">8 ms</div><div class="stat-lab"><?= e($sl[1]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="120" data-suffix=" Gbps">120 Gbps</div><div class="stat-lab"><?= e($sl[2]); ?></div></div>
+                    <div class="stat"><div class="stat-num" data-count="18450" data-suffix="+">18,450+</div><div class="stat-lab"><?= e($sl[3]); ?></div></div>
                 </div>
             </div>
         </section>
@@ -1527,6 +1528,9 @@ $toSearchKey = static function (string $value): string {
                 <div class="section-heading"><span class="eyebrow"><?= e($featuredOfferSection[$lang]['eyebrow'] ?? $featuredOfferSection['az']['eyebrow'] ?? 'Tariflər'); ?></span>
                     <h2><?= e($featuredOfferSection[$lang]['title'] ?? $featuredOfferSection['az']['title'] ?? 'Sürətini seç — qalanını biz quraq'); ?></h2>
                     <p><?= e($featuredOfferSection[$lang]['text'] ?? $featuredOfferSection['az']['text'] ?? 'Bütün paketlərə fiber qoşulma, modem quraşdırma və texniki dəstək daxildir.'); ?></p></div>
+                <?php $planCtaLabel = ['az' => 'Paketi seç', 'en' => 'Choose plan', 'ru' => 'Выбрать пакет'];
+                $planUi = ['az' => ['Endirmə', 'Yükləmə', '4K TV', 'Oyun', 'Yayım'], 'en' => ['Download', 'Upload', '4K TV', 'Gaming', 'Streaming'], 'ru' => ['Загрузка', 'Отдача', '4K ТВ', 'Игры', 'Стриминг']];
+                $pu = $planUi[$lang] ?? $planUi['az']; ?>
                 <div class="plans-grid">
                     <?php foreach ($featuredOffers as $i => $offer): ?>
                     <div class="plan<?= $i === 1 ? ' feat' : ''; ?>">
@@ -1537,15 +1541,15 @@ $toSearchKey = static function (string $value): string {
                         <p class="plan-desc"><?= e($offer['description'][$lang] ?? $offer['description']['az']); ?></p>
                         <?php $sp = (int) $offer['speed']; $dl = min(100, 40 + $sp / 12); $ul = min(100, 30 + $sp / 16); ?>
                         <div class="plan-speedbars spd-fill" data-spd>
-                            <div class="spd-row"><?= svgi("download",16) ?><div class="spd-bar"><b style="--w:<?= round($dl); ?>%"></b></div><span>Download</span></div>
-                            <div class="spd-row"><?= svgi("upload",16) ?><div class="spd-bar"><b style="--w:<?= round($ul); ?>%"></b></div><span>Upload</span></div>
+                            <div class="spd-row"><?= svgi("download",16) ?><div class="spd-bar"><b style="--w:<?= round($dl); ?>%"></b></div><span><?= e($pu[0]); ?></span></div>
+                            <div class="spd-row"><?= svgi("upload",16) ?><div class="spd-bar"><b style="--w:<?= round($ul); ?>%"></b></div><span><?= e($pu[1]); ?></span></div>
                         </div>
                         <div class="plan-usecases">
-                            <span class="usecase <?= $sp >= 100 ? 'good' : ''; ?>"><?= svgi("tv",16) ?> 4K TV</span>
-                            <span class="usecase <?= $sp >= 300 ? 'good' : ''; ?>"><?= svgi("gamepad",16) ?> Gaming</span>
-                            <span class="usecase <?= $sp >= 500 ? 'good' : ''; ?>"><?= svgi("video",16) ?> Streaming</span>
+                            <span class="usecase <?= $sp >= 100 ? 'good' : ''; ?>"><?= svgi("tv",16) ?> <?= e($pu[2]); ?></span>
+                            <span class="usecase <?= $sp >= 300 ? 'good' : ''; ?>"><?= svgi("gamepad",16) ?> <?= e($pu[3]); ?></span>
+                            <span class="usecase <?= $sp >= 500 ? 'good' : ''; ?>"><?= svgi("video",16) ?> <?= e($pu[4]); ?></span>
                         </div>
-                        <a class="button <?= $i === 1 ? 'button-primary' : 'button-secondary'; ?>" href="#connection-form"><?= e($copy['lead']['submit']); ?></a>
+                        <a class="button <?= $i === 1 ? 'button-primary' : 'button-secondary'; ?>" href="#connection-form" data-plan="<?= e(($offer['name'][$lang] ?? $offer['name']['az']) . ' - ' . (int) $offer['speed'] . ' Mbit - ' . (int) $offer['price'] . ' AZN'); ?>"><?= e($planCtaLabel[$lang] ?? $planCtaLabel['az']); ?></a>
                     </div>
                     <?php endforeach; ?>
                 </div>
@@ -1573,7 +1577,7 @@ $toSearchKey = static function (string $value): string {
                                 <span class="tr-name"><?= e($t['type'][$lang] ?? $t['type']['az'] ?? ''); ?></span>
                                 <span class="tr-speed"><?= (int) ($t['speed'] ?? 0); ?> <small>Mbit</small></span>
                                 <span class="tr-price"><?= (int) ($t['price'] ?? 0); ?> <small>AZN/ay</small></span>
-                                <a class="button button-secondary tr-btn" href="#connection-form"><?= e($tl['select']); ?></a>
+                                <a class="button button-secondary tr-btn" href="#connection-form" data-plan="<?= e(($t['type'][$lang] ?? $t['type']['az'] ?? '') . ' - ' . (int) ($t['speed'] ?? 0) . ' Mbit - ' . (int) ($t['price'] ?? 0) . ' AZN'); ?>"><?= e($tl['select']); ?></a>
                             </div>
                             <?php endforeach; ?>
                         </div>
@@ -1728,10 +1732,9 @@ $toSearchKey = static function (string $value): string {
                     <button type="button" class="news-filter active" data-news-filter="all"><?= e($T['news_all']); ?></button>
                     <button type="button" class="news-filter" data-news-filter="network"><?= e($copy['news']['tabs'][0] ?? 'İnternet'); ?></button>
                     <button type="button" class="news-filter" data-news-filter="systems"><?= e($copy['news']['tabs'][1] ?? 'Sistem'); ?></button>
-                    <button type="button" class="news-filter" data-news-filter="crypto"><?= e($copy['news']['tabs'][2] ?? 'Kripto'); ?></button>
                 </div>
                 <div class="news-grid" id="news-grid">
-                    <?php foreach ($copy['news']['items'] as $item): ?>
+                    <?php foreach ($copy['news']['items'] as $item): if (($item['category'] ?? '') === 'crypto') { continue; } ?>
                     <article class="news-card" data-news-cat="<?= e((string) ($item['category'] ?? 'network')); ?>">
                         <span class="news-cat"><?= e((string) ($item['category_label'] ?? '')); ?></span>
                         <h3><?= e((string) ($item['title'] ?? '')); ?></h3>
@@ -1740,8 +1743,7 @@ $toSearchKey = static function (string $value): string {
                     </article>
                     <?php endforeach; ?>
                 </div>
-                <?php if (!empty($copy['news']['disclaimer'])): ?><p class="news-disclaimer">* <?= e($copy['news']['disclaimer']); ?></p><?php endif; ?>
-            </div>
+                            </div>
         </section>
 
         <!-- PAYMENTS -->
@@ -1822,6 +1824,8 @@ $toSearchKey = static function (string $value): string {
         window.addEventListener('mousemove',function(e){x=e.clientX;y=e.clientY;if(dot){dot.style.left=x+'px';dot.style.top=y+'px';}});
         (function loop(){rx+=(x-rx)*0.18;ry+=(y-ry)*0.18;if(ring){ring.style.left=rx+'px';ring.style.top=ry+'px';}requestAnimationFrame(loop);})();
         document.addEventListener('mouseover',function(e){if(ring)ring.classList.toggle('is-hover',!!e.target.closest('a,button,.plan,.tv-chip,.pay-card,input,select'));});}
+      // Paket seçimi: seçilən paketi müraciət formasının qeydinə yaz
+      [].slice.call(document.querySelectorAll('[data-plan]')).forEach(function(a){a.addEventListener('click',function(){var m=document.querySelector('.lead-form input[name=message]');if(m){m.value='Seçilən paket: '+a.getAttribute('data-plan');}});});
       // Stat sayğacları + scroll-reveal (IntersectionObserver)
       if('IntersectionObserver' in window){
         var io=new IntersectionObserver(function(es){es.forEach(function(en){ if(!en.isIntersecting)return;var el=en.target;

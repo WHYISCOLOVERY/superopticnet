@@ -29,7 +29,9 @@ $publicFiles = @(
     "gizlilik-siyaseti.php",
     "qaydalar-ve-sertler.php",
     "keyfiyyet-gostericileri.php",
-    "cihazlar.php"
+    "cihazlar.php",
+    "robots.txt",
+    "sitemap.xml"
 )
 foreach ($file in $publicFiles) {
     Copy-Item -LiteralPath (Join-Path $repoRoot $file) -Destination (Join-Path $publicRoot $file)
