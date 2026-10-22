@@ -28,8 +28,10 @@ void main() async {
 
   Widget initialScreen = const LoginScreen();
   if (token != null && token.isNotEmpty) {
-    role = await ApiClient().syncCurrentIdentity() ?? role;
+    // Do not block startup on a network request: saved role and cached GET
+    // responses make the app useful after a tunnel/network outage.
     initialScreen = homeForEmployeeRole(role);
+    ApiClient().syncCurrentIdentity();
   }
 
   runApp(SuperOpticOpsApp(initialScreen: initialScreen));
