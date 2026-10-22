@@ -28,6 +28,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     exit;
 }
 
+// Read-only poll: release the session lock before the (blocking) bridge calls so
+// this 3s poller cannot serialize the user's other requests and page navigation.
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
 $bridge = app_communication_whatsapp_bridge_status();
 $qr = !empty($bridge['connected'])
     ? ['ok' => true, 'status' => 'connected', 'qr' => '']
