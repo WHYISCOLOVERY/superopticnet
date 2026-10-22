@@ -133,6 +133,13 @@ class BackgroundLocationService {
             error is DioException ? (error.response?.statusCode ?? 0) : 0;
         final permanentClientError =
             status >= 400 && status < 500 && status != 408 && status != 429;
+        if (status == 403 && service is AndroidServiceInstance) {
+          await service.setForegroundNotificationInfo(
+            title: 'GPS məlumatı göndərilmir',
+            content:
+                'GPS razılığı və ya rol icazəsi yoxdur. Tətbiqi açıb razılığı təsdiqləyin.',
+          );
+        }
         if (status == 409 && service is AndroidServiceInstance) {
           // A temporary server-side duty-session mismatch must not silently
           // disable tracking. Keep the foreground service alive and retry.
