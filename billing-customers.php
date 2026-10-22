@@ -454,7 +454,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     : $errorMessage,
             ];
         }
-    } elseif ($db instanceof PDO && clean_text((string) ($_POST['action'] ?? '')) === 'request_bulk_customer_deactivation') {
+    } elseif ($db instanceof PDO && app_portal_is_super_admin($user) && clean_text((string) ($_GET['maintenance'] ?? '')) === 'bulk-deactivation' && clean_text((string) ($_POST['action'] ?? '')) === 'request_bulk_customer_deactivation') {
         $bulkIds = array_filter(array_map('intval', preg_split('/[\s,]+/', (string) ($_POST['bulk_account_ids'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: []));
         $bulkResult = app_billing_request_bulk_deactivation($db, $bulkIds, clean_text((string) ($_POST['bulk_reason'] ?? '')), $user);
         $bulkErrorMessages = [
@@ -469,7 +469,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ? (int) ($bulkResult['account_count'] ?? 0) . ' hesab ucun kutlevi deaktivlesme sorgusu qeyde alindi - BASQA admin tesdiqleyene qeder hec biri deyismeyecek.'
                 : ($bulkErrorMessages[(string) ($bulkResult['error'] ?? '')] ?? ('Kutlevi deaktivlesme sorgusu saxlanmadi: ' . ((string) ($bulkResult['error'] ?? '') ?: 'DB cavabi yoxdur'))),
         ];
-    } elseif ($db instanceof PDO && clean_text((string) ($_POST['action'] ?? '')) === 'resolve_bulk_customer_deactivation') {
+    } elseif ($db instanceof PDO && app_portal_is_super_admin($user) && clean_text((string) ($_GET['maintenance'] ?? '')) === 'bulk-deactivation' && clean_text((string) ($_POST['action'] ?? '')) === 'resolve_bulk_customer_deactivation') {
         $bulkResolve = app_billing_resolve_bulk_deactivation(
             $db,
             (int) ($_POST['bulk_request_id'] ?? 0),
@@ -1005,10 +1005,11 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
         <?php endif; ?>
 
         <?php
-        $canConfirmBulkDeactivation = app_portal_is_admin($user);
+        $bulkDeactivationMode = app_portal_is_super_admin($user) && clean_text((string) ($_GET['maintenance'] ?? '')) === 'bulk-deactivation';
+        $canConfirmBulkDeactivation = $bulkDeactivationMode;
         $pendingBulkDeactivations = $db instanceof PDO ? app_billing_bulk_deactivation_requests($db, 'pending') : [];
         ?>
-        <?php if ($pendingBulkDeactivations !== []): ?>
+        <?php if ($bulkDeactivationMode && $pendingBulkDeactivations !== []): ?>
         <article class="portal-card portal-reveal">
             <div class="portal-card-head"><div><strong>Gozleyen kutlevi deaktivlesme sorgulari</strong><small>Vizyon 19.2: basqa admin tesdiqleyene qeder heç bir hesab deyismir.</small></div></div>
             <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Hesab sayi</th><th>Sebeb</th><th>Sorgu eden</th><th>Tarix</th><th>Qerar</th></tr></thead><tbody>
@@ -1037,7 +1038,7 @@ $createUrl = 'billing-customers.php?' . http_build_query($createParams);
             </tbody></table></div>
         </article>
         <?php endif; ?>
-        <?php if (app_portal_is_admin($user)): ?>
+        <?php if ($bulkDeactivationMode): ?>
         <article class="portal-card portal-reveal">
             <div class="portal-card-head"><div><strong>Kutlevi deaktivlesme sorgusu</strong><small>Hesab ID-lerini vergul ve ya yeni setirle ayirin. Sorgu deryal tetbiq olunmur - basqa admin tesdiqlemelidir.</small></div></div>
             <form class="portal-stacked-form" method="post">
