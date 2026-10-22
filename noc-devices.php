@@ -1802,6 +1802,16 @@ if ($needsDeviceRows) {
                     </div>
                 </div>
             </form>
+            <?php if (!$managementPathReady): ?>
+                <form class="noc-action-form portal-card" method="post">
+                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="action" value="set_management_path">
+                    <input type="hidden" name="enabled" value="1">
+                    <strong>OLT-e canli sorgu bagli</strong>
+                    <p>Server VLAN 550 idareetme yolunu gorurse, asagidaki duymeni basin. Bundan sonra SN ile axtaris OLT-lere canli gedecek.</p>
+                    <button class="portal-primary-btn" type="submit">VLAN 550 aktiv kimi qeyd et</button>
+                </form>
+            <?php endif; ?>
             <?php if (is_array($modemBotPreview)): ?>
                 <article class="modem-bot-preview" data-modem-bot-preview>
                     <div>
