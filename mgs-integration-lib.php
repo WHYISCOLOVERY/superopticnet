@@ -67,6 +67,13 @@ function app_mgs_required_schema_tables(): array
 
 function app_mgs_schema_ready(PDO $db): bool
 {
+    // Memoize a positive result per request/connection: this runs an
+    // information_schema query and is reached from 100+ call sites per page.
+    static $readyFor = null;
+    if ($readyFor === spl_object_id($db)) {
+        return true;
+    }
+
     $tables = app_mgs_required_schema_tables();
     $placeholders = implode(',', array_fill(0, count($tables), '?'));
     try {
@@ -77,7 +84,11 @@ function app_mgs_schema_ready(PDO $db): bool
                 AND TABLE_NAME IN (' . $placeholders . ')'
         );
         $statement->execute($tables);
-        return (int) $statement->fetchColumn() === count($tables);
+        if ((int) $statement->fetchColumn() === count($tables)) {
+            $readyFor = spl_object_id($db);
+            return true;
+        }
+        return false;
     } catch (Throwable) {
         return false;
     }
@@ -88,6 +99,12 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO) {
         return false;
+    }
+    // Once the schema was ensured on this connection, skip the 36 CREATE TABLE
+    // IF NOT EXISTS statements and seeds for the rest of the request.
+    static $ensuredFor = null;
+    if ($ensuredFor === spl_object_id($db)) {
+        return true;
     }
     if (strtolower((string) app_setting('db_bootstrap_mode', 'cached')) === 'off') {
         return app_mgs_schema_ready($db);
@@ -797,7 +814,12 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
         return false;
     }
 
-    return app_mgs_schema_ready($db);
+    if (app_mgs_schema_ready($db)) {
+        $ensuredFor = spl_object_id($db);
+        return true;
+    }
+
+    return false;
 }
 
 function app_mgs_hr_money(mixed $value): float
