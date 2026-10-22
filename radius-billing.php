@@ -321,5 +321,6 @@ D:\xampp\php\php.exe D:\xampp\htdocs\superopticnet\tmp\check-radius-db.php 12000
 radtest "$RADIUS_TEST_USER" "$RADIUS_TEST_PASSWORD" 127.0.0.1 0 "$RADIUS_SHARED_SECRET"</code></pre>
         </section>
     </main>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

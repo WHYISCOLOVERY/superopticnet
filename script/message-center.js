@@ -220,3 +220,25 @@
     window.addEventListener('popstate', () => loadMessage(window.location.href, false));
     initializeContent();
 })();
+
+
+(() => {
+    const bind = (root) => {
+        (root || document).querySelectorAll('[data-template-select]').forEach((select) => {
+            if (select.dataset.previewBound === '1') return;
+            select.dataset.previewBound = '1';
+            const preview = select.parentElement?.querySelector('[data-template-preview]');
+            const text = preview?.querySelector('p');
+            if (!preview || !text) return;
+            const sync = () => {
+                const body = select.selectedOptions[0]?.dataset.templateBody || '';
+                text.textContent = body;
+                preview.hidden = body === '';
+            };
+            select.addEventListener('change', sync);
+            sync();
+        });
+    };
+    bind(document);
+    new MutationObserver(() => bind(document)).observe(document.body, {childList: true, subtree: true});
+})();

@@ -35,7 +35,12 @@ if ($employeeRole === 'technician') {
 
 $result = app_mgs_build_modem_search_reply($query, true, $db, $actor);
 if (empty($result['ok'])) {
-    app_mobile_json_response(['reason' => $result['reason'] ?? 'not_found'], 404, 'Modem və ya müştəri tapılmadı.');
+    $searchHint = (string) ($result['text'] ?? '');
+    app_mobile_json_response(
+        ['reason' => $result['reason'] ?? 'not_found', 'live_reason' => (string) ($result['live_reason'] ?? '')],
+        404,
+        $searchHint !== '' ? $searchHint : 'Modem və ya müştəri tapılmadı.'
+    );
 }
 
 $candidate = is_array($result['candidate'] ?? null) ? $result['candidate'] : [];

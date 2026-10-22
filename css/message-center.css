@@ -670,3 +670,26 @@
 @media (max-width: 1100px) {
     .message-layout { grid-template-columns: 1fr; }
 }
+
+.message-template-preview {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(11, 123, 135, .22);
+    border-radius: 14px;
+    background: rgba(230, 248, 247, .6);
+    color: #10233f;
+}
+
+.message-template-preview strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: .8rem;
+    color: #0b7b87;
+}
+
+.message-template-preview p {
+    margin: 0;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

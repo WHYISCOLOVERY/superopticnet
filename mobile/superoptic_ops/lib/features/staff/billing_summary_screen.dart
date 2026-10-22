@@ -172,13 +172,17 @@ class _BillingSummaryViewState extends State<BillingSummaryView>
             ),
           ),
           const SizedBox(height: 16),
-          GridView.count(
+          GridView(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 1.18,
+            // Fixed row height (not an aspect ratio) so the cards never
+            // overflow on narrow screens or with large system font sizes.
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              mainAxisExtent: 176,
+            ),
             children: [
               _metricCard('Ümumi müştəri', total, Icons.groups_2_outlined,
                   AppTheme.primary),

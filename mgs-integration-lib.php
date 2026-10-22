@@ -8214,10 +8214,16 @@ function app_mgs_hsgq_live_ont_inventory(array $device, array $actor = [], ?PDO 
     ];
 }
 
-function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8, array $actor = []): ?array
+function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8, array $actor = [], ?string &$reason = null): ?array
 {
+    $reason = null;
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db) || !app_mgs_management_path_ready()) {
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        $reason = 'db_unavailable';
+        return null;
+    }
+    if (!app_mgs_management_path_ready()) {
+        $reason = 'management_path_down';
         return null;
     }
     $authorization = app_noc_authorize($actor, 'read_ont_live', [], $db);
@@ -8227,9 +8233,11 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
 
     $query = trim($query);
     if ($query === '') {
+        $reason = 'empty_query';
         return null;
     }
     $needle = app_mgs_search_text_lower($query);
+    $needleCompact = preg_replace('/[^a-z0-9]/', '', $needle) ?? '';
 
     $statement = $db->query(
         'SELECT *
@@ -8241,6 +8249,12 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
     );
     $devices = $statement !== false ? ($statement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
     $devices = app_noc_filter_objects($devices, $actor, $db);
+    if ($devices === []) {
+        $reason = 'no_olt_profile';
+        return null;
+    }
+    $credentialed = 0;
+    $reachable = 0;
     foreach ($devices as $device) {
         if (!is_array($device)) {
             continue;
@@ -8249,6 +8263,7 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
         if (trim((string) ($access['ssh_username'] ?? '')) === '' || (string) ($access['ssh_password'] ?? '') === '') {
             continue;
         }
+        $credentialed++;
         for ($pon = 1; $pon <= max(1, $maxPon); $pon++) {
             $run = app_mgs_hsgq_exec_commands(
                 (string) ($device['ip_address'] ?? ''),
@@ -8265,16 +8280,13 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
             if (empty($run['ok'])) {
                 continue;
             }
+            $reachable++;
             $table = (string) (($run['outputs']['show ont-info all'] ?? ''));
             foreach (app_mgs_parse_hsgq_ont_info_all_rows($table) as $row) {
-                if (app_mgs_search_text_matches($needle, [$row['serial'] ?? '', $row['ont_name'] ?? '', $row['line'] ?? '', $row['pon'] . '/' . $row['ont_id']])) {
-                    $snapshot = app_mgs_hsgq_live_ont_snapshot(
-                        $device,
-                        (string) ($row['pon'] ?? ''),
-                        (string) ($row['ont_id'] ?? ''),
-                        $actor,
-                        $db
-                    );
+                $compactSerial = preg_replace('/[^a-z0-9]/', '', app_mgs_search_text_lower((string) ($row['serial'] ?? ''))) ?? '';
+                $serialHit = $needleCompact !== '' && strlen($needleCompact) >= 6 && $compactSerial !== '' && str_contains($compactSerial, $needleCompact);
+                if ($serialHit || app_mgs_search_text_matches($needle, [$row['serial'] ?? '', $row['ont_name'] ?? '', $row['line'] ?? '', $row['pon'] . '/' . $row['ont_id']])) {
+                    $snapshot = app_mgs_hsgq_live_ont_snapshot($device, (string) ($row['pon'] ?? ''), (string) ($row['ont_id'] ?? ''), $actor, $db);
                     if (!empty($snapshot['ok'])) {
                         $snapshot['live_lookup'] = $row;
                         return $snapshot;
@@ -8284,7 +8296,22 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
         }
     }
 
+    $reason = $credentialed === 0 ? 'no_ssh_credentials' : ($reachable === 0 ? 'olt_unreachable' : 'not_on_olt');
+
     return null;
+}
+
+function app_mgs_live_lookup_reason_text(string $reason): string
+{
+    return match ($reason) {
+        'management_path_down' => 'OLT-e canli sorgu bagli: idareetme yolu (VLAN 550) sistemde "qosulub" kimi isharelenmeyib. NOC > Idareetme yolu bolmesinden aktiv edin.',
+        'no_olt_profile' => 'Monitorinq aktiv HSGQ OLT profili tapilmadi.',
+        'no_ssh_credentials' => 'OLT profillerinde SSH istifadeci/parol yoxdur.',
+        'olt_unreachable' => 'OLT-lere SSH ile qosulmaq alinmadi (IP, port ve ya parolu yoxlayin).',
+        'not_on_olt' => 'OLT-lerde bu SN/ad tapilmadi. MAC ile axtaris yalniz bazadaki melumata gore isleyir.',
+        'db_unavailable' => 'Baza hazir deyil.',
+        default => '',
+    };
 }
 
 function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true, ?PDO $db = null, array $actor = []): array
@@ -8309,9 +8336,16 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
         if (!empty($actor['ticket_resolution_scope'])) {
             return ['ok' => false, 'reason' => 'customer_ont_not_linked'];
         }
-        $liveOnly = app_mgs_hsgq_live_find_ont_by_query($query, $db, 8, $actor);
+        $liveFailReason = null;
+        $liveOnly = app_mgs_hsgq_live_find_ont_by_query($query, $db, 8, $actor, $liveFailReason);
         if ($liveOnly === null) {
-            return ['ok' => false, 'reason' => 'not_found'];
+            $hint = app_mgs_live_lookup_reason_text((string) $liveFailReason);
+            return [
+                'ok' => false,
+                'reason' => 'not_found',
+                'live_reason' => (string) $liveFailReason,
+                'text' => 'Bazada tapilmadi.' . ($hint !== '' ? ' ' . $hint : ''),
+            ];
         }
         $candidate = [
             'account_id' => 0,
@@ -8383,6 +8417,9 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
     }
 
     $liveOnt = is_array($live['ont'] ?? null) ? $live['ont'] : [];
+    if ($liveOnt !== [] && (int) ($candidate['account_id'] ?? 0) > 0) {
+        app_mgs_store_live_ont_snapshot((int) $candidate['account_id'], $candidate, $liveOnt, $db);
+    }
     $ontRx = (string) (($liveOnt['ont_rx'] ?? '') !== '' ? $liveOnt['ont_rx'] : ($candidate['ont_rx'] ?? '-'));
     $ontTx = (string) (($liveOnt['ont_tx'] ?? '') !== '' ? $liveOnt['ont_tx'] : ($candidate['ont_tx'] ?? '-'));
     $oltRx = (string) (($liveOnt['olt_rx'] ?? '') !== '' ? $liveOnt['olt_rx'] : ($candidate['olt_rx'] ?? '-'));
@@ -13770,4 +13807,72 @@ function app_mgs_copilot_context(?PDO $db = null, array $actor = []): array
         ],
         'next_safe_actions' => $safeActions,
     ];
+}
+
+
+function app_mgs_ont_identity_key(string $value): string
+{
+    return strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', $value));
+}
+
+function app_mgs_ont_profile_matches(array $profile, array $ont): bool
+{
+    $serialA = app_mgs_ont_identity_key((string) ($profile['serial'] ?? $profile['sn'] ?? ''));
+    $serialB = app_mgs_ont_identity_key((string) ($ont['serial'] ?? ''));
+    if ($serialA !== '' && $serialB !== '' && $serialA === $serialB) {
+        return true;
+    }
+    $macA = app_mgs_ont_identity_key((string) ($profile['mac'] ?? ''));
+    $macB = app_mgs_ont_identity_key((string) ($ont['mac'] ?? ''));
+    if ($macA !== '' && $macB !== '' && $macA === $macB) {
+        return true;
+    }
+    $locationB = trim((string) ($ont['olt'] ?? '')) . '|' . trim((string) ($ont['pon'] ?? '')) . '|' . trim((string) ($ont['ont_id'] ?? ''));
+    $locationA = trim((string) ($profile['olt'] ?? '')) . '|' . trim((string) ($profile['pon'] ?? '')) . '|' . trim((string) ($profile['ont_id'] ?? ''));
+
+    return $locationB !== '||' && $locationA === $locationB && trim((string) ($ont['olt'] ?? '')) !== '';
+}
+
+/** Persist the last live optical readings on the customer's stored ONT profile. */
+function app_mgs_store_live_ont_snapshot(int $accountId, array $candidate, array $liveOnt, ?PDO $db = null): bool
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $accountId <= 0 || $liveOnt === []) {
+        return false;
+    }
+    $statement = $db->prepare('SELECT * FROM portal_accounts WHERE id = :id LIMIT 1');
+    $statement->execute(['id' => $accountId]);
+    $account = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($account)) {
+        return false;
+    }
+    $payload = app_db_account_payload($account);
+    $profiles = is_array($payload['ont_profiles'] ?? null) ? array_values(array_filter($payload['ont_profiles'], 'is_array')) : [];
+    $fields = ['temperature', 'ont_rx', 'ont_tx', 'olt_rx', 'olt_tx', 'voltage', 'bias_current', 'status'];
+    $live = [];
+    foreach ($fields as $field) {
+        $value = trim((string) ($liveOnt[$field] ?? ''));
+        if ($value !== '' && $value !== '-') {
+            $live[$field] = $value;
+        }
+    }
+    if ($live === []) {
+        return false;
+    }
+    $live['last_live_at'] = date('Y-m-d H:i:s');
+    $touched = false;
+    foreach ($profiles as $index => $profile) {
+        if (app_mgs_ont_profile_matches($profile, $candidate)) {
+            $profiles[$index] = array_merge($profile, $live);
+            $touched = true;
+            break;
+        }
+    }
+    if (!$touched) {
+        return false;
+    }
+    $payload['ont_profiles'] = $profiles;
+    $update = $db->prepare('UPDATE portal_accounts SET payload_json = :payload WHERE id = :id');
+
+    return $update->execute(['payload' => app_db_json_encode($payload), 'id' => $accountId]);
 }

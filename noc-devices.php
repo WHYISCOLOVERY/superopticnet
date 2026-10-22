@@ -475,22 +475,57 @@ function noc_monitor_tone(array $device): string
     return 'unknown';
 }
 
-function noc_monitor_points(array $devices): array
+function noc_monitor_split_devices(array $devices): array
 {
-    $devices = array_slice(array_values($devices), 0, 12);
-    $total = max(1, count($devices));
-    $points = [];
-    foreach ($devices as $index => $device) {
+    $cores = [];
+    $olts = [];
+    foreach (array_values($devices) as $device) {
         if (!is_array($device)) {
             continue;
         }
-        $angle = (-90 + (360 / $total) * $index) * (M_PI / 180);
-        $radiusX = 38;
-        $radiusY = 33;
+        if (strtolower((string) ($device['device_type'] ?? '')) === 'olt') {
+            $olts[] = $device;
+        } else {
+            $cores[] = $device;
+        }
+    }
+
+    return [$cores, $olts];
+}
+
+function noc_monitor_board_height(array $devices): int
+{
+    [, $olts] = noc_monitor_split_devices($devices);
+    $rows = (int) ceil(count($olts) / 4);
+
+    return max(640, 400 + (max(1, $rows) - 1) * 230 + 200);
+}
+
+function noc_monitor_points(array $devices): array
+{
+    [$cores, $olts] = noc_monitor_split_devices($devices);
+    $height = (float) noc_monitor_board_height($devices);
+    $points = [];
+    $coreCount = max(1, count($cores));
+    foreach ($cores as $index => $device) {
         $points[] = [
             'device' => $device,
-            'x' => round(50 + cos($angle) * $radiusX, 2),
-            'y' => round(50 + sin($angle) * $radiusY, 2),
+            'x' => round((($index + 0.5) / $coreCount) * 100, 2),
+            'y' => round(160 / $height * 100, 2),
+            'is_hub' => $index === 0,
+        ];
+    }
+
+    $columns = 4;
+    foreach ($olts as $index => $device) {
+        $row = intdiv($index, $columns);
+        $column = $index % $columns;
+        $inRow = min($columns, count($olts) - ($row * $columns));
+        $points[] = [
+            'device' => $device,
+            'x' => round((($column + 0.5) / $inRow) * 100, 2),
+            'y' => round((420 + $row * 230) / $height * 100, 2),
+            'is_hub' => false,
         ];
     }
 
@@ -1147,6 +1182,13 @@ if ($ontQuery !== '') {
 }
 $devices = $needsDeviceRows ? noc_merge_declared_network_nodes($devices) : $devices;
 $monitorPoints = $needsDeviceRows ? noc_monitor_points($devices) : [];
+$monitorHubPoint = ['x' => 50, 'y' => 10];
+foreach ($monitorPoints as $monitorPointRow) {
+    if (!empty($monitorPointRow['is_hub'])) {
+        $monitorHubPoint = ['x' => $monitorPointRow['x'], 'y' => $monitorPointRow['y']];
+        break;
+    }
+}
 $monitorCounts = ['up' => 0, 'down' => 0, 'maintenance' => 0, 'unknown' => 0];
 if ($needsDeviceRows) {
     foreach ($devices as $device) {
@@ -1231,6 +1273,9 @@ if ($needsDeviceRows) {
         .monitor-link-down{stroke:#f43f5e}
         .monitor-link-maintenance{stroke:#f59e0b}
         .monitor-link-unknown{stroke:#94a3b8}
+        .native-monitor-board.has-save-error::after{content:'Yerlesim serverde saxlanmadi (yalniz bu brauzerde saxlanir)';position:absolute;right:18px;top:18px;padding:6px 10px;border-radius:10px;background:#fee2e2;color:#991b1b;font-size:.78rem;font-weight:800;z-index:7}
+        .noc-status-strip{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 4px}.noc-status-chip{display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;font-size:.84rem;font-weight:800;border:1px solid rgba(148,163,184,.3);background:#fff;color:#10233f}.noc-status-chip.is-ok{border-color:rgba(34,197,94,.4);background:#f0fdf4;color:#166534}.noc-status-chip.is-warn{border-color:rgba(245,158,11,.5);background:#fffbeb;color:#92400e}
+        .monitor-summary{position:absolute;z-index:6;right:18px;top:18px;display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:12px;background:#1e293b;color:#f8fafc;font-size:.82rem}
         .monitor-hub-native{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:260px;min-height:150px;display:grid;place-content:center;gap:8px;padding:20px;border-radius:18px;background:#1e293b;color:#f8fafc;text-align:center;box-shadow:0 20px 40px rgba(15,23,42,.25)}
         .monitor-hub-native span{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:#fbbf24}
         .monitor-hub-native strong{font-size:1.3rem}
@@ -1337,7 +1382,7 @@ if ($needsDeviceRows) {
             .noc-scan-dialog.is-open>.noc-scan-head{padding:14px}
             .noc-scan-dialog.is-open>.noc-scan-results{padding:0 14px 14px}
             .native-monitor-board{min-height:0;overflow:hidden;touch-action:auto}
-            .monitor-toolbar,.monitor-links,.monitor-hub-native{display:none}
+            .monitor-toolbar,.monitor-links,.monitor-hub-native{display:none}.monitor-summary{position:static;margin-bottom:10px}
             .monitor-stage{position:static;inset:auto;display:grid;grid-template-columns:1fr;gap:12px;transform:none!important}
             .monitor-stage{width:100%!important;height:auto!important}
             .monitor-node{position:static!important;left:auto!important;top:auto!important;transform:none!important;width:100%;min-width:0;max-width:100%;cursor:default}
@@ -1396,6 +1441,7 @@ if ($needsDeviceRows) {
         </section>
         <?php endif; ?>
 
+        <?php if ($activeNocView !== 'ont-search'): ?>
         <section class="mgs-command-hero noc-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">NOC native panel</span>
@@ -1411,6 +1457,7 @@ if ($needsDeviceRows) {
                 <small><?= e((string) $bridge['message']); ?></small>
             </div>
         </section>
+        <?php endif; ?>
 
         <?php
         $nocLink = static fn (string $key, string $label, string $href): array => ['key'=>$key,'label'=>$label,'href'=>$href];
@@ -1427,19 +1474,21 @@ if ($needsDeviceRows) {
         require __DIR__ . '/views/_module-group-nav.php';
         ?>
 
-        <?php if (!$managementPathReady): ?>
+        <?php if (!$managementPathReady && $activeNocView !== 'ont-search'): ?>
             <section class="portal-alert system-health-warning portal-reveal">
                 <i class="fa-solid fa-route"></i>
                 <span>Monitoring server VLAN 550 management yoluna qosulu kimi isaretlenmeyib. Internal OLT/switch/router offline alarmlari ferdi bilet yaratmir; yalniz management path problemi kimi qruplasdirilir.</span>
             </section>
         <?php endif; ?>
 
+        <?php if ($activeNocView !== 'ont-search'): ?>
         <section class="mgs-stat-grid portal-reveal" data-noc-primary-stats>
             <?php billing_render_stat_card('Cihaz profili', (string) ($summary['device_profiles'] ?? count($devices)), 'öyrənilmiş cihazlar', 'fa-network-wired', 'blue'); ?>
             <?php billing_render_stat_card('Əlçatan', (string) ($summary['devices_reachable'] ?? 0), 'son yoxlama', 'fa-circle-check', 'green'); ?>
             <?php billing_render_stat_card('Şəbəkə yolu gözləyir', (string) ($summary['devices_waiting_path'] ?? 0), 'yanlış offline bildirişi bloklanır', 'fa-route', 'orange'); ?>
             <?php billing_render_stat_card('Yoxlanılmayıb', (string) ($summary['devices_unknown'] ?? 0), 'yoxlama gözləyir', 'fa-circle-question', 'navy'); ?>
         </section>
+        <?php endif; ?>
 
         <details class="noc-secondary-summary portal-reveal" data-noc-secondary-stats>
             <summary>Ətraflı NOC göstəriciləri <span>7 texniki göstərici</span></summary>
@@ -1463,7 +1512,7 @@ if ($needsDeviceRows) {
                 <small>Reng statusa gore deyisir. Kartlari el ile cekmek, zoom etmek ve her cihaz altina qeyd yazmaq mumkundur.</small>
             </div>
             <div class="noc-monitor-shell">
-                <div class="native-monitor-board" data-native-monitor-board data-monitor-save-url="api/monitor-layout.php" data-monitor-csrf="<?= e(app_csrf_token()); ?>" data-monitor-map-key="<?= e($monitorMapKey); ?>" data-monitor-storage-key="superoptic.noc.monitor.map.v2">
+                <div class="native-monitor-board" data-native-monitor-board data-monitor-save-url="api/monitor-layout.php" data-monitor-csrf="<?= e(app_csrf_token()); ?>" data-monitor-map-key="<?= e($monitorMapKey); ?>" data-monitor-storage-key="superoptic.noc.monitor.map.v2" style="min-height:<?= e((string) noc_monitor_board_height($devices)); ?>px">
                     <div class="monitor-toolbar" aria-label="Monitor aletleri">
                         <button type="button" class="monitor-tool" data-monitor-zoom="out" title="Kicilt">-</button>
                         <span class="monitor-zoom-value" data-monitor-zoom-value>100%</span>
@@ -1471,6 +1520,7 @@ if ($needsDeviceRows) {
                         <button type="button" class="monitor-tool" data-monitor-reset title="Sifirla">R</button>
                         <button type="button" class="monitor-tool" data-monitor-fullscreen title="Tam ekran">[]</button>
                     </div>
+                    <div class="monitor-summary"><strong><?= e((string) count($devices)); ?> avadanliq</strong> <span><?= e((string) ($monitorCounts['up'] ?? 0)); ?> isleyir / <?= e((string) ($monitorCounts['down'] ?? 0)); ?> problemli / <?= e((string) ($monitorCounts['maintenance'] ?? 0)); ?> texniki is</span></div>
                     <div class="monitor-stage" data-monitor-stage>
                         <svg class="monitor-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                             <?php foreach ($monitorPoints as $index => $point): ?>
@@ -1479,14 +1529,11 @@ if ($needsDeviceRows) {
                                 $tone = noc_monitor_tone($lineDevice);
                                 $deviceKey = noc_monitor_device_key($lineDevice, (int) $index);
                                 ?>
-                                <line x1="50" y1="50" x2="<?= e((string) $point['x']); ?>" y2="<?= e((string) $point['y']); ?>" data-monitor-link-to="<?= e($deviceKey); ?>" class="monitor-link monitor-link-<?= e($tone); ?>"></line>
+                                <?php if (!empty($point['is_hub'])) { continue; } ?>
+                                <line x1="<?= e((string) $monitorHubPoint['x']); ?>" y1="<?= e((string) $monitorHubPoint['y']); ?>" x2="<?= e((string) $point['x']); ?>" y2="<?= e((string) $point['y']); ?>" data-monitor-link-to="<?= e($deviceKey); ?>" class="monitor-link monitor-link-<?= e($tone); ?>"></line>
                             <?php endforeach; ?>
                         </svg>
-                        <div class="monitor-hub-native">
-                            <span>SuperOptik monitor</span>
-                            <strong><?= e((string) count($devices)); ?> avadanliq</strong>
-                            <p><?= e((string) ($monitorCounts['up'] ?? 0)); ?> up / <?= e((string) ($monitorCounts['down'] ?? 0)); ?> problemli / <?= e((string) ($monitorCounts['maintenance'] ?? 0)); ?> maintenance</p>
-                        </div>
+
                         <?php foreach ($monitorPoints as $index => $point): ?>
                             <?php
                             $device = (array) $point['device'];
@@ -1499,7 +1546,7 @@ if ($needsDeviceRows) {
                             $nodeNote = array_key_exists('note', $layout) ? (string) $layout['note'] : (string) ($device['note_text'] ?? '');
                             $tooltip = noc_monitor_tooltip($device, $tone);
                             ?>
-                            <div class="monitor-node monitor-node-<?= e($tone); ?>" data-monitor-node data-monitor-id="<?= e($deviceKey); ?>" data-default-x="<?= e((string) $point['x']); ?>" data-default-y="<?= e((string) $point['y']); ?>" data-server-layout="<?= $layout !== [] ? '1' : '0'; ?>" title="<?= e((string) $tooltip['title']); ?>" style="left:<?= e((string) $nodeX); ?>%;top:<?= e((string) $nodeY); ?>%;--node-scale:<?= e((string) $nodeScale); ?>;">
+                            <div class="monitor-node monitor-node-<?= e($tone); ?>" data-monitor-node<?= !empty($point['is_hub']) ? ' data-monitor-hub="1"' : ''; ?> data-monitor-id="<?= e($deviceKey); ?>" data-default-x="<?= e((string) $point['x']); ?>" data-default-y="<?= e((string) $point['y']); ?>" data-server-layout="<?= $layout !== [] ? '1' : '0'; ?>" title="<?= e((string) $tooltip['title']); ?>" style="left:<?= e((string) $nodeX); ?>%;top:<?= e((string) $nodeY); ?>%;--node-scale:<?= e((string) $nodeScale); ?>;">
                                 <span class="monitor-node-status" data-monitor-status-text><?= e((string) $tooltip['label']); ?></span>
                                 <span class="monitor-node-type"><?= e(strtoupper((string) ($device['device_type'] ?? 'DEV'))); ?></span>
                                 <strong class="monitor-node-name"><?= e((string) ($device['device_name'] ?? '-')); ?></strong>
@@ -1999,7 +2046,10 @@ if ($needsDeviceRows) {
         <section id="ont-search" class="portal-card portal-reveal">
             <div class="portal-card-head">
                 <h2>ONT/SN/MAC native axtarisi</h2>
-                <small>Stored customer snapshot uzerinden SN, MAC, subscriber code, PPPoE/IPoE username, OLT/PON/ONT ve optik sahelere gore axtaris. VLAN 550 passiv olsa da saxlanmis profil gorunur.</small>
+                <small>SN, MAC, abune kodu ve ya istifadeci adı yazın.</small>
+            </div>
+            <div class="portal-badge-list" style="margin-bottom:10px">
+                <span><?= $managementPathReady ? 'VLAN 550 aktiv: OLT-e canli sorgu var' : 'VLAN 550 passiv: yalniz saxlanmis melumat'; ?></span>
             </div>
             <form method="get" class="portal-stacked-form" data-noc-auto-filter>
                 <input type="hidden" name="view" value="ont-search">
@@ -2015,25 +2065,35 @@ if ($needsDeviceRows) {
                     </div>
                 </div>
             </form>
+            <?php if (!$managementPathReady): ?>
+                <form class="noc-action-form portal-card" method="post">
+                    <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                    <input type="hidden" name="action" value="set_management_path">
+                    <input type="hidden" name="enabled" value="1">
+                    <strong>OLT-e canli sorgu bagli</strong>
+                    <p>Server VLAN 550 idareetme yolunu gorurse, asagidaki duymeni basin. Bundan sonra SN ile axtaris OLT-lere canli gedecek.</p>
+                    <button class="portal-primary-btn" type="submit">VLAN 550 aktiv kimi qeyd et</button>
+                </form>
+            <?php endif; ?>
             <?php if (is_array($modemBotPreview)): ?>
                 <article class="modem-bot-preview" data-modem-bot-preview>
                     <div>
-                        <h3>Modem bot cavab preview</h3>
-                        <small>Telegram modem botu bu sorgu ucun eyni cavabi gonderecek. Live OLT query varsa birinci onu yoxlayir, alinmasa stored snapshot-a dusur.</small>
+                        <h3>OLT-den canli netice</h3>
+                        <small>Sorgu OLT-lere canli gonderilir; tapilmasa saxlanmis melumata baxilir.</small>
                     </div>
                     <?php if (!empty($modemBotPreview['ok'])): ?>
                         <pre><?= e((string) ($modemBotPreview['text'] ?? '')); ?></pre>
                     <?php else: ?>
                         <pre>MODEM AXTARIS NETICESI
 Sorgu: <?= e($ontQuery); ?>
-Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
+Netice: <?= e((string) ($modemBotPreview['text'] ?? ($modemBotPreview['reason'] ?? 'not_found'))); ?></pre>
                     <?php endif; ?>
                 </article>
             <?php endif; ?>
             <?php if ($ontQuery === ''): ?>
                 <?php billing_render_empty_state('ONT axtarisi hazirdir', 'SN, MAC, username ve ya muqavile kodu yazin. Netice kartinda optik, Wi-Fi, kabel ve RADIUS kecidleri gorunecek.', 'fa-magnifying-glass'); ?>
             <?php elseif ($ontResults === []): ?>
-                <?php billing_render_empty_state('ONT tapilmadi', 'Axtaris kriteriyasina uygun saxlanmis ONT snapshot yoxdur. Live probe ucun VLAN 550 ve OLT path aktiv olmalidir.', 'fa-circle-question'); ?>
+                <?php billing_render_empty_state('ONT tapilmadi', (string) (is_array($modemBotPreview) && !empty($modemBotPreview['text']) && empty($modemBotPreview['ok']) ? $modemBotPreview['text'] : 'Bazada ve OLT-lerde bu sorgu tapilmadi.'), 'fa-circle-question'); ?>
             <?php else: ?>
                 <div class="portal-badge-list" style="margin-bottom:12px">
                     <span><?= e((string) count($ontResults)); ?> netice</span>
@@ -2246,12 +2306,10 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
         const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
         let state = {};
         let zoom = 1;
-        if (!serverBacked) {
-            try {
-                state = JSON.parse(localStorage.getItem(storageKey) || '{}') || {};
-            } catch (error) {
-                state = {};
-            }
+        try {
+            state = JSON.parse(localStorage.getItem(storageKey) || '{}') || {};
+        } catch (error) {
+            state = {};
         }
         const saveLocal = () => {
             try {
@@ -2287,16 +2345,23 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
                 window.clearTimeout(saveTimers.get(id));
             }
             const submit = () => {
+                saveLocal();
                 fetch(saveUrl, {
                     method: 'POST',
                     credentials: 'same-origin',
+                    keepalive: true,
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRF-Token': csrfToken,
                     },
                     body: JSON.stringify(payload),
+                }).then((response) => {
+                    if (!response.ok) {
+                        throw new Error('save_failed_' + response.status);
+                    }
+                    board.classList.remove('has-save-error');
                 }).catch(() => {
-                    saveLocal();
+                    board.classList.add('has-save-error');
                 });
             };
             if (immediate) {
@@ -2313,6 +2378,12 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
                     return;
                 }
                 const pos = nodePosition(node);
+                const hub = nodes.find((item) => item.dataset.monitorHub === '1');
+                if (hub) {
+                    const hubPos = nodePosition(hub);
+                    line.setAttribute('x1', `${hubPos.x}`);
+                    line.setAttribute('y1', `${hubPos.y}`);
+                }
                 line.setAttribute('x2', `${pos.x}`);
                 line.setAttribute('y2', `${pos.y}`);
             });
@@ -2428,6 +2499,15 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
         document.addEventListener('fullscreenchange', () => {
             board.classList.toggle('is-fullscreen-fallback', document.fullscreenElement === board && !board.matches(':fullscreen'));
             updateLinks();
+        });
+        window.addEventListener('pagehide', () => {
+            saveTimers.forEach((timer) => window.clearTimeout(timer));
+            nodes.forEach((node, index) => {
+                const id = node.dataset.monitorId || `node-${index}`;
+                if (saveTimers.has(id)) {
+                    persistNode(id, node, node.querySelector('[data-monitor-note]'), true);
+                }
+            });
         });
         applyZoom();
         updateLinks();
@@ -2569,5 +2649,6 @@ Netice: <?= e((string) ($modemBotPreview['reason'] ?? 'not_found')); ?></pre>
     })();
     </script>
     <script src="<?= e(app_asset('script/portal.js')); ?>" defer></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

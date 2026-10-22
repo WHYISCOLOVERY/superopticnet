@@ -421,3 +421,12 @@ Sənəd: docs/stage5/03_LOCAL_LLM_2026-07-25.md.
 
 ### Canlı yoxlama (2026-07-25)
 Ollama bu maşında işləyir; `qwen2.5:3b-instruct` çəkildi. Real end-to-end: `app_ai_local_chat` ok=1 (Azərbaycanca cavab, kontekstlə analiz), `app_copilot_agent_handle_message` free-form sual -> kind=read_only_local_answer, provider=local. `.env` LOCAL_LLM_MODEL=qwen2.5:3b-instruct. Daha yaxşı analiz keyfiyyəti üçün 7b tövsiyə (`ollama pull qwen2.5:7b-instruct`, .env-də modeli dəyiş). Smoke-lar: ai-local 23/0, agent-intent 43/0, copilot ok.
+
+## UX / Superpilot / modem axtarisi duzelisleri (istifadecinin birbasa tapsirigi)
+
+- Superpilot widget-i yalniz billing-ui ve admin-users sehifelerinde idi; indi butun emekdas sehifelerinde (NOC, mesaj merkezi, CRM, RADIUS, portal ve s.) gorunur. Endpoint yolu SCRIPT_NAME-e gore hesablanir, JSON olmayan cavab/401 aydin gosterilir, Enter ile gonderilir.
+- Superpilot SN/MAC tokenlerini cumleden ayirib OLT axtarisina verir.
+- OLT canli axtarisi: sebebler qaytarilir (VLAN 550 yolu isharelenmeyib, SSH melumati yox, OLT erisilmez, OLT-de tapilmadi); NOC preview-da "not_found" evezine bu sebeb yazilir. SN uygunlasdirilmis (tire/boslug/registr) uygunlasma ile axtarilir.
+- Tek linkli menyu qruplari acilan menyu evezine birbasa link olur (iki klik -> bir klik).
+- Mesaj merkezinde sablon secende metn onizlemesi (ferdi ve qrup).
+- Yoxlama: php -l, message-center-ui-contract-smoke, subsequent-module-shell-smoke, billing-nav-layout-smoke kecdi; DB olmadigi ucun canli OLT/Superpilot testi aparilmayib.
