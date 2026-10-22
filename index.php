@@ -1429,7 +1429,7 @@ $toSearchKey = static function (string $value): string {
                 <a href="#tvnet"><?= e($sectionLabels['tv'][$lang] ?? $sectionLabels['tv']['az']); ?></a>
                 <a href="#news"><?= e($copy['nav'][5] ?? 'Xəbərlər'); ?></a>
                 <a href="#payments"><?= e($sectionLabels['payments'][$lang] ?? $sectionLabels['payments']['az']); ?></a>
-                <a href="#contact"><?= e($copy['nav'][4]); ?></a>
+                <a href="#contact"><?= e($copy['nav'][6]); ?></a>
             </nav>
             <div class="header-actions" data-mobile-actions>
                 <a class="header-link header-link-phone" href="<?= e($supportPhoneHref); ?>">
@@ -1489,7 +1489,6 @@ $toSearchKey = static function (string $value): string {
                             <input type="hidden" name="lang" value="<?= e($lang); ?>">
                             <input type="hidden" name="message" value="<?= e($salesHero[$lang]['default_message'] ?? $salesHero['az']['default_message']); ?>">
                             <div class="form-row honeypot-row" aria-hidden="true"><label for="website">Website</label><input id="website" type="text" name="website" tabindex="-1" autocomplete="off"></div>
-                            <p class="lead-form-hint"><?= e($publicCta[$lang]['form_hint'] ?? $publicCta['az']['form_hint']); ?></p>
                             <div class="form-row two-columns">
                                 <div><label for="area"><?= e($copy['lead']['area']); ?></label>
                                     <select id="area" name="area" required><option value=""><?= e($copy['lead']['area_default']); ?></option>
@@ -1762,7 +1761,7 @@ $toSearchKey = static function (string $value): string {
         <!-- CONTACT -->
         <section class="section" id="contact">
             <div class="container">
-                <div class="section-heading"><span class="eyebrow"><?= e($copy['nav'][4]); ?></span><h2><?= e($T['con_title']); ?></h2><p><?= e($T['con_text']); ?></p></div>
+                <div class="section-heading"><span class="eyebrow"><?= e($copy['nav'][6]); ?></span><h2><?= e($T['con_title']); ?></h2><p><?= e($T['con_text']); ?></p></div>
                 <div class="contact-grid">
                     <div class="contact-card"><div class="ic"><?= svgi("phone") ?></div><h3><?= e($T['c_phone']); ?></h3><a href="<?= e($supportPhoneHref); ?>"><?= e($supportPhoneDisplay); ?></a></div>
                     <div class="contact-card"><div class="ic"><?= svgi("mail") ?></div><h3><?= e($T['c_mail']); ?></h3><a href="mailto:info@superoptic.net">info@superoptic.net</a></div>
