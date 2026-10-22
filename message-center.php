@@ -815,7 +815,7 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
             <div>
                 <span class="portal-kicker">Mesaj merkezi</span>
                 <h1>Gundelik mesaj emeliyyatlari</h1>
-                <p>Musteriye WhatsApp, tetbiq, Telegram ve ya SMS ile mesaj gonderin. "Avtomatik secim" uygun kanali WhatsApp -> tetbiq -> Telegram -> SMS ardicilligi ile ozu tapir.</p>
+                <p>Musteriye mesaj gonderin. "Avtomatik secim" uygun kanali ozu tapir.</p>
             </div>
             <div class="portal-status-card">
                 <span>Novbe statusu</span>
@@ -824,12 +824,14 @@ $messageChannelRingGradient = $messageChannelRingStops !== []
             </div>
         </section>
 
+        <?php if ($messageView === 'overview'): ?>
         <section class="portal-grid portal-grid-4 portal-reveal">
             <article class="portal-metric-card"><span>Sablonlar</span><strong><?= e((string) $stats['templates']); ?></strong><small>Hazir mesaj metnleri</small></article>
             <article class="portal-metric-card"><span>Bu gun</span><strong><?= e((string) $stats['today']); ?></strong><small>Yaradilan mesajlar</small></article>
             <article class="portal-metric-card"><span>Novbede</span><strong><?= e((string) $stats['queued']); ?></strong><small>Gonderilmesini gozleyen</small></article>
             <article class="portal-metric-card"><span>Sinaq</span><strong><?= e((string) $stats['test']); ?></strong><small>Real gonderilmeyen yoxlamalar</small></article>
         </section>
+        <?php endif; ?>
 
         <?php
         $messageHref = static fn (string $view): string => 'message-center.php?view=' . rawurlencode($view) . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : '');
