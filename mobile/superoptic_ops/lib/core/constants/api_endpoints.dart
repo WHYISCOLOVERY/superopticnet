@@ -37,6 +37,7 @@ class ApiEndpoints {
   // Manager Operations
   static const String managerDashboard = '/manager/dashboard.php';
   static const String managerFleetLive = '/manager/fleet-live.php';
+  static const String managerRouteHistory = '/manager/route-history.php';
   static const String managerAssignTask = '/manager/assign-task.php';
   static const String managerCreateTask = '/manager/create-task.php';
   static const String managerTaskBoard = '/manager/task-board.php';
