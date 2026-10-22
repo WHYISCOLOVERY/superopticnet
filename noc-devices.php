@@ -1227,6 +1227,7 @@ if ($needsDeviceRows) {
             </div>
         <?php endif; ?>
 
+        <?php if ($activeNocView !== 'ont-search'): ?>
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">NOC native panel</span>
@@ -1242,6 +1243,7 @@ if ($needsDeviceRows) {
                 <small><?= e((string) $bridge['message']); ?></small>
             </div>
         </section>
+        <?php endif; ?>
 
         <?php
         $nocLink = static fn (string $key, string $label, string $href): array => ['key'=>$key,'label'=>$label,'href'=>$href];
@@ -1258,13 +1260,14 @@ if ($needsDeviceRows) {
         require __DIR__ . '/views/_module-group-nav.php';
         ?>
 
-        <?php if (!$managementPathReady): ?>
+        <?php if (!$managementPathReady && $activeNocView !== 'ont-search'): ?>
             <section class="portal-alert system-health-warning portal-reveal">
                 <i class="fa-solid fa-route"></i>
                 <span>Monitoring server VLAN 550 management yoluna qosulu kimi isaretlenmeyib. Internal OLT/switch/router offline alarmlari ferdi bilet yaratmir; yalniz management path problemi kimi qruplasdirilir.</span>
             </section>
         <?php endif; ?>
 
+        <?php if ($activeNocView !== 'ont-search'): ?>
         <section class="mgs-stat-grid portal-reveal">
             <?php billing_render_stat_card('Cihaz profili', (string) ($summary['device_profiles'] ?? count($devices)), 'auto-learning rows', 'fa-network-wired', 'blue'); ?>
             <?php billing_render_stat_card('Reachable', (string) ($summary['devices_reachable'] ?? 0), 'son probe', 'fa-circle-check', 'green'); ?>
@@ -1278,6 +1281,7 @@ if ($needsDeviceRows) {
             <?php billing_render_stat_card('Backup versiya', (string) ($summary['device_backup_versions'] ?? 0), 'hash dedup', 'fa-box-archive', 'blue'); ?>
             <?php billing_render_stat_card('Alarm dedup', (string) ($summary['dedup_keys'] ?? 0), 'tekrar mesaj blok', 'fa-clone', 'green'); ?>
         </section>
+        <?php endif; ?>
 
         <div class="noc-ajax-status" data-noc-status aria-live="polite"></div>
         <div data-noc-content>
@@ -1786,7 +1790,10 @@ if ($needsDeviceRows) {
         <section id="ont-search" class="portal-card portal-reveal">
             <div class="portal-card-head">
                 <h2>ONT/SN/MAC native axtarisi</h2>
-                <small>Stored customer snapshot uzerinden SN, MAC, subscriber code, PPPoE/IPoE username, OLT/PON/ONT ve optik sahelere gore axtaris. VLAN 550 passiv olsa da saxlanmis profil gorunur.</small>
+                <small>SN, MAC, abune kodu ve ya istifadeci adı yazın.</small>
+            </div>
+            <div class="portal-badge-list" style="margin-bottom:10px">
+                <span><?= $managementPathReady ? 'VLAN 550 aktiv: OLT-e canli sorgu var' : 'VLAN 550 passiv: yalniz saxlanmis melumat'; ?></span>
             </div>
             <form method="get" class="portal-stacked-form">
                 <input type="hidden" name="view" value="ont-search">
@@ -1815,8 +1822,8 @@ if ($needsDeviceRows) {
             <?php if (is_array($modemBotPreview)): ?>
                 <article class="modem-bot-preview" data-modem-bot-preview>
                     <div>
-                        <h3>Modem bot cavab preview</h3>
-                        <small>Telegram modem botu bu sorgu ucun eyni cavabi gonderecek. Live OLT query varsa birinci onu yoxlayir, alinmasa stored snapshot-a dusur.</small>
+                        <h3>OLT-den canli netice</h3>
+                        <small>Sorgu OLT-lere canli gonderilir; tapilmasa saxlanmis melumata baxilir.</small>
                     </div>
                     <?php if (!empty($modemBotPreview['ok'])): ?>
                         <pre><?= e((string) ($modemBotPreview['text'] ?? '')); ?></pre>
@@ -1830,7 +1837,7 @@ Netice: <?= e((string) ($modemBotPreview['text'] ?? ($modemBotPreview['reason'] 
             <?php if ($ontQuery === ''): ?>
                 <?php billing_render_empty_state('ONT axtarisi hazirdir', 'SN, MAC, username ve ya muqavile kodu yazin. Netice kartinda optik, Wi-Fi, kabel ve RADIUS kecidleri gorunecek.', 'fa-magnifying-glass'); ?>
             <?php elseif ($ontResults === []): ?>
-                <?php billing_render_empty_state('ONT tapilmadi', 'Axtaris kriteriyasina uygun saxlanmis ONT snapshot yoxdur. Live probe ucun VLAN 550 ve OLT path aktiv olmalidir.', 'fa-circle-question'); ?>
+                <?php billing_render_empty_state('ONT tapilmadi', (string) (is_array($modemBotPreview) && !empty($modemBotPreview['text']) && empty($modemBotPreview['ok']) ? $modemBotPreview['text'] : 'Bazada ve OLT-lerde bu sorgu tapilmadi.'), 'fa-circle-question'); ?>
             <?php else: ?>
                 <div class="portal-badge-list" style="margin-bottom:12px">
                     <span><?= e((string) count($ontResults)); ?> netice</span>
