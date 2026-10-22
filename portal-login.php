@@ -207,34 +207,43 @@ $texts = [
 ];
 
 $texts['az'] = [
-    'title' => 'Musteri portali',
-    'heading' => 'Super Optik musteri portalina daxil olun',
-    'text' => 'Abonent kodu ve sifre ile odenis, paket, muraciet ve profil melumatlarinizi gore bilersiniz.',
-    'benefits' => ['Odenis ve paket gorunusu', 'Muraciet ve mesaj tarixcesi', 'Profil ve sifre yenilemesi'],
-    'roles' => ['Musteri', 'Emekdas'],
+    'title' => 'Müştəri portalı',
+    'heading' => 'Super Optik müştəri portalına daxil olun',
+    'text' => 'Abonent kodu və şifrə ilə ödəniş, paket, müraciət və profil məlumatlarınızı görə bilərsiniz.',
+    'benefits' => ['Ödəniş və paket görünüşü', 'Müraciət və mesaj tarixçəsi', 'Profil və şifrə yenilənməsi'],
+    'roles' => ['Müştəri', 'Əməkdaş'],
     'customer_label' => 'Abonent kodu',
-    'customer_placeholder' => 'Meselen: SO-100245',
-    'employee_label' => 'Istifadeci adi',
-    'employee_placeholder' => 'Meselen: support.agent',
-    'password' => 'Sifre',
-    'password_placeholder' => 'Sifrenizi daxil edin',
+    'customer_placeholder' => 'Məsələn: SO-100245',
+    'employee_label' => 'İstifadəçi adı',
+    'employee_placeholder' => 'Məsələn: support.agent',
+    'password' => 'Şifrə',
+    'password_placeholder' => 'Şifrənizi daxil edin',
     'submit' => 'Daxil ol',
-    'back' => 'Sayta qayit',
-    'meta' => 'Girisden sonra sexsi kabinetiniz acilacaq.',
-    'customer_hint' => 'Abonent kodu ile sexsi panele daxil olub odenis ve muracietleri gore bilersiniz.',
-    'employee_hint' => 'Daxili emekdas girisi. Bu sehife yalniz icazeli sebekeden istifade edilmelidir.',
+    'back' => 'Sayta qayıt',
+    'meta' => 'Girişdən sonra şəxsi kabinetiniz açılacaq.',
+    'customer_hint' => 'Abonent kodu ilə şəxsi panelə daxil olub ödəniş və müraciətlərinizi görə bilərsiniz.',
+    'employee_hint' => 'Daxili əməkdaş girişi. Bu səhifə yalnız icazəli şəbəkədən istifadə edilməlidir.',
+    'show' => 'Göstər',
+    'hide' => 'Gizlə',
+    'recovery' => 'Şifrəni unutmusunuz? WhatsApp kodu ilə yeniləyin',
+    'sso' => 'MyGov ID ilə daxil ol',
+    'sso_note' => 'Aktiv SSO konfiqurasiyası',
+    'or' => 'və ya',
 ];
+foreach (['en' => ['Show', 'Hide', 'Forgot your password? Reset it with a WhatsApp code', 'Sign in with MyGov ID', 'Active SSO configuration', 'or'], 'ru' => ['Показать', 'Скрыть', 'Забыли пароль? Сбросьте его по коду в WhatsApp', 'Войти через MyGov ID', 'SSO настроен', 'или']] as $l => $x) {
+    $texts[$l] += ['show' => $x[0], 'hide' => $x[1], 'recovery' => $x[2], 'sso' => $x[3], 'sso_note' => $x[4], 'or' => $x[5]];
+}
 
 $copy = $texts[$lang] ?? $texts['az'];
-if ($lang === 'ru') {
-    $copy = $texts['az'];
-}
 if ($staffLoginEndpoint) {
-    $copy['title'] = 'Emekdas girisi';
-    $copy['heading'] = 'Super Optik emekdas paneline daxil olun';
-    $copy['text'] = 'Bu sehife operator, texnik, NOC, anbar ve admin emekdaslarinin daxili sisteme girisi ucundur.';
-    $copy['benefits'] = ['Billing ve musteri 360 idareetmesi', 'Ticket, anbar ve KPI emeliyyatlari', 'NOC, OLT/ONT ve RADIUS kecidleri'];
-    $copy['meta'] = 'Girisden sonra rolunuza uygun daxili idareetme paneli acilacaq.';
+    $staffCopy = [
+        'az' => ['Əməkdaş girişi', 'Super Optik əməkdaş panelinə daxil olun', 'Bu səhifə operator, texnik, NOC, anbar və admin əməkdaşlarının daxili sistemə girişi üçündür.', ['Billing və müştəri 360 idarəetməsi', 'Ticket, anbar və KPI əməliyyatları', 'NOC, OLT/ONT və RADIUS keçidləri'], 'Girişdən sonra rolunuza uyğun daxili idarəetmə paneli açılacaq.'],
+        'en' => ['Staff sign-in', 'Sign in to the Super Optik staff panel', 'For operators, technicians, NOC, warehouse and admin staff to enter the internal system.', ['Billing and customer 360 management', 'Ticket, inventory and KPI operations', 'NOC, OLT/ONT and RADIUS shortcuts'], 'After sign-in the internal panel for your role opens.'],
+        'ru' => ['Вход для сотрудников', 'Войдите в панель сотрудников Super Optik', 'Для операторов, техников, NOC, склада и администраторов внутренней системы.', ['Биллинг и управление клиентом 360', 'Тикеты, склад и KPI', 'Переходы NOC, OLT/ONT и RADIUS'], 'После входа откроется панель по вашей роли.'],
+    ][$lang] ?? null;
+    if ($staffCopy !== null) {
+        [$copy['title'], $copy['heading'], $copy['text'], $copy['benefits'], $copy['meta']] = $staffCopy;
+    }
 }
 $mygovConfig = app_sso_provider_config('mygov');
 $mygovReady = app_sso_provider_ready('mygov');
@@ -272,26 +281,21 @@ $flashMap = [
     ],
 ];
 
-$flashMap['az'] = [
-    'portal_login_failed' => ['type' => 'error', 'message' => 'Giris melumatlari tesdiqlenmedi. Zehmet olmasa yeniden yoxlayin.'],
-    'portal_rate_limited' => ['type' => 'error', 'message' => 'Cox sayda ugursuz cehd oldu. 5 deqiqe sonra yeniden yoxlayin.'],
-    'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu. Sehifeni yenileyib yeniden cehd edin.'],
-    'captcha_failed' => ['type' => 'error', 'message' => 'Men robot deyilem yoxlamasi tamamlanmadi. Yeniden cehd edin.'],
-    'customer_password_reset_success' => ['type' => 'success', 'message' => 'Sifreniz yenilendi. Yeni sifrenizle daxil ola bilersiniz.'],
-    'auth_required' => ['type' => 'error', 'message' => 'Davam etmek ucun portala daxil olun.'],
-    'logged_out' => ['type' => 'success', 'message' => 'Portal sessiyasi baglandi.'],
-    'mygov_not_configured' => ['type' => 'error', 'message' => 'MyGov ID girisi hazirliq rejimindedir. API melumatlari qosulmadan aktiv edilmeyecek.'],
-    'mygov_state_invalid' => ['type' => 'error', 'message' => 'MyGov sessiyasi etibarsizdir ve ya vaxti bitib. Yeniden cehd edin.'],
-    'mygov_identity_not_linked' => ['type' => 'error', 'message' => 'Bu MyGov ID ile bagli portal hesabi tapilmadi. Admin identity mapping yaratmalidir.'],
-    'mygov_callback_pending' => ['type' => 'error', 'message' => 'MyGov callback modulu hazirdir, amma real token/userinfo adapteri hele qosulmayib.'],
-    'mygov_failed' => ['type' => 'error', 'message' => 'MyGov giris state-i yaradilmadi. DB ve konfiqurasiyani yoxlayin.'],
+$flashMap['az'] += [
+    'captcha_failed' => ['type' => 'error', 'message' => '“Mən robot deyiləm” yoxlaması tamamlanmadı. Yenidən cəhd edin.'],
+    'customer_password_reset_success' => ['type' => 'success', 'message' => 'Şifrəniz yeniləndi. Yeni şifrənizlə daxil ola bilərsiniz.'],
 ];
+foreach (['en', 'ru'] as $fl) {
+    $flashMap[$fl] += ['captcha_failed' => $flashMap['az']['captcha_failed'], 'customer_password_reset_success' => $flashMap['az']['customer_password_reset_success']];
+}
+foreach ($flashMap['az'] as $fk => $fv) {
+    foreach (['en', 'ru'] as $fl) {
+        $flashMap[$fl][$fk] ??= $fv;
+    }
+}
 
 if (isset($flashMap[$lang][$status])) {
     $flash = $flashMap[$lang][$status];
-}
-if ($lang === 'ru' && isset($flashMap['az'][$status])) {
-    $flash = $flashMap['az'][$status];
 }
 $humanChallenge = app_portal_human_challenge($humanVerificationScope);
 ?>
@@ -300,7 +304,10 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Super Optik Portal Login</title>
+    <title><?= e($copy['title']); ?> - Super Optik</title>
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="theme-color" content="#05070e">
+    <link rel="shortcut icon" href="images/favicon.png">
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
 </head>
@@ -317,7 +324,7 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
             <p><?= e($copy['text']); ?></p>
 
             <div class="portal-benefits">
-                <div><i class="fa-solid fa-credit-card"></i><span><?= e($copy['benefits'][0]); ?></span></div>
+                <div><i class="fa-solid fa-credit-card" aria-hidden="true"></i><span><?= e($copy['benefits'][0]); ?></span></div>
                 <div><i class="fa-solid fa-headset"></i><span><?= e($copy['benefits'][1]); ?></span></div>
                 <div><i class="fa-solid fa-sitemap"></i><span><?= e($copy['benefits'][2]); ?></span></div>
             </div>
@@ -355,6 +362,9 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
                         name="login"
                         placeholder="<?= e($selectedRole === 'employee' ? $copy['employee_placeholder'] : $copy['customer_placeholder']); ?>"
                         required
+                        autocomplete="username"
+                        autocapitalize="off"
+                        spellcheck="false"
                         data-role-login-input
                         <?php if ($showRoleSwitch): ?>
                             data-customer-label="<?= e($copy['customer_label']); ?>"
@@ -367,7 +377,10 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
 
                 <div class="portal-form-row">
                     <label for="portalPassword"><?= e($copy['password']); ?></label>
-                    <input id="portalPassword" type="password" name="password" placeholder="<?= e($copy['password_placeholder']); ?>" required>
+                    <div class="portal-password-wrap">
+                        <input id="portalPassword" type="password" name="password" autocomplete="current-password" placeholder="<?= e($copy['password_placeholder']); ?>" required>
+                        <button type="button" class="portal-password-toggle" data-password-toggle data-show="<?= e($copy['show']); ?>" data-hide="<?= e($copy['hide']); ?>" aria-controls="portalPassword"><?= e($copy['show']); ?></button>
+                    </div>
                 </div>
 
                 <?php app_portal_render_human_challenge($humanChallenge); ?>
@@ -377,12 +390,12 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
 
             <?php if (!$staffLoginEndpoint): ?>
                 <a class="portal-password-recovery-link" href="customer-password-recovery.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
-                    Şifrəni unutmusunuz? WhatsApp kodu ilə yeniləyin
+                    <?= e($copy['recovery']); ?>
                 </a>
             <?php endif; ?>
 
             <?php if ($mygovReady): ?>
-                <div class="portal-sso-divider"><span>ve ya</span></div>
+                <div class="portal-sso-divider"><span><?= e($copy['or']); ?></span></div>
                 <a
                     class="portal-sso-btn is-ready"
                     href="mygov-auth.php?role=<?= e($selectedRole); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"
@@ -391,8 +404,8 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
                     data-lang="<?= e($lang); ?>"
                 >
                     <i class="fa-solid fa-id-card"></i>
-                    <span>MyGov ID ile daxil ol</span>
-                    <small>Aktiv SSO konfiqurasiyasi</small>
+                    <span><?= e($copy['sso']); ?></span>
+                    <small><?= e($copy['sso_note']); ?></small>
                 </a>
             <?php endif; ?>
 
@@ -404,8 +417,20 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script>
+    (function () {
+        var t = document.querySelector('[data-password-toggle]');
+        if (!t) { return; }
+        t.addEventListener('click', function () {
+            var i = document.getElementById('portalPassword');
+            var show = i.type === 'password';
+            i.type = show ? 'text' : 'password';
+            t.textContent = show ? t.getAttribute('data-hide') : t.getAttribute('data-show');
+        });
+    })();
+    </script>
     <?php if (($humanChallenge['mode'] ?? '') === 'google'): ?>
-        <script src="https://www.google.com/recaptcha/api.js?hl=az" async defer></script>
+        <script src="https://www.google.com/recaptcha/api.js?hl=<?= e($lang); ?>" async defer></script>
     <?php endif; ?>
 </body>
 </html>

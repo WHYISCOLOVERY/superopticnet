@@ -4251,3 +4251,158 @@ body.admin-modal-open .billing-copilot-widget {
     outline: 3px solid rgba(11, 123, 135, 0.35);
     outline-offset: 2px;
 }
+
+/* ============ Giriş səhifələri: ictimai sayt ilə eyni tünd brend teması ============ */
+.portal-auth-body {
+    --portal-bg: #05070e;
+    --portal-surface: rgba(17, 22, 36, 0.88);
+    --portal-surface-strong: #0b1020;
+    --portal-surface-soft: rgba(255, 255, 255, 0.05);
+    --portal-line: rgba(255, 255, 255, 0.10);
+    --portal-line-strong: rgba(0, 229, 255, 0.30);
+    --portal-text: #f2f7ff;
+    --portal-muted: #9db0cf;
+    --portal-primary: #2ee6e0;
+    --portal-primary-dark: #7df3ee;
+    --portal-danger: #ff8d8d;
+    --portal-success: #5be3a0;
+    --portal-shadow: 0 22px 60px rgba(0, 0, 0, 0.45);
+    --portal-shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.35);
+    --mgs-focus-ring: 0 0 0 4px rgba(46, 230, 224, 0.22);
+    color-scheme: dark;
+    background:
+        radial-gradient(1100px 700px at 80% -6%, rgba(59, 130, 246, 0.20), transparent 60%),
+        radial-gradient(900px 620px at 4% 8%, rgba(139, 92, 246, 0.16), transparent 55%),
+        #05070e;
+}
+
+.portal-auth-body .portal-auth-copy {
+    background:
+        radial-gradient(circle at top right, rgba(46, 230, 224, 0.12), transparent 30%),
+        linear-gradient(180deg, rgba(17, 22, 36, 0.92), rgba(9, 12, 22, 0.96));
+}
+
+.portal-auth-body .portal-auth-copy::after {
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.25), transparent 70%);
+}
+
+.portal-auth-body .portal-auth-copy:hover,
+.portal-auth-body .portal-auth-card:hover {
+    transform: none;
+    box-shadow: var(--portal-shadow);
+}
+
+.portal-auth-body .portal-kicker {
+    background: rgba(46, 230, 224, 0.10);
+    border: 1px solid rgba(0, 229, 255, 0.30);
+}
+
+.portal-auth-body .portal-benefits div {
+    border-color: var(--portal-line);
+}
+
+.portal-auth-body .portal-form-row input {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--portal-text);
+    border-color: var(--portal-line);
+    min-height: 46px;
+}
+
+.portal-auth-body .portal-form-row input:focus {
+    border-color: var(--portal-primary);
+}
+
+.portal-auth-body .portal-role-btn {
+    color: var(--portal-muted);
+}
+
+.portal-auth-body .portal-role-btn.is-active,
+.portal-auth-body .portal-submit-btn {
+    background: linear-gradient(135deg, #00e5ff, #6d5cff);
+    color: #04121f;
+    box-shadow: 0 10px 30px rgba(46, 230, 224, 0.28);
+}
+
+.portal-auth-body .portal-submit-btn {
+    width: 100%;
+    min-height: 50px;
+    margin-top: 6px;
+    font-size: 1rem;
+}
+
+.portal-auth-body .portal-human-check {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.portal-auth-body .portal-human-check input[type="text"],
+.portal-auth-body .portal-human-check input:not([type="checkbox"]) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--portal-text);
+}
+
+.portal-auth-body .portal-password-recovery-link,
+.portal-auth-body .portal-auth-meta a {
+    color: var(--portal-primary);
+    font-weight: 700;
+}
+
+.portal-auth-body .portal-auth-meta {
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.portal-auth-body .portal-alert-error {
+    background: rgba(255, 141, 141, 0.10);
+    border-color: rgba(255, 141, 141, 0.35);
+    color: var(--portal-danger);
+}
+
+.portal-auth-body .portal-alert-success {
+    background: rgba(91, 227, 160, 0.10);
+    border-color: rgba(91, 227, 160, 0.35);
+    color: var(--portal-success);
+}
+
+.portal-password-wrap {
+    position: relative;
+}
+
+.portal-password-wrap input {
+    width: 100%;
+    padding-right: 84px;
+}
+
+.portal-password-toggle {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    min-height: 34px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--portal-primary);
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.portal-auth-body a:focus-visible,
+.portal-auth-body button:focus-visible,
+.portal-auth-body input:focus-visible {
+    outline: 2px solid var(--portal-primary);
+    outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+    .portal-auth-shell {
+        grid-template-columns: 1fr;
+        min-height: auto;
+        padding: 20px 0;
+    }
+    .portal-auth-copy {
+        padding: 26px;
+    }
+}
+
+.portal-auth-body .portal-demo-box { margin-bottom: 16px; }
