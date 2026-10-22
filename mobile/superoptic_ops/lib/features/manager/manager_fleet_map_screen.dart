@@ -88,7 +88,8 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
 
   void _fitFleet() {
     final points = _fleet
-        .map((member) => member['location'] as Map<String, dynamic>? ?? const {})
+        .map(
+            (member) => member['location'] as Map<String, dynamic>? ?? const {})
         .map((location) => LatLng(
               (location['latitude'] as num?)?.toDouble() ?? 0,
               (location['longitude'] as num?)?.toDouble() ?? 0,
@@ -616,8 +617,8 @@ class _ManagerFleetMapScreenState extends State<ManagerFleetMapScreen> {
                                     ? null
                                     : () =>
                                         _pickHistoryDay(_selectedTechnician!),
-                                icon: const Icon(Icons.calendar_month,
-                                    size: 18),
+                                icon:
+                                    const Icon(Icons.calendar_month, size: 18),
                                 label: const Text('Başqa gün'),
                               ),
                             ],
