@@ -66,7 +66,7 @@ function billing_reject_customer_write(array $user): void
 
     http_response_code(403);
     header('Content-Type: text/html; charset=UTF-8');
-    echo '<!DOCTYPE html><html lang="az"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>403</title></head><body><h1>İcazə yoxdur</h1><p>Bu əməliyyat üçün səlahiyyətiniz yoxdur. İcazəli əməliyyatları müştəri profilindən seçin.</p><a href="billing-customers.php">Müştəri axtarışına qayıt</a></body></html>';
+    echo '<!DOCTYPE html><html lang="az"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>403</title><link rel="stylesheet" href="' . e(app_asset('css/portal.css')) . '"></head><body><main class="portal-shell"><section class="portal-card"><h1>403</h1><p>Bu əməliyyat üçün səlahiyyətiniz yoxdur. İcazəli əməliyyatları müştəri profilindən seçin.</p><a class="portal-primary-btn portal-inline-link" href="billing-customers.php">Müştəri axtarışına qayıt</a></section></main></body></html>';
     exit;
 }
 
