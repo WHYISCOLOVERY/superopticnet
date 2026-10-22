@@ -6,81 +6,28 @@ require_once __DIR__ . '/audit-log-lib.php';
 
 function app_portal_human_verification_mode(): string
 {
-    return app_config('recaptcha_site_key') !== '' && app_environment_secret('RECAPTCHA_SECRET') !== ''
-        ? 'google'
-        : 'local';
-}
-
-function app_portal_local_challenge_minimum_seconds(): int
-{
-    return max(0, (int) app_setting('captcha_local_min_seconds', 0));
+    // Production portal logins always use Google reCAPTCHA.  Do not fall back
+    // to the former arithmetic challenge if configuration is incomplete.
+    return 'google';
 }
 
 function app_portal_human_challenge(string $scope): array
 {
-    app_session_boot();
     $scope = preg_replace('/[^a-z0-9_-]+/i', '-', strtolower(trim($scope))) ?: 'portal';
-    if (app_portal_human_verification_mode() === 'google') {
-        return [
-            'mode' => 'google',
-            'site_key' => app_config('recaptcha_site_key'),
-            'scope' => $scope,
-        ];
-    }
-
-    $left = random_int(2, 9);
-    $right = random_int(1, 9);
-    $nonce = bin2hex(random_bytes(16));
-    $_SESSION['portal_human_challenges'][$scope] = [
-        'nonce_hash' => hash('sha256', $nonce),
-        'answer' => $left + $right,
-        'issued_at' => time(),
-    ];
-
     return [
-        'mode' => 'local',
+        'mode' => 'google',
+        'site_key' => app_config('recaptcha_site_key'),
         'scope' => $scope,
-        'nonce' => $nonce,
-        'question' => $left . ' + ' . $right . ' = ?',
     ];
 }
 
 function app_portal_human_verify(string $scope, array $input): array
 {
-    app_session_boot();
-    $scope = preg_replace('/[^a-z0-9_-]+/i', '-', strtolower(trim($scope))) ?: 'portal';
     if (trim((string) ($input['website'] ?? '')) !== '') {
-        return ['ok' => false, 'reason' => 'honeypot_filled', 'mode' => app_portal_human_verification_mode()];
+        return ['ok' => false, 'reason' => 'honeypot_filled', 'mode' => 'google'];
     }
 
-    if (app_portal_human_verification_mode() === 'google') {
-        return app_portal_google_recaptcha_verify((string) ($input['g-recaptcha-response'] ?? ''));
-    }
-
-    $challenge = $_SESSION['portal_human_challenges'][$scope] ?? null;
-    unset($_SESSION['portal_human_challenges'][$scope]);
-    if (!is_array($challenge)) {
-        return ['ok' => false, 'reason' => 'local_challenge_missing', 'mode' => 'local'];
-    }
-
-    $nonce = trim((string) ($input['human_nonce'] ?? ''));
-    $answer = trim((string) ($input['human_answer'] ?? ''));
-    $confirmed = (string) ($input['human_confirm'] ?? '') === '1';
-    $age = time() - (int) ($challenge['issued_at'] ?? 0);
-    $minimumSeconds = app_portal_local_challenge_minimum_seconds();
-    $valid = $confirmed
-        && $nonce !== ''
-        && hash_equals((string) ($challenge['nonce_hash'] ?? ''), hash('sha256', $nonce))
-        && $age >= $minimumSeconds
-        && $age <= 300
-        && ctype_digit($answer)
-        && (int) $answer === (int) ($challenge['answer'] ?? -1);
-
-    return [
-        'ok' => $valid,
-        'reason' => $valid ? '' : 'local_challenge_failed',
-        'mode' => 'local',
-    ];
+    return app_portal_google_recaptcha_verify((string) ($input['g-recaptcha-response'] ?? ''));
 }
 
 function app_portal_render_human_challenge(array $challenge): void
@@ -88,19 +35,7 @@ function app_portal_render_human_challenge(array $challenge): void
     ?>
     <div class="portal-human-check">
         <input class="portal-honeypot" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
-        <?php if (($challenge['mode'] ?? '') === 'google'): ?>
-            <div class="g-recaptcha" data-sitekey="<?= e((string) ($challenge['site_key'] ?? '')); ?>"></div>
-        <?php else: ?>
-            <input type="hidden" name="human_nonce" value="<?= e((string) ($challenge['nonce'] ?? '')); ?>">
-            <div class="portal-local-challenge">
-                <label for="humanAnswer">Təhlükəsizlik hesablaması: <strong><?= e((string) ($challenge['question'] ?? '')); ?></strong></label>
-                <input id="humanAnswer" type="number" name="human_answer" inputmode="numeric" required>
-                <label class="portal-human-confirm">
-                    <input type="checkbox" name="human_confirm" value="1" required>
-                    <span>Mən robot deyiləm</span>
-                </label>
-            </div>
-        <?php endif; ?>
+        <div class="g-recaptcha" data-sitekey="<?= e((string) ($challenge['site_key'] ?? '')); ?>"></div>
     </div>
     <?php
 }
