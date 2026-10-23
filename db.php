@@ -6396,7 +6396,7 @@ function app_billing_apply_available_balances(int $limit = 10000): array
     if (!$db instanceof PDO) return $result;
     $limit = max(1, min(100000, $limit));
     $statement = $db->prepare(
-        'SELECT * FROM portal_accounts WHERE role="customer" AND CAST(REPLACE(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.balance")), "0"), " AZN", "") AS DECIMAL(12,2)) > 0 AND (is_active=0 OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "") = "" OR STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "%Y-%m-%d %H:%i:%s") <= NOW()) ORDER BY id ASC LIMIT ?'
+        'SELECT * FROM portal_accounts WHERE role="customer" AND CAST(REPLACE(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.balance")), "0"), " AZN", "") AS DECIMAL(12,2)) > 0 AND (is_active=0 OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "") = "" OR STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "%Y-%m-%d %H:%i:%s") <= NOW() OR CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.borrowed_days_pending")), "0") AS UNSIGNED) > 0) ORDER BY id ASC LIMIT ?'
     );
     $statement->bindValue(1, $limit, PDO::PARAM_INT);
     $statement->execute();
