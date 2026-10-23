@@ -95,7 +95,7 @@ foreach ($accounts as $account) {
         if (abs($freshBalance - $currentBalance) > 0.0001) throw new RuntimeException('balance_changed_concurrently');
         $freshBilling['balance'] = number_format($freshBalance + $restore, 2, '.', '') . ' AZN';
         $freshPayload['billing'] = $freshBilling;
-        $freshPayload['reconciliation_markers'][$marker] = true;
+        $freshPayload['reconciliation_markers'][$marker] = 'credit_restored_pending_settlement';
         $freshPayload['credit_reconciliation_history'][] = $candidate + ['at' => app_db_now(), 'reason' => 'Cutover debit without matching service extension'];
         $db->prepare('UPDATE portal_accounts SET payload_json=?,updated_at=NOW() WHERE id=?')
             ->execute([app_db_json_encode($freshPayload), (int) $account['id']]);
@@ -104,6 +104,12 @@ foreach ($accounts as $account) {
         $updated = app_db_account_by_id((int) $account['id']);
         $settlement = is_array($updated) ? app_billing_apply_available_balance($updated, $db) : ['ok' => false, 'reason' => 'reload_failed'];
         if (empty($settlement['ok'])) throw new RuntimeException('settlement_' . (string) ($settlement['reason'] ?? 'failed'));
+        $settledAccount = app_db_account_by_id((int) $account['id']);
+        if (!is_array($settledAccount)) throw new RuntimeException('settled_account_reload_failed');
+        $settledPayload = app_db_account_payload($settledAccount);
+        $settledPayload['reconciliation_markers'][$marker] = true;
+        $db->prepare('UPDATE portal_accounts SET payload_json=?,updated_at=NOW() WHERE id=?')
+            ->execute([app_db_json_encode($settledPayload), (int) $account['id']]);
         app_audit_record($db, [
             'module_key' => 'billing', 'operation_class' => 'reconciliation',
             'action_type' => 'cutover_credit_repaired', 'entity_type' => 'customer',
