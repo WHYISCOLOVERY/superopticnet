@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep the SuperOptic OLT management source route healthy
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=superoptic-olt-source-route.service
+
+[Install]
+WantedBy=timers.target
