@@ -5927,6 +5927,28 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             $customCheckRows = is_array($row['custom_check_rows'] ?? null) ? $row['custom_check_rows'] : [];
             $customReplyRows = is_array($row['custom_reply_rows'] ?? null) ? $row['custom_reply_rows'] : [];
 
+            // A customer may have been provisioned before the portal migration.
+            // Retain the already-working RADIUS password as a last fallback rather
+            // than turning a live PPPoE account into Reject during a later edit.
+            $previousCheckStatement = $db->prepare('SELECT attribute, op, value FROM radcheck WHERE username = :username');
+            $previousCheckStatement->execute(['username' => $username]);
+            $previousCheckRows = $previousCheckStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if ($password === '' && $serviceType === 'pppoe') {
+                foreach ($previousCheckRows as $previousCheck) {
+                    if ((string) ($previousCheck['attribute'] ?? '') === 'Cleartext-Password'
+                        && trim((string) ($previousCheck['value'] ?? '')) !== '') {
+                        $password = (string) $previousCheck['value'];
+                        break;
+                    }
+                }
+            }
+            $previousReplyStatement = $db->prepare('SELECT attribute, op, value FROM radreply WHERE username = :username');
+            $previousReplyStatement->execute(['username' => $username]);
+            $previousReplyRows = $previousReplyStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $previousGroupStatement = $db->prepare('SELECT groupname, priority FROM radusergroup WHERE username = :username');
+            $previousGroupStatement->execute(['username' => $username]);
+            $previousGroupRows = $previousGroupStatement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
             foreach (['radcheck', 'radreply', 'radusergroup'] as $table) {
                 $statement = $db->prepare("DELETE FROM {$table} WHERE username = :username");
                 $statement->execute(['username' => $username]);
@@ -6021,6 +6043,29 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
                 $reply = $expired ? 'Xidmet muddeti bitib. Odenis etdikden sonra avtomatik aktivlesecek.' : 'Xidmet aktiv deyil.';
                 $replyStatement = $db->prepare('INSERT INTO radreply (username, attribute, op, value) VALUES (:username, "Reply-Message", "=", :value)');
                 $replyStatement->execute(['username' => $username, 'value' => $reply]);
+            }
+
+            // Keep legacy/vendor-specific policy rows that this portal does not
+            // own. Removing them caused existing QoS and NAS settings to vanish
+            // during an otherwise harmless profile, tariff, or balance update.
+            $managedCheckAttributes = ['Cleartext-Password', 'Simultaneous-Use', 'Expiration', 'Auth-Type'];
+            $managedReplyAttributes = ['Service-Type', 'Framed-Protocol', 'Framed-IP-Address', 'Framed-IP-Netmask', 'Reply-Message'];
+            $restoreCheck = $db->prepare('INSERT INTO radcheck (username, attribute, op, value) VALUES (:username, :attribute, :op, :value)');
+            foreach ($previousCheckRows as $previousCheck) {
+                if (in_array((string) ($previousCheck['attribute'] ?? ''), $managedCheckAttributes, true)) continue;
+                $restoreCheck->execute(['username' => $username, 'attribute' => (string) $previousCheck['attribute'], 'op' => (string) ($previousCheck['op'] ?? '='), 'value' => (string) ($previousCheck['value'] ?? '')]);
+            }
+            $restoreReply = $db->prepare('INSERT INTO radreply (username, attribute, op, value) VALUES (:username, :attribute, :op, :value)');
+            foreach ($previousReplyRows as $previousReply) {
+                if (in_array((string) ($previousReply['attribute'] ?? ''), $managedReplyAttributes, true)) continue;
+                $restoreReply->execute(['username' => $username, 'attribute' => (string) $previousReply['attribute'], 'op' => (string) ($previousReply['op'] ?? '='), 'value' => (string) ($previousReply['value'] ?? '')]);
+            }
+            $currentGroup = is_array($tariff) ? (string) ($tariff['radius_group'] ?? '') : '';
+            $restoreGroup = $db->prepare('INSERT INTO radusergroup (username, groupname, priority) VALUES (:username, :groupname, :priority)');
+            foreach ($previousGroupRows as $previousGroup) {
+                $groupName = (string) ($previousGroup['groupname'] ?? '');
+                if ($groupName === '' || $groupName === $currentGroup) continue;
+                $restoreGroup->execute(['username' => $username, 'groupname' => $groupName, 'priority' => max(1, (int) ($previousGroup['priority'] ?? 1))]);
             }
 
             $serviceStatement = $db->prepare(
