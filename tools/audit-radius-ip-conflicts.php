@@ -29,23 +29,22 @@ if (!$db instanceof PDO) {
 }
 
 $cutoff = date('Y-m-d H:i:s', time() - ($hours * 3600));
-$floor = $db->prepare(
-    'SELECT radacctid FROM radacct FORCE INDEX (idx_radacct_start_user)
-      WHERE acctstarttime >= ? ORDER BY acctstarttime ASC LIMIT 1'
-);
-$floor->execute([$cutoff]);
-$minimumRadacctId = (int) ($floor->fetchColumn() ?: 0);
+$maximumRadacctId = (int) ($db->query('SELECT MAX(radacctid) FROM radacct')->fetchColumn() ?: 0);
+// New accounting rows are append-only in production. Limit the operational
+// audit to the latest 500k inserts and still enforce the requested time window.
+// This avoids imported historical rows whose acctstarttime was later rewritten.
+$minimumRadacctId = max(0, $maximumRadacctId - 500000);
 
 $errorRows = [];
 if ($minimumRadacctId > 0) {
     $errors = $db->prepare(
         'SELECT username, COUNT(*) AS nas_errors, MAX(acctstarttime) AS last_error
            FROM radacct
-          WHERE radacctid >= ? AND acctterminatecause = "NAS-Error"
+          WHERE radacctid >= ? AND acctstarttime >= ? AND acctterminatecause = "NAS-Error"
           GROUP BY username HAVING COUNT(*) >= ?
           ORDER BY last_error DESC LIMIT 100'
     );
-    $errors->execute([$minimumRadacctId, $minimumErrors]);
+    $errors->execute([$minimumRadacctId, $cutoff, $minimumErrors]);
     $errorRows = $errors->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
