@@ -39,6 +39,29 @@ foreach ($accounts as $account) {
     $payload = app_db_account_payload($account);
     $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
     if (($payload['reconciliation_markers'][$marker] ?? false) === true) {
+        if ($apply) {
+            $auditExists = $db->prepare('SELECT COUNT(*) FROM mgs_operation_actions WHERE action_type="cutover_credit_repaired" AND entity_type="customer" AND entity_id=?');
+            $auditExists->execute([(string) $account['id']]);
+            if ((int) $auditExists->fetchColumn() === 0) {
+                $history = is_array($payload['credit_reconciliation_history'] ?? null) ? end($payload['credit_reconciliation_history']) : [];
+                $db->beginTransaction();
+                try {
+                    app_audit_record($db, [
+                        'module_key' => 'billing', 'operation_class' => 'reconciliation',
+                        'action_type' => 'cutover_credit_repaired', 'entity_type' => 'customer',
+                        'entity_id' => (string) $account['id'], 'status' => 'executed',
+                        'actor_name' => 'Cutover reconciliation',
+                        'summary' => 'Documented cutover credit restored and applied to service',
+                        'reason' => 'Payment credit was debited without a matching service extension',
+                        'payload' => is_array($history) ? $history : [], 'sensitivity' => 'high',
+                    ]);
+                    $db->commit();
+                } catch (Throwable $auditException) {
+                    if ($db->inTransaction()) $db->rollBack();
+                    $result['failed'][] = ['account_id' => (int) $account['id'], 'subscriber_code' => (string) $account['subscriber_code'], 'reason' => 'audit_backfill_' . $auditException->getMessage()];
+                }
+            }
+        }
         continue;
     }
     $required = app_billing_required_payment_amount($account, $payload, $billing, app_billing_account_tariff($db, $account, $billing));
@@ -110,6 +133,7 @@ foreach ($accounts as $account) {
         $settledPayload['reconciliation_markers'][$marker] = true;
         $db->prepare('UPDATE portal_accounts SET payload_json=?,updated_at=NOW() WHERE id=?')
             ->execute([app_db_json_encode($settledPayload), (int) $account['id']]);
+        $db->beginTransaction();
         app_audit_record($db, [
             'module_key' => 'billing', 'operation_class' => 'reconciliation',
             'action_type' => 'cutover_credit_repaired', 'entity_type' => 'customer',
@@ -119,6 +143,7 @@ foreach ($accounts as $account) {
             'reason' => 'Payment credit was debited without a matching service extension',
             'payload' => $candidate + ['settlement' => $settlement], 'sensitivity' => 'high',
         ]);
+        $db->commit();
         $result['repaired'][] = $candidate + ['settlement' => $settlement];
     } catch (Throwable $exception) {
         if ($db->inTransaction()) $db->rollBack();
