@@ -6318,7 +6318,10 @@ function app_billing_apply_available_balance(array $account, ?PDO $db = null): a
         $expiryTimestamp = $oldExpiresAt !== '' ? strtotime($oldExpiresAt) : false;
         // Stored credit must be charged only when a service is due.  Otherwise a
         // customer who prepaid ahead would lose a future month's credit early.
-        if ((int) ($current['is_active'] ?? 0) === 1 && ($expiryTimestamp === false || $expiryTimestamp > time())) {
+        $borrowedDaysPending = max(0, (int) ($billing['borrowed_days_pending'] ?? 0));
+        if ($borrowedDaysPending === 0
+            && (int) ($current['is_active'] ?? 0) === 1
+            && ($expiryTimestamp === false || $expiryTimestamp > time())) {
             $db->rollBack();
             return ['ok' => false, 'reason' => 'not_due', 'available' => $available, 'price' => $price];
         }
@@ -6329,6 +6332,13 @@ function app_billing_apply_available_balance(array $account, ?PDO $db = null): a
 
         $days = app_billing_account_default_days($current, $billing, $tariff);
         $expiresAt = app_billing_resolve_next_expires_at($days, app_billing_account_stable_due_day($current, $billing), $oldExpiresAt, time());
+        $borrowedDaysDeducted = 0;
+        if ($borrowedDaysPending > 0) {
+            $borrowedDeduction = app_billing_apply_borrowed_day_deduction($expiresAt, $oldExpiresAt, $borrowedDaysPending);
+            $expiresAt = (string) $borrowedDeduction['expires_at'];
+            $borrowedDaysDeducted = (int) $borrowedDeduction['deducted_days'];
+            $billing['borrowed_days_pending'] = (int) $borrowedDeduction['pending_days'];
+        }
         $remaining = max(0.0, $available - $price);
         $billing['balance'] = number_format($remaining, 2, '.', '') . ' AZN';
         $billing['status'] = 'Aktiv';
@@ -6349,6 +6359,7 @@ function app_billing_apply_available_balance(array $account, ?PDO $db = null): a
             'at' => app_db_now(), 'amount' => $price, 'balance_before' => $available,
             'balance_after' => $remaining, 'expires_at' => $expiresAt,
             'tariff' => (string) ($tariff['name'] ?? $billing['tariff'] ?? $current['plan'] ?? ''),
+            'borrowed_days_deducted' => $borrowedDaysDeducted,
         ]);
         $payload['balance_auto_charge_history'] = array_slice($history, 0, 50);
         $update = $db->prepare('UPDATE portal_accounts SET payload_json=?,status="Aktiv",is_active=1,updated_at=NOW() WHERE id=?');
@@ -6367,11 +6378,11 @@ function app_billing_apply_available_balance(array $account, ?PDO $db = null): a
                 'entity_type' => 'customer', 'entity_id' => (string) $accountId, 'status' => 'executed',
                 'actor_account_id' => null, 'actor_name' => 'Billing automation',
                 'summary' => 'Prepaid balance auto-applied to tariff',
-                'payload' => ['amount' => $price, 'balance_before' => $available, 'balance_after' => $remaining, 'expires_at' => $expiresAt],
+                'payload' => ['amount' => $price, 'balance_before' => $available, 'balance_after' => $remaining, 'expires_at' => $expiresAt, 'borrowed_days_deducted' => $borrowedDaysDeducted],
                 'sensitivity' => 'high',
             ]);
         } catch (Throwable) { }
-        return ['ok' => true, 'amount' => $price, 'balance_before' => $available, 'balance_after' => $remaining, 'expires_at' => $expiresAt];
+        return ['ok' => true, 'amount' => $price, 'balance_before' => $available, 'balance_after' => $remaining, 'expires_at' => $expiresAt, 'borrowed_days_deducted' => $borrowedDaysDeducted];
     } catch (Throwable $exception) {
         if ($db->inTransaction()) $db->rollBack();
         return ['ok' => false, 'reason' => 'balance_auto_charge_failed'];
@@ -6472,7 +6483,8 @@ function app_billing_apply_customer_payment(
     $expiryTimestamp = $oldExpiresAt !== '' ? strtotime($oldExpiresAt) : false;
     $serviceDue = (int) ($account['is_active'] ?? 0) !== 1
         || $expiryTimestamp === false
-        || $expiryTimestamp <= time();
+        || $expiryTimestamp <= time()
+        || (int) ($billing['borrowed_days_pending'] ?? 0) > 0;
     $fullPayment = $serviceDue && $creditedBalance + 0.0001 >= $requiredAmount;
     $remainingBalance = $fullPayment
         ? max(0.0, $creditedBalance - $requiredAmount)

@@ -5,7 +5,7 @@ require_once dirname(__DIR__, 4) . '/customer-operator-policy.php';
 require_once dirname(__DIR__, 4) . '/portal-security-lib.php';
 require_once dirname(__DIR__, 4) . '/audit-log-lib.php';
 $user = app_mobile_authenticate();
-if (!app_customer_operator_allowed($user)) app_mobile_json_response(null, 403, 'İcazə yoxdur.');
+if (!app_customer_pppoe_allowed($user)) app_mobile_json_response(null, 403, 'İcazə yoxdur.');
 $body = app_mobile_request_body();
 $id = (int) ($body['customer_id'] ?? $_GET['customer_id'] ?? 0);
 $row = app_db_account_by_id($id);

@@ -8,6 +8,23 @@ function app_customer_operator_allowed(array $actor): bool
         && (app_portal_is_admin($actor) || in_array($actor['employee_role'] ?? '', ['operator', 'support', 'night_operator'], true));
 }
 
+function app_customer_pppoe_allowed(array $actor): bool
+{
+    if (($actor['role'] ?? '') !== 'employee'
+        || (isset($actor['is_active']) && (int) $actor['is_active'] !== 1)) {
+        return false;
+    }
+    if (app_portal_is_admin($actor)) {
+        return true;
+    }
+
+    return in_array(
+        strtolower(trim((string) ($actor['employee_role'] ?? ''))),
+        ['operator', 'support', 'night_operator', 'technician', 'team_lead', 'noc', 'engineer'],
+        true
+    );
+}
+
 function app_customer_identity_change_allowed(array $before, array $after, array $actor): bool
 {
     if (app_portal_is_super_admin($actor)) return true;
@@ -19,10 +36,13 @@ function app_customer_identity_change_allowed(array $before, array $after, array
 
 function app_customer_operator_change(PDO $db, int $id, array $actor, array $input): array
 {
-    if (!app_customer_operator_allowed($actor)) return ['ok' => false, 'error' => 'İcazə yoxdur.'];
+    if (!app_customer_pppoe_allowed($actor)) return ['ok' => false, 'error' => 'İcazə yoxdur.'];
     $reason = trim((string) ($input['reason'] ?? ''));
     if ($reason === '') return ['ok' => false, 'error' => 'Əməliyyatın səbəbini yazın.'];
     $action = (string) ($input['action'] ?? '');
+    if ($action !== 'reset_pppoe_password' && !app_customer_operator_allowed($actor)) {
+        return ['ok' => false, 'error' => 'Bu rol yalnız PPPoE şifrəsini görə və yeniləyə bilər.'];
+    }
     $requestId = trim((string) ($input['request_id'] ?? ''));
     if (!preg_match('/^[a-zA-Z0-9_-]{16,80}$/', $requestId)) return ['ok' => false, 'error' => 'Sorğu identifikatoru etibarsızdır.'];
     if (!in_array($action, ['phone', 'cycle', 'debt', 'gift_days', 'borrow_days', 'package', 'reset_pppoe_password'], true)) return ['ok' => false, 'error' => 'Əməliyyat tanınmır.'];

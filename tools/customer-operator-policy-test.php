@@ -52,4 +52,8 @@ $payload=json_decode($db->query('SELECT payload_json FROM portal_accounts')->fet
 check($payload['billing']['tariff']==='Test 100' && $db->query('SELECT plan FROM portal_accounts')->fetchColumn()==='Test 100','package persisted and synced');
 check(!app_customer_identity_change_allowed(['full_name'=>'Original'],['full_name'=>'Changed'],['employee_role'=>'admin']),'admin identity change denied');
 check(app_customer_identity_change_allowed(['full_name'=>'Original'],['full_name'=>'Changed'],['employee_role'=>'super_admin']),'super admin identity change allowed');
+$actor=['id'=>4,'role'=>'employee','employee_role'=>'technician','is_active'=>1];
+check(app_customer_pppoe_allowed($actor),'technician pppoe access allowed');
+check(change(['action'=>'reset_pppoe_password','pppoe_password'=>'TechPass123'])['ok'],'technician can reset pppoe password');
+check(!change(['action'=>'phone','phone'=>'+994501111111'])['ok'],'technician cannot edit customer phone');
 echo "Customer operator policy: $count checks passed (isolated SQLite).\n";

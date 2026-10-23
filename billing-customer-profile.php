@@ -352,6 +352,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
 $basePayload = app_db_account_payload($account);
 $profile = is_array($basePayload['profile'] ?? null) ? $basePayload['profile'] : [];
 $billing = is_array($basePayload['billing'] ?? null) ? $basePayload['billing'] : [];
+$profilePppoePassword = trim((string) ($billing['pppoe_password'] ?? ($basePayload['internet_services'][0]['password'] ?? '')));
+try {
+    $profilePppoePassword = trim((string) (app_legacy_customer_secret_reveal($db, (int) $account['id'], 'pppoe_password') ?? $profilePppoePassword));
+} catch (Throwable) {
+}
+if ($profilePppoePassword !== '') {
+    $billing['pppoe_password'] = $profilePppoePassword;
+}
 
 $tariffs = $db instanceof PDO ? ($db->query('SELECT * FROM billing_tariffs WHERE status = "active" ORDER BY service_type, download_mbps')->fetchAll() ?: []) : [];
 $pools = $db instanceof PDO ? ($db->query('SELECT * FROM billing_ip_pools WHERE status = "active" ORDER BY service_type, pool_type, name')->fetchAll() ?: []) : [];
@@ -1231,7 +1239,7 @@ if (!array_key_exists($activeProfileTab, $profileTabs)) {
                 <article class="mgs-profile-card">
                     <h2>Kontekst emeliyyatlari</h2>
                     <div class="customer-context-actions">
-                        <?php if (app_customer_operator_allowed($user)): ?><a class="customer-context-action" href="billing-customer-service.php?id=<?= (int) $account['id']; ?>">Telefon, borc günü və panel şifrəsi</a><?php endif; ?>
+                        <?php if (app_customer_pppoe_allowed($user)): ?><a class="customer-context-action" href="billing-customer-service.php?id=<?= (int) $account['id']; ?>">PPPoE şifrəsi və icazəli əməliyyatlar</a><?php endif; ?>
                         <?php if ($canModifyCustomer): ?>
                         <a class="customer-context-action" href="billing-customer-edit.php?id=<?= rawurlencode((string) ($account['id'] ?? 0)); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-pen-to-square"></i> Duzelis et</a>
                         <a class="customer-context-action" href="billing-cash-payment.php?subscriber_code=<?= rawurlencode($subscriberCode); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>"><i class="fa-solid fa-cash-register"></i> Odenis al</a>

@@ -1509,8 +1509,9 @@ function app_portal_employee_module_keys(array $user): array
         'operator' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
         'night_operator' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
         'support' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
-        'technician' => ['inventory', 'network', 'whatsapp_monitor'],
-        'engineer' => ['inventory', 'network', 'whatsapp_monitor'],
+        'technician' => ['billing', 'inventory', 'network', 'whatsapp_monitor'],
+        'team_lead' => ['billing', 'crm', 'inventory', 'network', 'whatsapp_monitor', 'statistics'],
+        'engineer' => ['billing', 'inventory', 'network', 'whatsapp_monitor'],
         'noc' => ['crm', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
         'sales' => ['finance', 'billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
     ];
