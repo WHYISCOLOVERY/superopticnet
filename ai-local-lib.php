@@ -370,6 +370,9 @@ function app_ai_agent_chat(string $prompt, array $options = []): array
         // Local configured but unreachable: do not silently call the cloud.
         return $result;
     }
+    if (function_exists('app_ai_bedrock_chat') && !empty(app_ai_bedrock_config()['enabled'])) {
+        return app_ai_bedrock_chat($prompt);
+    }
     if (function_exists('app_ai_deepseek_chat')) {
         return app_ai_deepseek_chat($prompt);
     }

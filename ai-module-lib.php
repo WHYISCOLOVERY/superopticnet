@@ -321,7 +321,9 @@ function app_ai_build_context(PDO $db, array $user, string $section, array $quer
         $data = ['page' => app_ai_action_page($db, $query, in_array($statuses, $allowed, true) ? [$statuses] : $allowed)];
     } elseif ($section === 'model-status') {
         $bridge = app_mgs_bridge_status();
-        $externalModel = app_ai_deepseek_public_status();
+        $externalModel = !empty(app_ai_bedrock_config()['enabled'])
+            ? app_ai_bedrock_public_status()
+            : app_ai_deepseek_public_status();
         $data = [
             'engine' => 'Superpilot evidence and rule engine',
             'customer_analyzer' => function_exists('app_copilot_customer_analysis'),
