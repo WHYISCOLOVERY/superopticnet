@@ -54,6 +54,9 @@ check(!app_customer_identity_change_allowed(['full_name'=>'Original'],['full_nam
 check(app_customer_identity_change_allowed(['full_name'=>'Original'],['full_name'=>'Changed'],['employee_role'=>'super_admin']),'super admin identity change allowed');
 $actor=['id'=>4,'role'=>'employee','employee_role'=>'technician','is_active'=>1];
 check(app_customer_pppoe_allowed($actor),'technician pppoe access allowed');
+$payload=json_decode($db->query('SELECT payload_json FROM portal_accounts')->fetchColumn(),true);
+$payload['billing']['pppoe_username']='smoke-pppoe';
+$db->prepare('UPDATE portal_accounts SET payload_json=? WHERE id=1')->execute([json_encode($payload)]);
 check(change(['action'=>'reset_pppoe_password','pppoe_password'=>'TechPass123'])['ok'],'technician can reset pppoe password');
 check(!change(['action'=>'phone','phone'=>'+994501111111'])['ok'],'technician cannot edit customer phone');
 echo "Customer operator policy: $count checks passed (isolated SQLite).\n";
