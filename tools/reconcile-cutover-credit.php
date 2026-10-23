@@ -20,9 +20,13 @@ if (!$db instanceof PDO) {
 
 $accounts = $db->query(
     'SELECT * FROM portal_accounts
-      WHERE role="customer"
-        AND CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.borrowed_days_pending")), "0") AS UNSIGNED) > 0
-        AND STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "%Y-%m-%d %H:%i:%s") <= DATE_ADD(NOW(), INTERVAL 4 DAY)
+      WHERE role="customer" AND (
+        payload_json LIKE "%\\\"cutover-credit-v1-20261023\\\":true%"
+        OR (
+          CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.borrowed_days_pending")), "0") AS UNSIGNED) > 0
+          AND STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, "$.billing.expires_at")), "%Y-%m-%d %H:%i:%s") <= DATE_ADD(NOW(), INTERVAL 4 DAY)
+        )
+      )
       ORDER BY id'
 )->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
