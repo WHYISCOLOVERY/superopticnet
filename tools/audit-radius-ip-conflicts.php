@@ -31,9 +31,9 @@ if (!$db instanceof PDO) {
 $cutoff = date('Y-m-d H:i:s', time() - ($hours * 3600));
 $maximumRadacctId = (int) ($db->query('SELECT MAX(radacctid) FROM radacct')->fetchColumn() ?: 0);
 // New accounting rows are append-only in production. Limit the operational
-// audit to the latest 500k inserts and still enforce the requested time window.
+// audit to the latest 200k inserts and still enforce the requested time window.
 // This avoids imported historical rows whose acctstarttime was later rewritten.
-$minimumRadacctId = max(0, $maximumRadacctId - 500000);
+$minimumRadacctId = max(0, $maximumRadacctId - 200000);
 
 $errorRows = [];
 if ($minimumRadacctId > 0) {
