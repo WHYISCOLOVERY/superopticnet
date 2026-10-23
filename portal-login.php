@@ -303,8 +303,19 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
     <title>Super Optik Portal Login</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/portal-auth-brand.css')); ?>">
 </head>
 <body class="portal-auth-body">
+    <header class="portal-auth-topbar" aria-label="Portal naviqasiyasi">
+        <a href="<?= e($publicSiteUrl); ?>" class="portal-auth-topbar-brand">
+            <img src="images/favicon.png" alt="">
+            <span>Super Optik</span><b>Portal</b>
+        </a>
+        <a class="portal-auth-topbar-site" href="<?= e($publicSiteUrl); ?>">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+            <?= e($copy['back']); ?>
+        </a>
+    </header>
     <main class="portal-auth-shell">
         <section class="portal-auth-copy portal-reveal">
             <a href="<?= e($publicSiteUrl); ?>" class="portal-brand">
@@ -355,6 +366,7 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
                         name="login"
                         placeholder="<?= e($selectedRole === 'employee' ? $copy['employee_placeholder'] : $copy['customer_placeholder']); ?>"
                         required
+                        autocomplete="username"
                         data-role-login-input
                         <?php if ($showRoleSwitch): ?>
                             data-customer-label="<?= e($copy['customer_label']); ?>"
@@ -367,7 +379,7 @@ $humanChallenge = app_portal_human_challenge($humanVerificationScope);
 
                 <div class="portal-form-row">
                     <label for="portalPassword"><?= e($copy['password']); ?></label>
-                    <input id="portalPassword" type="password" name="password" placeholder="<?= e($copy['password_placeholder']); ?>" required>
+                    <input id="portalPassword" type="password" name="password" placeholder="<?= e($copy['password_placeholder']); ?>" required autocomplete="current-password">
                 </div>
 
                 <?php app_portal_render_human_challenge($humanChallenge); ?>
