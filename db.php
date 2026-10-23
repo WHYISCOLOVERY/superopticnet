@@ -6039,7 +6039,7 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
                     $replyRows[] = ['Cisco-AVPair', '+=', 'ip:sub-qos-policy-in=' . $legacyQosProfile];
                     $replyRows[] = ['Cisco-AVPair', '+=', 'ip:sub-qos-policy-out=' . $legacyQosProfile];
                     $replyRows[] = ['Session-Timeout', ':=', '172800'];
-                } elseif ($poolName !== '') {
+                } elseif ($poolName !== '' && $assignedIp === '' && $staticIp === '') {
                     $replyRows[] = ['Framed-Pool', '=', $poolName];
                     $replyRows[] = ['Cisco-AVPair', '+=', 'ip:addr-pool=' . $poolName];
                 }
@@ -6061,6 +6061,15 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
                         (string) ($row['value'] ?? ''),
                     ];
                 }, $customReplyRows));
+
+                $replyRows = array_values(array_reduce(
+                    $replyRows,
+                    static function (array $unique, array $replyRow): array {
+                        $unique[implode("\0", $replyRow)] = $replyRow;
+                        return $unique;
+                    },
+                    []
+                ));
 
                 $replyStatement = $db->prepare('INSERT INTO radreply (username, attribute, op, value) VALUES (:username, :attribute, :op, :value)');
                 foreach ($replyRows as $replyRow) {
@@ -6091,7 +6100,10 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             // own. Removing them caused existing QoS and NAS settings to vanish
             // during an otherwise harmless profile, tariff, or balance update.
             $managedCheckAttributes = ['Cleartext-Password', 'Simultaneous-Use', 'Expiration', 'Auth-Type'];
-            $managedReplyAttributes = ['Service-Type', 'Framed-Protocol', 'Framed-IP-Address', 'Framed-IP-Netmask', 'Reply-Message'];
+            $managedReplyAttributes = [
+                'Service-Type', 'Framed-Protocol', 'Framed-IP-Address',
+                'Framed-IP-Netmask', 'Framed-Pool', 'Session-Timeout', 'Reply-Message',
+            ];
             $restoreCheck = $db->prepare('INSERT INTO radcheck (username, attribute, op, value) VALUES (:username, :attribute, :op, :value)');
             foreach ($previousCheckRows as $previousCheck) {
                 if (in_array((string) ($previousCheck['attribute'] ?? ''), $managedCheckAttributes, true)) continue;
@@ -6100,6 +6112,14 @@ function app_billing_sync_radius_account(array $account, ?string $cleartextPassw
             $restoreReply = $db->prepare('INSERT INTO radreply (username, attribute, op, value) VALUES (:username, :attribute, :op, :value)');
             foreach ($previousReplyRows as $previousReply) {
                 if (in_array((string) ($previousReply['attribute'] ?? ''), $managedReplyAttributes, true)) continue;
+                if ((string) ($previousReply['attribute'] ?? '') === 'Cisco-AVPair') {
+                    $value = strtolower(trim((string) ($previousReply['value'] ?? '')));
+                    if (str_starts_with($value, 'ip:addr-pool=')
+                        || str_starts_with($value, 'ip:sub-qos-policy-in=')
+                        || str_starts_with($value, 'ip:sub-qos-policy-out=')) {
+                        continue;
+                    }
+                }
                 $restoreReply->execute(['username' => $username, 'attribute' => (string) $previousReply['attribute'], 'op' => (string) ($previousReply['op'] ?? '='), 'value' => (string) ($previousReply['value'] ?? '')]);
             }
             $currentGroup = is_array($tariff) ? (string) ($tariff['radius_group'] ?? '') : '';
