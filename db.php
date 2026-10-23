@@ -6442,7 +6442,8 @@ function app_billing_apply_customer_payment(
     if ($fullPayment) {
         $billing['status'] = 'Aktiv';
         $billing['radius_status'] = 'Aktiv';
-        $billing['balance'] = '0 AZN';
+        // Service price is consumed once; any overpayment remains prepaid credit.
+        $billing['balance'] = number_format($remainingBalance, 2, '.', '') . ' AZN';
         $billing['expires_at'] = $newExpiresAt;
         $billing['days_left'] = $remainingDays;
         $billing['remaining_days_raw'] = app_billing_remaining_days_text($newExpiresAt);
