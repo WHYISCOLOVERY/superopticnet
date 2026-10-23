@@ -16,12 +16,12 @@
 - Routerdə bəzi sürətli yenidən qoşulma cəhdlərində əvvəlki virtual interfeys bağlanmamış eyni IP üçün `already in use` xəbərdarlığı yaranır. RADIUS bazasında son 20 dəqiqədə paralel sessiya görünmədiyi üçün bu, iki müştəriyə eyni IP verilməsindən çox, köhnə PPP virtual interfeysinin gec bağlanmasına uyğundur.
 - `Simultaneous-Use` hazırda tətbiq olunmur. Mövcud 167 mindən çox köhnə açıq accounting sətrinə əsaslanan qaydanı birbaşa aktivləşdirmək düzgün deyil; real NAS yoxlaması üçün Cisco SNMP community məlumatı RADIUS `nas` sətrində yoxdur.
 - NetFlow qəbul faylı mövcuddur, amma routerdə flow exporter/monitor qurulmayıb. Buna görə mənbə IP/port, təyinat IP/port və vaxt üzrə hüquqi NAT jurnalı hələ formalaşmır.
-- Server 10.99.99.12-dən OLT VLAN-a paket göndərir, lakin OLT-lər 10.99.99.0/24 şəbəkəsinə dönüş marşrutu vermir. Router özü 172.16.5.x OLT-ləri görür. HSGQ cihazlarının SSH giriş məlumatı vault-da olmadığı üçün serverdən real SN/MAC axtarışı hələ təsdiqlənməyib.
+- Routerdə əvvəlcədən olan `172.16.5.2/32 via 192.168.100.201` host marşrutu ilə serverin OLT mənbə ünvanı bərpa edildi. Canlı probe 17 cihazdan 16-sına çatdı; yalnız 172.16.5.26 cavab vermədi. Doqquz OLT və 172.16.5.41 switch-də SSH portu açıqdır. HSGQ SSH giriş məlumatı və işlək SNMP profili olmadığı üçün real SN/MAC inventarı hələ təsdiqlənməyib.
 
 ## Təhlükəsiz tamamlama ardıcıllığı
 
-1. OLT-lərdə `10.99.99.0/24 via 172.16.5.5` dönüş marşrutunu tətbiq etmək və HSGQ SSH məlumatını vault-a daxil etmək.
-2. Hər OLT üçün SNMP/SSH probe-u keçirib yalnız uğurlu cihazları canlı axtarışa daxil etmək.
+1. HSGQ SSH məlumatını və cihazlarda işləyən SNMP read profillərini vault-a daxil etmək.
+2. Hər OLT üçün autentifikasiyalı SNMP/SSH probe-u keçirib yalnız uğurlu cihazları canlı axtarışa daxil etmək.
 3. ASR1006-da əvvəlcə seçilmiş/sampled Flexible NetFlow pilotu qurmaq, collector itkisiz qəbul etdikdən sonra tam CGNAT ixracını mərhələli artırmaq.
 4. ClickHouse CGNAT sxemini və retention siyasətini aktivləşdirib hüquq-mühafizə ixracını canlı məlumatla sınaqdan keçirmək.
 5. Cisco NAS üçün təhlükəsiz real-session verification qurulduqdan sonra `Simultaneous-Use := 1` qaydasını pilot istifadəçilərlə sınaqdan keçirmək.

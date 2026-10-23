@@ -1,0 +1,13 @@
+[Unit]
+Description=SuperOptic OLT management source route
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/sbin/ip address replace 172.16.5.2/32 dev lo && /usr/sbin/ip route replace 172.16.5.0/24 via 192.168.100.1 dev eth0 src 172.16.5.2'
+ExecStop=/bin/sh -c '/usr/sbin/ip route replace 172.16.5.0/24 via 10.99.99.1 dev mgmt0 && /usr/sbin/ip address del 172.16.5.2/32 dev lo || true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
