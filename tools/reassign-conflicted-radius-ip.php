@@ -58,6 +58,23 @@ try {
         ->execute([app_db_json_encode($payload), (int) $fresh['id']]);
     $fresh['payload_json'] = app_db_json_encode($payload);
     if (!app_billing_sync_radius_account($fresh, null, $db)) throw new RuntimeException('radius_sync_failed');
+    if ($oldIp !== '' && app_db_table_exists($db, 'radius_ip_quarantine')) {
+        $quarantine = $db->prepare(
+            'INSERT INTO radius_ip_quarantine (
+                ip_address, source_username, reason, quarantined_at, expires_at, metadata_json
+             ) VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 72 HOUR), ?)
+             ON DUPLICATE KEY UPDATE
+                source_username=VALUES(source_username), reason=VALUES(reason),
+                quarantined_at=VALUES(quarantined_at), expires_at=VALUES(expires_at),
+                released_at=NULL, metadata_json=VALUES(metadata_json)'
+        );
+        $quarantine->execute([
+            $oldIp,
+            $username,
+            'Repeated NAS-Error while the address was present in another open accounting row',
+            app_db_json_encode(['replacement_ip' => $newIp]),
+        ]);
+    }
     app_audit_record($db, [
         'module_key' => 'billing', 'operation_class' => 'network_recovery',
         'action_type' => 'radius_ip_conflict_reassigned', 'entity_type' => 'customer',

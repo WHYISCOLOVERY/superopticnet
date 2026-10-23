@@ -4279,6 +4279,44 @@ function app_billing_next_available_ip(int $poolId): ?string
         }
     }
 
+    // A billing row may have been released while the NAS still owns the /32.
+    // Never hand an address that is present in a fresh accounting session to a
+    // different subscriber. This also protects allocations during delayed
+    // disconnect/accounting processing.
+    if (app_db_table_exists($db, 'radacct')) {
+        $activeSessionStatement = $db->query(
+            'SELECT DISTINCT framedipaddress
+               FROM radacct
+              WHERE acctstoptime IS NULL
+                AND acctupdatetime >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+                AND framedipaddress IS NOT NULL
+                AND framedipaddress <> ""'
+        );
+        foreach ($activeSessionStatement?->fetchAll(PDO::FETCH_COLUMN) ?: [] as $ip) {
+            $ip = trim((string) $ip);
+            if ($ip !== '') {
+                $used[$ip] = true;
+            }
+        }
+    }
+
+    // Conflict recovery quarantines the former address for longer than the
+    // router's maximum PPPoE session lifetime. Expired rows are intentionally
+    // ignored so capacity returns automatically without a cleanup dependency.
+    if (app_db_table_exists($db, 'radius_ip_quarantine')) {
+        $quarantineStatement = $db->query(
+            'SELECT ip_address
+               FROM radius_ip_quarantine
+              WHERE released_at IS NULL AND expires_at > NOW()'
+        );
+        foreach ($quarantineStatement?->fetchAll(PDO::FETCH_COLUMN) ?: [] as $ip) {
+            $ip = trim((string) $ip);
+            if ($ip !== '') {
+                $used[$ip] = true;
+            }
+        }
+    }
+
     for ($candidate = $start; $candidate <= $end; $candidate++) {
         $ip = long2ip($candidate);
         if ($ip !== false && !app_ip_is_assignable_ipv4_host($ip)) {
