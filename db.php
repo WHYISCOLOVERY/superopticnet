@@ -631,6 +631,8 @@ function app_db_bootstrap(PDO $db): void
             KEY idx_billing_radius_services_status (status, expires_at),
             KEY idx_billing_radius_services_account_status (account_id, status, expires_at),
             KEY idx_billing_radius_services_ip_lookup (assigned_ip, static_ip, nat_public_ip),
+            UNIQUE KEY uq_billing_radius_services_assigned_ip (assigned_ip),
+            UNIQUE KEY uq_billing_radius_services_static_ip (static_ip),
             CONSTRAINT fk_billing_radius_services_account
                 FOREIGN KEY (account_id) REFERENCES portal_accounts(id)
                 ON DELETE CASCADE
@@ -1335,6 +1337,8 @@ function app_db_migrate_schema(PDO $db): void
         ['portal_accounts', 'idx_portal_accounts_role_area', 'CREATE INDEX idx_portal_accounts_role_area ON portal_accounts (role, area)'],
         ['billing_radius_services', 'idx_billing_radius_services_account_status', 'CREATE INDEX idx_billing_radius_services_account_status ON billing_radius_services (account_id, status, expires_at)'],
         ['billing_radius_services', 'idx_billing_radius_services_ip_lookup', 'CREATE INDEX idx_billing_radius_services_ip_lookup ON billing_radius_services (assigned_ip, static_ip, nat_public_ip)'],
+        ['billing_radius_services', 'uq_billing_radius_services_assigned_ip', 'CREATE UNIQUE INDEX uq_billing_radius_services_assigned_ip ON billing_radius_services (assigned_ip)'],
+        ['billing_radius_services', 'uq_billing_radius_services_static_ip', 'CREATE UNIQUE INDEX uq_billing_radius_services_static_ip ON billing_radius_services (static_ip)'],
         ['billing_payments', 'idx_billing_payments_subscriber_created', 'CREATE INDEX idx_billing_payments_subscriber_created ON billing_payments (subscriber_code, created_at)'],
         ['billing_payments', 'idx_billing_payments_method_created', 'CREATE INDEX idx_billing_payments_method_created ON billing_payments (payment_method, created_at)'],
         ['portal_tickets', 'idx_portal_tickets_customer_status', 'CREATE INDEX idx_portal_tickets_customer_status ON portal_tickets (customer_account_id, status, opened_at)'],
