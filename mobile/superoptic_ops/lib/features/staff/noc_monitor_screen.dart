@@ -222,16 +222,18 @@ class _NocMonitorScreenState extends State<NocMonitorScreen> {
     final stateColor = switch (state) {
       'online' => AppTheme.emerald,
       'offline' => AppTheme.danger,
+      'stale' => AppTheme.warning,
       'disabled' => AppTheme.mutedText,
       _ => AppTheme.warning,
     };
     final stateLabel = switch (state) {
       'online' => 'AKTİV',
       'offline' => 'SÖNÜB',
+      'stale' => 'ÖLÇÜ KÖHNƏDİR',
       'disabled' => 'MONİTORİNQ SÖNÜB',
       _ => 'NAMƏLUM',
     };
-    final isStale = freshness == 'stale';
+    final isStale = freshness == 'stale' && state != 'stale';
     final traffic = device['traffic'] is Map
         ? Map<String, dynamic>.from(device['traffic'] as Map)
         : <String, dynamic>{};

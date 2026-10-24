@@ -63,8 +63,17 @@ foreach ($rows as $row) {
     $lastProbe = trim((string) ($row['last_probe_at'] ?? ''));
     $probeAge = $lastProbe !== '' ? max(0, $now - (int) strtotime($lastProbe)) : null;
     $rawState = strtolower(trim((string) ($row['reachability_state'] ?? 'unknown')));
+    $freshness = (int) ($row['monitoring_enabled'] ?? 0) !== 1
+        ? 'disabled'
+        : (($lastProbe === '' || $probeAge === null)
+            ? 'no_data'
+            : ($probeAge > 1800 ? 'stale' : 'fresh'));
     if ((int) ($row['monitoring_enabled'] ?? 0) !== 1) {
         $state = 'disabled';
+    } elseif ($freshness === 'stale') {
+        // A weeks-old successful probe is neither current online nor proof of
+        // an outage. Keep it in a distinct state so operators are not misled.
+        $state = 'stale';
     } elseif ($rawState === 'reachable') {
         $state = 'online';
     } elseif ($rawState === 'unreachable_confirmed') {
@@ -73,16 +82,6 @@ foreach ($rows as $row) {
         $state = 'unknown';
     }
     $summary[$state]++;
-    $freshness = (int) ($row['monitoring_enabled'] ?? 0) !== 1
-        ? 'disabled'
-        : (($lastProbe === '' || $probeAge === null)
-            ? 'no_data'
-            : ($probeAge > 1800 ? 'stale' : 'fresh'));
-    // Freshness is an additional warning, not a reachability state. A device
-    // can be last known online while its most recent measurement is stale.
-    if ($freshness === 'stale') {
-        $summary['stale']++;
-    }
     $devices[] = [
         'device_key' => (string) $row['device_key'],
         'name' => (string) ($row['device_name'] ?: $row['device_key']),
