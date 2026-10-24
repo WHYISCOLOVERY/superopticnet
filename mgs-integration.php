@@ -33,7 +33,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'bot_key' => (string) ($_POST['custom_bot_key'] ?? ''),
                 'display_name' => (string) ($_POST['custom_display_name'] ?? ''),
                 'purpose' => (string) ($_POST['custom_purpose'] ?? ''),
-                'token' => (string) ($_POST['custom_token'] ?? ''),
                 'chat_id' => (string) ($_POST['custom_chat_id'] ?? ''),
             ], $user);
             $flash = [
@@ -56,18 +55,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             ];
         }
     } elseif ($action === 'seed_learning') {
-        $result = app_mgs_seed_device_learning_profiles($db);
+        $result = app_mgs_seed_device_learning_profiles($db, $user);
         $flash = ['type' => 'success', 'message' => 'Avadanliq oyrenme profilleri yenilendi: ' . (int) $result['seeded'] . ' profil.'];
     } elseif ($action === 'sync_process_registry') {
-        $result = app_mgs_sync_process_registry($db);
+        $result = app_mgs_sync_process_registry($db, $user);
         $flash = ['type' => 'success', 'message' => 'Proses registry yenilendi: ' . (int) $result['ready'] . '/' . (int) $result['synced'] . ' hazir.'];
     } elseif ($action === 'set_management_path') {
         $enabled = (string) ($_POST['enabled'] ?? '0') === '1';
-        app_mgs_set_runtime_setting('monitor_management_vlan_connected', $enabled ? '1' : '0', $user);
-        $result = app_mgs_refresh_device_reachability($db, false);
+        $result = app_mgs_set_management_path($enabled, $user, $db);
         $flash = ['type' => !empty($result['ok']) ? 'success' : 'error', 'message' => $enabled ? 'VLAN 550 monitorinq yolu aktiv edildi. Cihazlar probe ucun hazirdir.' : 'VLAN 550 monitorinq yolu sonduruldu. Daxili offline alarm yaratmaq bloklandi.'];
     } elseif ($action === 'probe_devices') {
-        $result = app_mgs_refresh_device_reachability($db, true);
+        $result = app_mgs_refresh_device_reachability($db, true, $user);
         $flash = ['type' => !empty($result['ok']) ? 'success' : 'error', 'message' => 'Avadanliq probe: ' . (int) ($result['reachable'] ?? 0) . '/' . (int) ($result['probed'] ?? 0) . ' reachable.'];
     } elseif ($action === 'test_bot') {
         $apply = isset($_POST['apply_test']) && app_portal_is_admin($user);
@@ -102,7 +100,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'human_problem' => 'Alarm, ticket ve mesaj modullari test rejiminde birlesdirildi',
             'recommendation' => 'Bu test real bilet yaratmir; message queue-de TEST statusu ile gorunmelidir.',
             'telegram_bot_key' => 'network',
-        ], true, true);
+        ], true, true, $user, $db);
         $flash = ['type' => !empty($result['ok']) ? 'success' : 'error', 'message' => !empty($result['ok']) ? 'Test alarm ve TEST mesaj qeyd edildi.' : 'Test alarm yazilmadi.'];
     } elseif ($action === 'inventory_test') {
         $apply = isset($_POST['apply_inventory']) && app_portal_is_admin($user);
@@ -128,7 +126,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $apply = isset($_POST['apply_backup']) && app_portal_is_admin($user);
         $backupType = clean_text((string) ($_POST['backup_type'] ?? 'profile_snapshot'));
         $limit = (int) ($_POST['limit'] ?? 5);
-        $backupWorkerResult = app_mgs_run_backup_worker($db, $apply, $limit, $backupType);
+        $backupWorkerResult = app_mgs_run_backup_worker($db, $apply, $limit, $backupType, $user);
         $flash = [
             'type' => !empty($backupWorkerResult['ok']) ? 'success' : 'error',
             'message' => !empty($backupWorkerResult['ok'])
@@ -141,19 +139,36 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$summary = app_mgs_summary($db, false);
+$summary = app_mgs_summary($db, false, $user);
 $bridge = app_mgs_bridge_status();
 $view = clean_text((string) ($_GET['view'] ?? 'overview'));
 $view = in_array($view, ['overview', 'processes', 'actions', 'bots', 'devices', 'backups', 'logs'], true) ? $view : 'overview';
 $bots = $view === 'bots' ? app_mgs_telegram_bot_rows($db) : [];
-$devices = $view === 'devices' ? app_mgs_device_learning_rows($db) : [];
-$alarms = $view === 'logs' ? app_mgs_recent_rows('mgs_alarm_events', 12) : [];
-$operations = $view === 'logs' ? app_mgs_recent_rows('mgs_operation_actions', 12) : [];
+$editBotKey = app_mgs_normalize_bot_key((string) ($_GET['edit_bot'] ?? ''));
+$editingBot = null;
+if ($view === 'bots' && $editBotKey !== '' && app_portal_is_admin($user)) {
+    foreach ($bots as $botRow) {
+        if (!is_array($botRow) || (string) ($botRow['bot_key'] ?? '') !== $editBotKey) {
+            continue;
+        }
+        $botMetadata = app_db_json_decode((string) ($botRow['metadata_json'] ?? ''), []);
+        if (empty($botMetadata['custom'])) {
+            break;
+        }
+        $editingBot = $botRow;
+        $chatConfigKey = (string) ($botRow['chat_config_key'] ?? '');
+        $editingBot['chat_id'] = $chatConfigKey !== '' ? app_mgs_runtime_setting($chatConfigKey) : '';
+        break;
+    }
+}
+$devices = $view === 'devices' ? app_mgs_device_learning_rows($db, $user) : [];
+$alarms = $view === 'logs' ? app_mgs_noc_recent_rows('mgs_alarm_events', 12, $user) : [];
+$operations = $view === 'logs' ? app_mgs_noc_recent_rows('mgs_operation_actions', 12, $user) : [];
 $inventory = $view === 'logs' ? app_mgs_recent_rows('inventory_stock_items', 12) : [];
 $employeeSnapshots = $view === 'logs' ? app_mgs_recent_rows('employee_work_snapshots', 12) : [];
-$backups = $view === 'backups' ? app_mgs_recent_rows('device_config_backups', 12) : [];
-$processRows = $view === 'processes' ? app_mgs_recent_rows('mgs_process_registry', 20) : [];
-$dedupRows = $view === 'processes' ? app_mgs_recent_rows('mgs_dedup_registry', 12) : [];
+$backups = $view === 'backups' ? app_mgs_noc_recent_rows('device_config_backups', 12, $user) : [];
+$processRows = $view === 'processes' ? app_mgs_noc_recent_rows('mgs_process_registry', 20, $user) : [];
+$dedupRows = $view === 'processes' ? app_mgs_noc_recent_rows('mgs_dedup_registry', 12, $user) : [];
 $managementPathReady = app_mgs_management_path_ready();
 $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
 $mgsModules = app_mgs_bridge_modules();
@@ -499,10 +514,13 @@ $viewHref = static function (string $targetView) use ($viewBaseParams): string {
 
         <?php if ($view === 'bots'): ?>
         <section class="mgs-bot-admin-grid portal-reveal">
-            <article class="portal-card">
+            <article class="portal-card" id="telegram-bot-form">
                 <div class="portal-card-head">
-                    <h2>Bot əlavə et / yenilə</h2>
-                    <small>Custom botlar buradan əlavə olunur. Sistem botları qorunur və silinmir.</small>
+                    <h2><?= $editingBot !== null ? 'Telegram botunu yenilə' : 'Telegram botu əlavə et'; ?></h2>
+                    <small>Custom botlar buradan əlavə olunur və yenilənir. Sistem botları qorunur və silinmir.</small>
+                </div>
+                <div class="mgs-bot-note">
+                    1. Bot tokenini server environment-də saxlayın. 2. Bot açarı, Chat ID və məqsədi bu formada yazın. 3. Registry-ni yeniləyib statusun <strong>ready</strong> olduğunu yoxlayın.
                 </div>
                 <?php if (app_portal_is_admin($user)): ?>
                     <form class="mgs-bot-form" method="post" autocomplete="off">
@@ -510,30 +528,33 @@ $viewHref = static function (string $targetView) use ($viewBaseParams): string {
                         <input type="hidden" name="action" value="save_custom_bot">
                         <label>
                             Bot açarı
-                            <input name="custom_bot_key" placeholder="meselen: saha_bot" maxlength="48" required>
+                            <input name="custom_bot_key" value="<?= e((string) ($editingBot['bot_key'] ?? '')); ?>" placeholder="meselen: saha_bot" maxlength="48" required <?= $editingBot !== null ? 'readonly' : ''; ?>>
                         </label>
                         <label>
                             Bot adı
-                            <input name="custom_display_name" placeholder="Meselen: Saha Botu" maxlength="120">
+                            <input name="custom_display_name" value="<?= e((string) ($editingBot['display_name'] ?? '')); ?>" placeholder="Meselen: Saha Botu" maxlength="120">
                         </label>
-                        <label>
-                            Token
-                            <input name="custom_token" type="password" placeholder="123456789:AA..." autocomplete="new-password" required>
-                        </label>
+                        <div class="mgs-bot-note">
+                            Token portalda qəbul edilmir. Əvvəlcə server environment-də
+                            <code>TELEGRAM_CUSTOM_&lt;BOT_ACARI&gt;_TOKEN</code> yaradılmalıdır.
+                        </div>
                         <label>
                             Chat ID
-                            <input name="custom_chat_id" placeholder="-100..." maxlength="20" required>
+                            <input name="custom_chat_id" value="<?= e((string) ($editingBot['chat_id'] ?? '')); ?>" placeholder="-100..." maxlength="20" required>
                         </label>
                         <label>
                             Vəzifə / məqsəd
-                            <textarea name="custom_purpose" placeholder="Bu bot hansı qrupa və hansı prosesə xidmət edir?"></textarea>
+                            <textarea name="custom_purpose" placeholder="Bu bot hansı qrupa və hansı prosesə xidmət edir?"><?= e((string) ($editingBot['purpose'] ?? '')); ?></textarea>
                         </label>
                         <div class="mgs-bot-form-actions">
-                            <button class="portal-primary-btn" type="submit">Botu saxla</button>
-                            <span class="mgs-bot-note">Token auditdə maskalanır, cədvəldə göstərilmir. Mövcud custom botu yeniləmək üçün eyni bot açarını yazın.</span>
+                            <button class="portal-primary-btn" type="submit"><?= $editingBot !== null ? 'Dəyişiklikləri saxla' : 'Botu saxla'; ?></button>
+                            <?php if ($editingBot !== null): ?>
+                                <a class="portal-ghost-btn portal-inline-link" href="<?= e($viewHref('bots')); ?>#telegram-bot-form">Yeni bot forması</a>
+                            <?php endif; ?>
+                            <span class="mgs-bot-note">Token yalnız environment-dən oxunur; DB, audit və HTML-ə yazılmır. Mövcud botu yeniləmək üçün eyni bot açarını yazın.</span>
                         </div>
                     </form>
-                    <form class="mgs-bot-delete-form" method="post" onsubmit="return confirm('Bu custom bot silinsin? Sistem botlari silinmir.');">
+                    <form class="mgs-bot-delete-form" method="post" data-ui-confirm="Bu custom bot silinsin? Sistem botlari silinmir." data-ui-confirm-title="Custom botu sil">
                         <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                         <input type="hidden" name="action" value="delete_custom_bot">
                         <label>
@@ -549,8 +570,17 @@ $viewHref = static function (string $targetView) use ($viewBaseParams): string {
 
             <article class="portal-card">
                 <div class="portal-card-head">
-                    <h2>Telegram bot registry</h2>
-                    <small>Tokenlər göstərilmir; yalnız config statusu, masked destination və idarə əməliyyatları görünür.</small>
+                    <div>
+                        <h2>Telegram bot registry</h2>
+                        <small>Tokenlər göstərilmir; yalnız config statusu, masked destination və idarə əməliyyatları görünür.</small>
+                    </div>
+                    <?php if (app_portal_is_admin($user)): ?>
+                        <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                            <input type="hidden" name="action" value="sync_bots">
+                            <button class="portal-ghost-btn" type="submit">Registry-ni yenilə</button>
+                        </form>
+                    <?php endif; ?>
                 </div>
                 <div class="portal-table-wrap">
                     <table class="portal-table">
@@ -575,7 +605,8 @@ $viewHref = static function (string $targetView) use ($viewBaseParams): string {
                                     <td>
                                         <div class="mgs-bot-actions">
                                             <?php if ($isCustomBot && app_portal_is_admin($user)): ?>
-                                                <form method="post" onsubmit="return confirm('Bu custom bot silinsin?');">
+                                                <a class="portal-ghost-btn portal-inline-link" href="<?= e($viewHref('bots') . '&edit_bot=' . rawurlencode($botKey)); ?>#telegram-bot-form">Düzəlt</a>
+                                                <form method="post" data-ui-confirm="Bu custom bot silinsin?" data-ui-confirm-title="Custom botu sil">
                                                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                                     <input type="hidden" name="action" value="delete_custom_bot">
                                                     <input type="hidden" name="bot_key" value="<?= e($botKey); ?>">
@@ -727,5 +758,7 @@ $viewHref = static function (string $targetView) use ($viewBaseParams): string {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

@@ -12,8 +12,15 @@ if (!$db instanceof PDO) {
     exit;
 }
 
-$rows = whatsapp_monitor_chat_rows($db, $user);
+$numberId = max(0, (int) ($_GET['number_id'] ?? 0));
+if ($numberId <= 0) {
+    http_response_code(422);
+    echo json_encode(['ok' => false, 'error' => 'number_scope_required']);
+    exit;
+}
+$rows = whatsapp_monitor_chat_rows($db, $user, $numberId);
 echo json_encode([
     'ok' => true,
+    'number_id' => $numberId,
     'rows' => $rows,
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

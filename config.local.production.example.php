@@ -1,7 +1,9 @@
 <?php
 
 return [
-    // Copy this file to config.local.php on the production server and fill secrets.
+    // Copy this file for non-secret settings only. Put every credential in the OS/service environment.
+    'app_environment' => 'production',
+    'app_demo_fixtures_enabled' => '0',
     'app_url' => 'https://billing.superoptic.net',
     'public_site_url' => 'https://superoptic.net/',
     'ticket_close_base_url' => 'https://billing.superoptic.net',
@@ -11,37 +13,30 @@ return [
     'db_port' => 3306,
     'db_name' => 'superoptic_portal',
     'db_user' => 'superoptic_app',
-    'db_pass' => 'CHANGE_ME_STRONG_DB_PASSWORD',
     'db_charset' => 'utf8mb4',
 
-    'radius_shared_secret' => 'CHANGE_ME_RADIUS_SHARED_SECRET',
     'radius_sql_host' => '127.0.0.1',
     'radius_sql_port' => '3306',
     'radius_sql_db' => 'superoptic_portal',
     'radius_sql_user' => 'radius',
-    'radius_sql_password' => 'CHANGE_ME_RADIUS_SQL_PASSWORD',
-    'radius_core_nas_ip' => '85.132.57.218',
-    'provider_api_token' => 'CHANGE_ME_PROVIDER_API_TOKEN',
-    'provider_api_hmac_secret' => 'CHANGE_ME_PROVIDER_HMAC_SECRET',
-    'copilot_api_token' => 'CHANGE_ME_COPILOT_API_TOKEN',
-
-    'telegram_token' => 'CHANGE_ME_TELEGRAM_BOT_TOKEN',
+    'radius_core_nas_ip' => '',
+    // Provider credentials are secrets and belong in the service environment.
+    // Keep separate allowlists after Emanat and United Payment confirm their egress IPs.
+    'provider_api_allow_legacy_shared_credentials' => '0',
+    'provider_api_require_hmac' => '1',
+    'emanat_provider_allowed_ips' => '',
+    'unitedpayment_provider_allowed_ips' => '',
     'telegram_chat_id' => 'CHANGE_ME_TELEGRAM_CHAT_ID',
     'sms_provider_endpoint' => 'https://api.poctgoyercini.com/gateway/api/sms/v1/message/send',
     'sms_provider_driver' => 'poctgoyercini_json',
-    'sms_provider_user' => 'CHANGE_ME_SMS_PROVIDER_USER',
-    'sms_provider_password' => 'CHANGE_ME_SMS_PROVIDER_PASSWORD',
-    'sms_provider_token' => 'CHANGE_ME_SMS_PROVIDER_TOKEN',
-    'sms_provider_sender' => 'SuperOptic',
+    'sms_provider_sender' => '',
     'whatsapp_provider_enabled' => '0',
     'whatsapp_provider_endpoint' => '',
-    'whatsapp_provider_token' => '',
     'whatsapp_provider_sender' => 'SuperOptic',
 
     'billing_customer_url' => 'https://billing.superoptic.net/portal-login.php',
     'billing_employee_url' => 'https://billing.superoptic.net/staff-login.php',
     'billing_sso_entrypoint' => '',
-    'billing_sso_shared_secret' => '',
     'billing_sso_issuer' => 'mgs.superoptic.net',
     'billing_sso_audience' => 'billing.superoptic.net',
     'billing_sso_default_return' => '/',
@@ -49,7 +44,6 @@ return [
     'mygov_enabled' => '0',
     'mygov_mock_enabled' => '0',
     'mygov_client_id' => '',
-    'mygov_client_secret' => '',
     'mygov_authorize_url' => '',
     'mygov_token_url' => '',
     'mygov_userinfo_url' => '',
@@ -58,12 +52,9 @@ return [
 
     'portal_token_issuer' => 'mgs.superoptic.net',
     'portal_ticket_close_audience' => 'portal.ticket.close',
-    'portal_ticket_close_secret' => 'CHANGE_ME_TICKET_CLOSE_SECRET',
 
     'olt_sso_entrypoint' => 'https://mgs.superoptic.net/api/olt-sso/consume',
-    'olt_sso_shared_secret' => 'CHANGE_ME_OLT_SSO_SECRET',
     'olt_user_sync_endpoint' => '',
-    'olt_user_sync_secret' => '',
     'olt_sso_issuer' => 'mgs.superoptic.net',
     'olt_sso_audience' => 'superoptic-mgs',
     'olt_sso_default_return' => '/',

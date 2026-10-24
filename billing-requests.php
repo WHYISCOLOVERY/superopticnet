@@ -40,7 +40,7 @@ if ($db instanceof PDO) {
     $allRequests = array_values(array_filter(app_portal_ticket_records(), 'is_array'));
     $summary['total'] = count($allRequests);
     foreach ($allRequests as $request) {
-        $isClosed = in_array((string) ($request['status'] ?? ''), ['Baglandi', 'BaglandÄ±', 'BaÄŸlandÄ±', 'Closed'], true);
+        $isClosed = in_array((string) ($request['status'] ?? ''), ['Baglandi', 'Baglandı', 'Bağlandı', 'Closed'], true);
         $summary[$isClosed ? 'closed' : 'open']++;
     }
 
@@ -84,49 +84,49 @@ $statusJoiner = $lang !== 'az' ? '&' : '?';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MÃ¼raciÉ™tlÉ™r</title>
+    <title>Müraciətlər</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
 </head>
 <body class="portal-body">
-    <?php billing_render_header('MÃ¼raciÉ™tlÉ™r', 'requests', $lang); ?>
+    <?php billing_render_header('Müraciətlər', 'requests', $lang); ?>
 
     <main class="portal-layout">
         <section class="portal-hero portal-reveal">
             <div>
-                <span class="portal-kicker">CRM / billing mÃ¼raciÉ™tlÉ™ri</span>
-                <h1>MÃ¼ÅŸtÉ™ri mÃ¼raciÉ™tlÉ™rinin idarÉ™ olunmasÄ±</h1>
-                <p>Referans billingdÉ™ki mÃ¼raciÉ™t siyahÄ±sÄ± ayrÄ±ca saxlanÄ±rdÄ±. Bu sÉ™hifÉ™ bizim CRM ticketlÉ™rini mÃ¼ÅŸtÉ™ri kodu, É™razi, status vÉ™ mÃ¶vzu Ã¼zrÉ™ gÃ¶stÉ™rir.</p>
+                <span class="portal-kicker">CRM / billing müraciətləri</span>
+                <h1>Müştəri müraciətlərinin idarə olunması</h1>
+                <p>Referans billingdəki müraciət siyahısı ayrıca saxlanırdı. Bu səhifə bizim CRM ticketlərini müştəri kodu, ərazi, status və mövzu üzrə göstərir.</p>
             </div>
             <div class="portal-status-card">
-                <span>AÃ§Ä±q mÃ¼raciÉ™t</span>
+                <span>Açıq müraciət</span>
                 <strong><?= e((string) $summary['open']); ?></strong>
-                <small><?= e((string) $summary['closed']); ?> baÄŸlÄ±</small>
+                <small><?= e((string) $summary['closed']); ?> bağlı</small>
             </div>
         </section>
 
         <section class="portal-grid portal-grid-4 portal-reveal">
-            <article class="portal-metric-card"><span>CÉ™mi</span><strong><?= e((string) $summary['total']); ?></strong><small>bÃ¼tÃ¼n ticketlÉ™r</small></article>
-            <article class="portal-metric-card"><span>AÃ§Ä±q</span><strong><?= e((string) $summary['open']); ?></strong><small>operator/texnik iÅŸi</small></article>
-            <article class="portal-metric-card"><span>BaÄŸlÄ±</span><strong><?= e((string) $summary['closed']); ?></strong><small>tamamlanmÄ±ÅŸ</small></article>
-            <article class="portal-metric-card"><span>Filtr nÉ™ticÉ™si</span><strong><?= e((string) $summary['filtered']); ?></strong><small>gÃ¶stÉ™rilÉ™n</small></article>
+            <article class="portal-metric-card"><span>Cəmi</span><strong><?= e((string) $summary['total']); ?></strong><small>bütün ticketlər</small></article>
+            <article class="portal-metric-card"><span>Açıq</span><strong><?= e((string) $summary['open']); ?></strong><small>operator/texnik işi</small></article>
+            <article class="portal-metric-card"><span>Bağlı</span><strong><?= e((string) $summary['closed']); ?></strong><small>tamamlanmış</small></article>
+            <article class="portal-metric-card"><span>Filtr nəticəsi</span><strong><?= e((string) $summary['filtered']); ?></strong><small>göstərilən</small></article>
         </section>
 
         <section class="portal-card portal-reveal">
-            <div class="portal-card-head"><h2>MÃ¼raciÉ™t Ã¼zrÉ™ filtrasiya</h2><small>Kod, ad, telefon, mÃ¶vzu, É™razi vÉ™ status Ã¼zrÉ™ axtar.</small></div>
+            <div class="portal-card-head"><h2>Müraciət üzrə filtrasiya</h2><small>Kod, ad, telefon, mövzu, ərazi və status üzrə axtar.</small></div>
             <div class="mgs-quick-filters" style="margin-bottom:14px;">
-                <a class="mgs-chip<?= $status === '' ? ' is-active' : ''; ?>" href="<?= e($baseUrl); ?>">HamÄ±sÄ±</a>
-                <a class="mgs-chip<?= $status === 'Aciqdir' ? ' is-active' : ''; ?>" href="<?= e($baseUrl . $statusJoiner . 'status=Aciqdir'); ?>">AÃ§Ä±q</a>
-                <a class="mgs-chip<?= $status === 'Baglandi' ? ' is-active' : ''; ?>" href="<?= e($baseUrl . $statusJoiner . 'status=Baglandi'); ?>">BaÄŸlÄ±</a>
+                <a class="mgs-chip<?= $status === '' ? ' is-active' : ''; ?>" href="<?= e($baseUrl); ?>">Hamısı</a>
+                <a class="mgs-chip<?= $status === 'Aciqdir' ? ' is-active' : ''; ?>" href="<?= e($baseUrl . $statusJoiner . 'status=Aciqdir'); ?>">Açıq</a>
+                <a class="mgs-chip<?= $status === 'Baglandi' ? ' is-active' : ''; ?>" href="<?= e($baseUrl . $statusJoiner . 'status=Baglandi'); ?>">Bağlı</a>
             </div>
-            <form method="get" class="portal-stacked-form">
+            <form method="get" class="portal-stacked-form" id="billing-requests-filter" data-auto-filter data-auto-filter-targets="billing-requests-results">
                 <?php if ($lang !== 'az'): ?><input type="hidden" name="lang" value="<?= e($lang); ?>"><?php endif; ?>
                 <div class="billing-filter-grid">
-                    <div class="portal-form-row"><label>AxtarÄ±ÅŸ</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="kod, ad, telefon, mÃ¶vzu"></div>
+                    <div class="portal-form-row"><label>Axtarış</label><input type="text" name="q" value="<?= e($query); ?>" placeholder="kod, ad, telefon, mövzu"></div>
                     <div class="portal-form-row">
-                        <label>Ærazi</label>
+                        <label>Ərazi</label>
                         <select name="area">
-                            <option value="">BÃ¼tÃ¼n É™razilÉ™r</option>
+                            <option value="">Bütün ərazilər</option>
                             <?php foreach ($areas as $areaName): ?>
                                 <option value="<?= e($areaName); ?>" <?= $area === $areaName ? 'selected' : ''; ?>><?= e($areaName); ?></option>
                             <?php endforeach; ?>
@@ -135,29 +135,30 @@ $statusJoiner = $lang !== 'az' ? '&' : '?';
                     <div class="portal-form-row">
                         <label>Status</label>
                         <select name="status">
-                            <option value="">BÃ¼tÃ¼n statuslar</option>
-                            <option value="Aciqdir" <?= $status === 'Aciqdir' ? 'selected' : ''; ?>>AÃ§Ä±qdÄ±r</option>
-                            <option value="Baglandi" <?= $status === 'Baglandi' ? 'selected' : ''; ?>>BaÄŸlandÄ±</option>
+                            <option value="">Bütün statuslar</option>
+                            <option value="Aciqdir" <?= $status === 'Aciqdir' ? 'selected' : ''; ?>>Açıqdır</option>
+                            <option value="Baglandi" <?= $status === 'Baglandi' ? 'selected' : ''; ?>>Bağlandı</option>
                         </select>
                     </div>
                     <div class="billing-filter-actions">
                         <button type="submit" class="portal-primary-btn">Axtar</button>
-                        <a class="portal-ghost-btn portal-inline-link" href="billing-requests.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">SÄ±fÄ±rla</a>
+                        <a class="portal-ghost-btn portal-inline-link" href="billing-requests.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sıfırla</a>
                     </div>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
-        <section class="portal-card portal-reveal">
-            <div class="portal-card-head"><h2>MÃ¼raciÉ™t siyahÄ±sÄ±</h2><a class="portal-ghost-btn portal-inline-link" href="crm.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Tam CRM paneli</a></div>
+        <section class="portal-card portal-reveal" data-auto-filter-results="billing-requests-results" data-auto-filter-form="billing-requests-filter">
+            <div class="portal-card-head"><h2>Müraciət siyahısı</h2><a class="portal-ghost-btn portal-inline-link" href="crm.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Tam CRM paneli</a></div>
             <?php if ($requests === []): ?>
-                <?php billing_render_empty_state('MÃ¼raciÉ™t tapÄ±lmadÄ±', 'Filtri dÉ™yiÅŸin vÉ™ ya CRM panelindÉ™ yeni ticket yaradÄ±n.', 'fa-ticket'); ?>
+                <?php billing_render_empty_state('Müraciət tapılmadı', 'Filtri dəyişin və ya CRM panelində yeni ticket yaradın.', 'fa-ticket'); ?>
             <?php else: ?>
                 <div class="mgs-insight-grid">
                     <?php foreach (array_slice($requests, 0, 6) as $request): ?>
                         <article class="mgs-insight-card">
                             <span><?= e((string) ($request['ticket_no'] ?? $request['id'] ?? '-')); ?> / <?= e(billing_datetime($request['opened_at'] ?? $request['updated_at'] ?? null)); ?></span>
-                            <strong><?= e((string) ($request['subject'] ?? 'MÃ¼raciÉ™t')); ?></strong>
+                            <strong><?= e((string) ($request['subject'] ?? 'Müraciət')); ?></strong>
                             <small><?= e((string) ($request['subscriber_code'] ?? '-')); ?> - <?= e((string) ($request['customer_name'] ?? '-')); ?></small>
                             <div><span class="portal-pill <?= e(billing_status_class((string) ($request['status'] ?? ''))); ?>"><?= e((string) ($request['status'] ?? '-')); ?></span></div>
                         </article>
@@ -166,9 +167,9 @@ $statusJoiner = $lang !== 'az' ? '&' : '?';
             <?php endif; ?>
             <div class="portal-table-wrap">
                 <table class="portal-table">
-                    <thead><tr><th>Ticket</th><th>MÃ¼ÅŸtÉ™ri</th><th>Ærazi</th><th>Problem</th><th>MÉ™lumat</th><th>Status</th><th>Profil</th></tr></thead>
+                    <thead><tr><th>Ticket</th><th>Müştəri</th><th>Ərazi</th><th>Problem</th><th>Məlumat</th><th>Status</th><th>Profil</th></tr></thead>
                     <tbody>
-                        <?php if ($requests === []): ?><tr><td colspan="7">MÃ¼raciÉ™t tapÄ±lmadÄ±.</td></tr><?php endif; ?>
+                        <?php if ($requests === []): ?><tr><td colspan="7">Müraciət tapılmadı.</td></tr><?php endif; ?>
                         <?php foreach ($requests as $request): ?>
                             <tr>
                                 <td><?= e((string) ($request['ticket_no'] ?? $request['id'] ?? '-')); ?><br><small><?= e(billing_datetime($request['opened_at'] ?? $request['updated_at'] ?? null)); ?></small></td>
@@ -179,9 +180,9 @@ $statusJoiner = $lang !== 'az' ? '&' : '?';
                                 <td><span class="portal-pill <?= e(billing_status_class((string) ($request['status'] ?? ''))); ?>"><?= e((string) ($request['status'] ?? '-')); ?></span></td>
                                 <td>
                                     <?php if ((int) ($request['customer_account_id'] ?? 0) > 0): ?>
-                                        <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) $request['customer_account_id']); ?>#profile-tickets">AÃ§</a>
+                                        <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?id=<?= e((string) $request['customer_account_id']); ?>#profile-tickets">Aç</a>
                                     <?php elseif ((string) ($request['subscriber_code'] ?? '') !== ''): ?>
-                                        <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?code=<?= rawurlencode((string) $request['subscriber_code']); ?>#profile-tickets">AÃ§</a>
+                                        <a class="portal-ghost-btn portal-inline-link" href="billing-customer-profile.php?code=<?= rawurlencode((string) $request['subscriber_code']); ?>#profile-tickets">Aç</a>
                                     <?php else: ?>
                                         -
                                     <?php endif; ?>
@@ -195,5 +196,6 @@ $statusJoiner = $lang !== 'az' ? '&' : '?';
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

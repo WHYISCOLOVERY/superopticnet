@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-RADIUS_SECRET="${RADIUS_SECRET:-menim_gizli_acarim123}"
+RADIUS_SECRET="${RADIUS_SECRET:-}"
 DB_NAME="${DB_NAME:-superoptic_portal}"
 DB_USER="${DB_USER:-radius}"
-DB_PASS="${DB_PASS:-radius_lab_ChangeMe_123}"
+DB_PASS="${DB_PASS:-}"
+RADIUS_TEST_PASSWORD="${RADIUS_TEST_PASSWORD:-}"
 SKIP_PACKAGES="${SKIP_PACKAGES:-0}"
 MIN_FREE_MB="${MIN_FREE_MB:-1200}"
 
 [[ "${EUID}" -eq 0 ]] || { echo "Run with sudo"; exit 1; }
+[[ -n "${DB_PASS}" ]] || { echo "DB_PASS environment variable is required" >&2; exit 2; }
+[[ -n "${RADIUS_SECRET}" ]] || { echo "RADIUS_SECRET environment variable is required" >&2; exit 2; }
+[[ -n "${RADIUS_TEST_PASSWORD}" ]] || { echo "RADIUS_TEST_PASSWORD environment variable is required" >&2; exit 2; }
+TEST_PASSWORD_ESCAPED="${RADIUS_TEST_PASSWORD//\\/\\\\}"
+TEST_PASSWORD_ESCAPED="${TEST_PASSWORD_ESCAPED//\'/\\\'}"
 
 echo "[1/7] Packages"
 FREE_MB=$(df -Pm / | awk 'NR==2 {print $4}')
@@ -39,7 +45,7 @@ FLUSH PRIVILEGES;
 SQL
 
 echo "[3/7] Radius SQL tables and test users"
-mysql -h127.0.0.1 -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" <<'SQL'
+mysql -h127.0.0.1 -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" <<SQL
 CREATE TABLE IF NOT EXISTS radcheck (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(64) NOT NULL DEFAULT '',
@@ -142,7 +148,7 @@ DELETE FROM radreply WHERE username IN ('1100000','1200000');
 DELETE FROM radusergroup WHERE username IN ('1100000','1200000');
 
 INSERT INTO radcheck (username,attribute,op,value) VALUES
-('1100000','Cleartext-Password',':=','UCuvsbLA2b'),
+('1100000','Cleartext-Password',':=','${TEST_PASSWORD_ESCAPED}'),
 ('1200000','Auth-Type',':=','Accept');
 
 INSERT INTO radreply (username,attribute,op,value) VALUES
@@ -216,7 +222,7 @@ systemctl enable freeradius
 systemctl restart freeradius
 sleep 2
 ss -lunp | grep -E '1812|1813' || true
-radtest 1100000 UCuvsbLA2b 127.0.0.1 0 "${RADIUS_SECRET}"
-radtest 1200000 any-test-password 127.0.0.1 0 "${RADIUS_SECRET}"
+radtest 1100000 "${RADIUS_TEST_PASSWORD}" 127.0.0.1 0 "${RADIUS_SECRET}"
+radtest 1200000 "${RADIUS_TEST_PASSWORD}" 127.0.0.1 0 "${RADIUS_SECRET}"
 
 echo "DONE"

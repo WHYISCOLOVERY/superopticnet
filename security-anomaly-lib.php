@@ -27,37 +27,18 @@ function app_security_anomaly_ensure_schema(?PDO $db = null): bool
         return false;
     }
 
-    $db->exec(
-        "CREATE TABLE IF NOT EXISTS security_anomaly_events (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            dedup_key VARCHAR(191) NOT NULL,
-            subject_type VARCHAR(64) NOT NULL DEFAULT 'customer',
-            subject_id VARCHAR(191) NOT NULL DEFAULT '',
-            subscriber_code VARCHAR(64) DEFAULT NULL,
-            username VARCHAR(64) DEFAULT NULL,
-            ip_address VARCHAR(45) DEFAULT NULL,
-            risk_score INT NOT NULL DEFAULT 0,
-            severity ENUM('info','warning','critical','emergency') NOT NULL DEFAULT 'info',
-            signal_type VARCHAR(64) NOT NULL DEFAULT '',
-            title VARCHAR(191) NOT NULL DEFAULT '',
-            evidence_json LONGTEXT DEFAULT NULL,
-            recommended_actions_json LONGTEXT DEFAULT NULL,
-            status ENUM('open','ack','resolved','false_positive','test') NOT NULL DEFAULT 'open',
-            first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            seen_count INT UNSIGNED NOT NULL DEFAULT 1,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_security_anomaly_dedup (dedup_key),
-            KEY idx_security_anomaly_status (status, severity, last_seen_at),
-            KEY idx_security_anomaly_subject (subject_type, subject_id),
-            KEY idx_security_anomaly_user (username, last_seen_at),
-            KEY idx_security_anomaly_subscriber (subscriber_code, last_seen_at),
-            KEY idx_security_anomaly_ip (ip_address, last_seen_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-
-    return true;
+    try {
+        $statement = $db->prepare(
+            'SELECT COUNT(*)
+               FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = :table_name'
+        );
+        $statement->execute(['table_name' => 'security_anomaly_events']);
+        return (int) $statement->fetchColumn() === 1;
+    } catch (Throwable) {
+        return false;
+    }
 }
 
 function app_security_anomaly_severity(int $riskScore): string
@@ -152,8 +133,12 @@ function app_security_anomaly_make_finding(array $row, string $signalType, int $
     ];
 }
 
-function app_security_anomaly_record(PDO $db, array $finding, bool $testMode = true): void
+function app_security_anomaly_record(PDO $db, array $finding, bool $testMode = true, array $actor = []): bool
 {
+    $authorization = app_noc_authorize($actor, 'run_security_anomaly_scan', [], $db);
+    if (empty($authorization['ok'])) {
+        return false;
+    }
     app_security_anomaly_ensure_schema($db);
     $status = $testMode ? 'test' : 'open';
     $statement = $db->prepare(
@@ -190,7 +175,7 @@ function app_security_anomaly_record(PDO $db, array $finding, bool $testMode = t
         'status' => $status,
     ]);
 
-    app_mgs_record_alarm_event([
+    $alarm = app_mgs_record_alarm_event([
         'alarm_type' => 'SECURITY_ANOMALY',
         'severity' => (string) $finding['severity'],
         'source' => 'security_anomaly_engine',
@@ -200,7 +185,9 @@ function app_security_anomaly_record(PDO $db, array $finding, bool $testMode = t
         'message' => 'Security anomaly risk score: ' . (string) $finding['risk_score'],
         'telegram_bot_key' => 'network',
         'payload' => $finding,
-    ], $testMode, false);
+    ], $testMode, false, $actor, $db);
+
+    return !empty($alarm['ok']);
 }
 
 function app_security_anomaly_fetch_traffic_findings(PDO $db, array $options): array
@@ -283,7 +270,7 @@ function app_security_anomaly_fetch_session_findings(PDO $db, array $options): a
          FROM radacct r
          LEFT JOIN billing_radius_services s ON s.username = r.username
          LEFT JOIN portal_accounts a ON a.id = s.account_id
-         WHERE r.acctstoptime IS NULL
+         WHERE r.acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
          GROUP BY r.username
          HAVING COUNT(*) >= {$threshold}
          ORDER BY active_sessions DESC
@@ -353,14 +340,22 @@ function app_security_anomaly_fetch_nat_findings(PDO $db, array $options): array
     return $findings;
 }
 
-function app_security_anomaly_run(?PDO $db = null, array $options = []): array
+function app_security_anomaly_run(?PDO $db = null, array $options = [], array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_security_anomaly_ensure_schema($db)) {
+    if (!$db instanceof PDO) {
         return ['ok' => false, 'reason' => 'db_unavailable', 'findings' => []];
     }
 
     $options = array_replace(app_security_anomaly_defaults(), $options);
+    $authorizationAction = !empty($options['record']) ? 'run_security_anomaly_scan' : 'read_security_anomaly';
+    $authorization = app_noc_authorize($actor, $authorizationAction, [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization) + ['findings' => []];
+    }
+    if (!app_security_anomaly_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable', 'findings' => []];
+    }
     $findings = array_merge(
         app_security_anomaly_fetch_traffic_findings($db, $options),
         app_security_anomaly_fetch_session_findings($db, $options),
@@ -373,13 +368,14 @@ function app_security_anomaly_run(?PDO $db = null, array $options = []): array
 
     if (!empty($options['record'])) {
         foreach ($findings as $finding) {
-            app_security_anomaly_record($db, $finding, (bool) $options['test_mode']);
+            app_security_anomaly_record($db, $finding, (bool) $options['test_mode'], $actor);
         }
         app_mgs_record_operation_action([
             'action_type' => 'security_anomaly_scan',
             'entity_type' => 'security',
             'entity_id' => 'global',
             'status' => !empty($options['test_mode']) ? 'dry_run' : 'executed',
+            'actor' => $actor,
             'summary' => 'Security anomaly scan completed: ' . count($findings) . ' finding(s)',
             'payload' => [
                 'options' => $options,
@@ -402,9 +398,9 @@ function app_security_anomaly_run(?PDO $db = null, array $options = []): array
     ];
 }
 
-function app_security_anomaly_answer(string $query, ?PDO $db = null): array
+function app_security_anomaly_answer(string $query, ?PDO $db = null, array $actor = []): array
 {
-    $result = app_security_anomaly_run($db, []);
+    $result = app_security_anomaly_run($db, [], $actor);
     if (empty($result['ok'])) {
         return ['ok' => false, 'text' => 'Security anomaly engine DB hazir deyil.'];
     }

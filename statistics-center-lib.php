@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/analytics-center-lib.php';
 require_once __DIR__ . '/billing-module-lib.php';
 require_once __DIR__ . '/finance-module-lib.php';
+require_once __DIR__ . '/ui-language-lib.php';
 
 function app_statistics_user_is_admin(array $user): bool
 {
@@ -84,6 +85,79 @@ function app_statistics_normalize_rows(array $rows): array
     ], $rows));
 }
 
+/**
+ * Canonical CEO-level KPIs (vision doc §3.1/§14.2: MRR, ARPU, churn, filial
+ * gəlirliliyi) -- not previously computed anywhere in the codebase (the
+ * existing 'kpis' array in this file is just per-category period totals,
+ * not these named business metrics). Admin-only; built from the same
+ * canonical guards/functions billing-module-lib.php already exports, so
+ * this stays consistent with the Billing dashboard's own numbers rather
+ * than keeping a second copy of the "active customer" definition.
+ *
+ * Collection %% (billed vs. received) is deliberately NOT included here:
+ * this platform bills via a per-service expiry date, not per-period
+ * invoices, so "amount billed this period" has no single unambiguous
+ * definition yet -- building it would mean guessing at a business rule
+ * rather than reading one that already exists.
+ */
+function app_statistics_ceo_kpis(PDO $db, array $dates): array
+{
+    $mrrRow = $db->query(
+        'SELECT COALESCE(SUM(t.monthly_fee),0) AS mrr, COUNT(DISTINCT s.account_id) AS paying_customers
+           FROM billing_radius_services s
+           INNER JOIN billing_tariffs t ON t.id = s.tariff_id
+          WHERE s.status = "active"'
+    )->fetch(PDO::FETCH_ASSOC) ?: ['mrr' => 0, 'paying_customers' => 0];
+    $mrr = (float) ($mrrRow['mrr'] ?? 0);
+    $payingCustomers = (int) ($mrrRow['paying_customers'] ?? 0);
+    $arpu = $payingCustomers > 0 ? $mrr / $payingCustomers : 0.0;
+
+    $activeAtStartStatement = $db->prepare(
+        'SELECT COUNT(DISTINCT s.account_id)
+           FROM billing_radius_services s
+          WHERE s.status = "active" OR (s.status IN ("expired","disabled") AND s.updated_at >= :start_at)'
+    );
+    $activeAtStartStatement->execute(['start_at' => $dates['start_at']]);
+    $activeAtStart = (int) $activeAtStartStatement->fetchColumn();
+
+    $churnedStatement = $db->prepare(
+        'SELECT COUNT(DISTINCT s.account_id)
+           FROM billing_radius_services s
+          WHERE s.status IN ("expired","disabled")
+            AND s.updated_at >= :start_at AND s.updated_at < :end_at'
+    );
+    $churnedStatement->execute(['start_at' => $dates['start_at'], 'end_at' => $dates['operational_end_at_exclusive']]);
+    $churnedCustomers = (int) $churnedStatement->fetchColumn();
+    $churnRatePercent = $activeAtStart > 0 ? ($churnedCustomers / $activeAtStart) * 100 : 0.0;
+
+    $revenueByAreaStatement = $db->prepare(
+        'SELECT COALESCE(NULLIF(a.area, ""), "Digər") AS label, COALESCE(SUM(p.amount),0) AS value_total, COUNT(*) AS row_count
+           FROM billing_payments p
+           INNER JOIN portal_accounts a ON a.id = p.account_id
+          WHERE ' . app_billing_operational_payment_sql('p') . '
+            AND p.created_at >= :start_at AND p.created_at < :end_at
+          GROUP BY label
+          ORDER BY value_total DESC
+          LIMIT 12'
+    );
+    $revenueByAreaStatement->execute(['start_at' => $dates['start_at'], 'end_at' => $dates['operational_end_at_exclusive']]);
+    $revenueByArea = app_statistics_normalize_rows($revenueByAreaStatement->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+    return [
+        'mrr' => $mrr,
+        'arpu' => $arpu,
+        'paying_customers' => $payingCustomers,
+        'churn_rate_percent' => round($churnRatePercent, 2),
+        'churned_customers' => $churnedCustomers,
+        'active_customers_period_start_approx' => $activeAtStart,
+        'revenue_by_area' => $revenueByArea,
+        'notes' => [
+            'mrr' => 'Hazirda "active" statuslu RADIUS xidmetlerinin tarif aylik ucretlerinin cemi.',
+            'churn_rate_percent' => 'Yaxinlasma: dovr erzinde "expired"/"disabled" olan xidmetlerin dovr basindaki aktiv sayina nisbeti. Xidmet seviyyesindedir, deaktivasiya sebebini ayirmir (muveqqeti dayandirma da daxil ola biler).',
+        ],
+    ];
+}
+
 function app_statistics_center_context(PDO $db, array $user, array $query = []): array
 {
     $dates = app_finance_date_range($query);
@@ -92,10 +166,28 @@ function app_statistics_center_context(PDO $db, array $user, array $query = []):
     if ($selectedMetric !== 'all' && !isset($allowedMetrics[$selectedMetric])) {
         $selectedMetric = 'all';
     }
+    if (empty($dates['valid'])) {
+        return [
+            'generated_at' => date(DATE_ATOM),
+            'range' => (string) ($dates['range'] ?? 'custom'),
+            'start_date' => '',
+            'end_date' => '',
+            'timezone' => (string) ($dates['timezone'] ?? app_timezone()),
+            'status' => 'error',
+            'error' => (string) ($dates['error'] ?? 'invalid_date_range'),
+            'selected_metric' => $selectedMetric,
+            'available_metrics' => $allowedMetrics,
+            'datasets' => [],
+            'kpis' => [],
+            'is_admin' => app_statistics_user_is_admin($user),
+            'source_notes' => [],
+            'data_quality' => [],
+        ];
+    }
 
     $params = [
-        'start_at' => $dates['start_date'] . ' 00:00:00',
-        'end_at' => date('Y-m-d 00:00:00', strtotime($dates['end_date'] . ' +1 day')),
+        'start_at' => $dates['start_at'],
+        'end_at' => $dates['operational_end_at_exclusive'],
     ];
     $canFinance = app_statistics_user_is_admin($user) || app_portal_can_access_module($user, 'finance');
     $canBilling = app_statistics_user_is_admin($user) || app_portal_can_access_module($user, 'billing');
@@ -145,8 +237,7 @@ function app_statistics_center_context(PDO $db, array $user, array $query = []):
                FROM communication_messages
               WHERE created_at >= :start_at AND created_at < :end_at
               GROUP BY COALESCE(NULLIF(channel, ""), "Digər")
-              ORDER BY value_total DESC
-              LIMIT 12',
+              ORDER BY value_total DESC',
             $params
         );
     }
@@ -179,37 +270,61 @@ function app_statistics_center_context(PDO $db, array $user, array $query = []):
     }
 
     foreach ($allowedMetrics as $key => $metric) {
+        $allRows = (array) ($datasets[$key] ?? []);
+        $totalValue = array_sum(array_column($allRows, 'value'));
+        $totalCount = array_sum(array_column($allRows, 'count'));
         $datasets[$key] = [
             'key' => $key,
             'title' => (string) $metric['label'],
             'kind' => (string) $metric['kind'],
             'icon' => (string) $metric['icon'],
-            'rows' => array_slice((array) ($datasets[$key] ?? []), 0, 12),
+            'rows' => array_slice($allRows, 0, 12),
+            'total_value' => $totalValue,
+            'total_count' => $totalCount,
+            'truncated' => count($allRows) > 12,
         ];
     }
 
     $kpis = [];
     foreach ($datasets as $key => $dataset) {
-        $rows = (array) ($dataset['rows'] ?? []);
         $kpis[$key] = [
             'key' => $key,
             'label' => (string) ($dataset['title'] ?? $key),
             'kind' => (string) ($dataset['kind'] ?? 'count'),
-            'value' => array_sum(array_column($rows, 'value')),
-            'count' => array_sum(array_column($rows, 'count')),
+            'value' => (float) ($dataset['total_value'] ?? 0),
+            'count' => (int) ($dataset['total_count'] ?? 0),
         ];
     }
 
+    $isAdmin = app_statistics_user_is_admin($user);
+
     return [
         'generated_at' => date(DATE_ATOM),
+        'status' => 'ok',
         'range' => $dates['range'],
         'start_date' => $dates['start_date'],
         'end_date' => $dates['end_date'],
+        'timezone' => $dates['timezone'],
+        'semantic' => $dates['semantic'],
+        'as_of_at' => $dates['as_of_at'],
         'selected_metric' => $selectedMetric,
         'available_metrics' => $allowedMetrics,
         'datasets' => $datasets,
         'kpis' => $kpis,
-        'is_admin' => app_statistics_user_is_admin($user),
+        'ceo_kpis' => $isAdmin ? app_statistics_ceo_kpis($db, $dates) : [],
+        'is_admin' => $isAdmin,
+        'data_quality' => [
+            'future_billing_payment_rows' => (int) (
+                $finance['data_quality']['future_billing_payment_rows']
+                ?? $billing['data_quality']['future_billing_payment_rows']
+                ?? 0
+            ),
+            'future_rows_excluded' => (bool) (
+                $finance['data_quality']['future_rows_excluded']
+                ?? $billing['data_quality']['future_rows_excluded']
+                ?? false
+            ),
+        ],
         'source_notes' => [
             'income' => $canFinance ? 'Billing ödənişləri və təsdiqlənmiş əl ilə daxil edilən gəlirlər.' : 'Billing ödəniş qeydləri.',
             'expenses' => 'Maliyyə modulunda xərc kimi qeydə alınmış əməliyyatlar.',

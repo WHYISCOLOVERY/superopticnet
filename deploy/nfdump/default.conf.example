@@ -1,0 +1,10 @@
+# SuperOptic NAT Event Logging collector
+# Install as /etc/nfdump/default.conf and restart nfdump.
+
+options='-l /var/log/superoptic/netflow -p 2055 -t 300 -S 2 -z=lz4:1 -e'
+
+# Configure expiration once after creating the directory:
+#   nfexpire -u /var/log/superoptic/netflow -s 80G -t 30d -w 90
+#
+# The size limit is an operational disk guardrail. Size the final retention on
+# dedicated encrypted storage from the measured production event rate.

@@ -4,6 +4,9 @@ declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/audit-log-lib.php';
 require_once __DIR__ . '/communication-provider.php';
+require_once __DIR__ . '/noc-authorization-lib.php';
+require_once __DIR__ . '/device-credential-vault-lib.php';
+require_once __DIR__ . '/business-rules-lib.php';
 
 function app_mgs_mask(string $value): string
 {
@@ -20,11 +23,91 @@ function app_mgs_mask(string $value): string
     return substr($value, 0, 3) . str_repeat('*', max(3, $length - 6)) . substr($value, -3);
 }
 
+function app_mgs_required_schema_tables(): array
+{
+    return [
+        'mgs_alarm_events',
+        'mgs_operation_actions',
+        'device_learning_profiles',
+        'device_access_overrides',
+        'monitor_map_nodes',
+        'mgs_runtime_settings',
+        'mgs_process_registry',
+        'mgs_dedup_registry',
+        'telegram_bot_registry',
+        'inventory_stock_items',
+        'inventory_categories',
+        'inventory_stock_movements',
+        'inventory_asset_models',
+        'inventory_assets',
+        'inventory_cable_drums',
+        'inventory_lifecycle_movements',
+        'inventory_work_order_materials',
+        'customer_equipment_assignments',
+        'inventory_asset_returns',
+        'inventory_asset_inspections',
+        'inventory_device_detection_evidence',
+        'finance_asset_depreciations',
+        'finance_debt_ledger',
+        'finance_debt_payments',
+        'finance_e_invoice_imports',
+        'hr_payroll_legal_profiles',
+        'hr_payroll_records',
+        'hr_leave_requests',
+        'hr_travel_requests',
+        'hr_employee_documents',
+        'hr_employee_compensations',
+        'hr_attendance_profiles',
+        'hr_attendance_events',
+        'hr_score_events',
+        'employee_work_snapshots',
+        'device_config_backups',
+    ];
+}
+
+function app_mgs_schema_ready(PDO $db): bool
+{
+    // Memoize a positive result per request/connection: this runs an
+    // information_schema query and is reached from 100+ call sites per page.
+    static $readyFor = null;
+    if ($readyFor === spl_object_id($db)) {
+        return true;
+    }
+
+    $tables = app_mgs_required_schema_tables();
+    $placeholders = implode(',', array_fill(0, count($tables), '?'));
+    try {
+        $statement = $db->prepare(
+            'SELECT COUNT(*)
+               FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME IN (' . $placeholders . ')'
+        );
+        $statement->execute($tables);
+        if ((int) $statement->fetchColumn() === count($tables)) {
+            $readyFor = spl_object_id($db);
+            return true;
+        }
+        return false;
+    } catch (Throwable) {
+        return false;
+    }
+}
+
 function app_mgs_ensure_schema(?PDO $db = null): bool
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO) {
         return false;
+    }
+    // Once the schema was ensured on this connection, skip the 36 CREATE TABLE
+    // IF NOT EXISTS statements and seeds for the rest of the request.
+    static $ensuredFor = null;
+    if ($ensuredFor === spl_object_id($db)) {
+        return true;
+    }
+    if (strtolower((string) app_setting('db_bootstrap_mode', 'cached')) === 'off') {
+        return app_mgs_schema_ready($db);
     }
 
     $statements = [
@@ -57,7 +140,7 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
             action_type VARCHAR(64) NOT NULL,
             entity_type VARCHAR(64) NOT NULL DEFAULT '',
             entity_id VARCHAR(191) NOT NULL DEFAULT '',
-            status ENUM('planned','dry_run','pending','executed','failed','skipped') NOT NULL DEFAULT 'planned',
+            status ENUM('planned','dry_run','pending','executed','failed','skipped','reversed') NOT NULL DEFAULT 'planned',
             actor_account_id BIGINT UNSIGNED DEFAULT NULL,
             actor_name VARCHAR(191) DEFAULT NULL,
             summary VARCHAR(255) DEFAULT NULL,
@@ -624,6 +707,25 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
             KEY idx_hr_comp_employee (employee_account_id, status, effective_from),
             KEY idx_hr_comp_effective (effective_from, status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS hr_attendance_profiles (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            employee_account_id BIGINT UNSIGNED NOT NULL,
+            branch_id VARCHAR(64) DEFAULT NULL,
+            card_code VARCHAR(128) DEFAULT NULL,
+            work_start_time TIME NOT NULL DEFAULT '09:00:00',
+            work_end_time TIME NOT NULL DEFAULT '18:00:00',
+            late_grace_minutes INT UNSIGNED NOT NULL DEFAULT 10,
+            expected_work_minutes INT UNSIGNED NOT NULL DEFAULT 480,
+            note TEXT DEFAULT NULL,
+            status ENUM('active','disabled') NOT NULL DEFAULT 'active',
+            updated_by_account_id BIGINT UNSIGNED DEFAULT NULL,
+            updated_by_name VARCHAR(191) DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_hr_attendance_profile_employee (employee_account_id),
+            UNIQUE KEY uq_hr_attendance_profile_card (card_code),
+            KEY idx_hr_attendance_profile_branch (branch_id, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS hr_attendance_events (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             employee_account_id BIGINT UNSIGNED NOT NULL,
@@ -712,7 +814,12 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
         return false;
     }
 
-    return true;
+    if (app_mgs_schema_ready($db)) {
+        $ensuredFor = spl_object_id($db);
+        return true;
+    }
+
+    return false;
 }
 
 function app_mgs_hr_money(mixed $value): float
@@ -1131,6 +1238,86 @@ function app_mgs_hr_status(string $value, array $allowed, string $fallback): str
     return in_array($value, $allowed, true) ? $value : $fallback;
 }
 
+function app_mgs_save_hr_attendance_profile(array $input, array $actor = [], ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_unavailable'];
+    }
+    $employeeRole = strtolower((string) ($actor['employee_role'] ?? ''));
+    if (!app_portal_is_admin($actor) && $employeeRole !== 'hr') {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+
+    $employeeId = max(0, (int) ($input['employee_account_id'] ?? $input['userId'] ?? 0));
+    $employee = app_mgs_hr_employee_record($db, $employeeId);
+    if ($employeeId <= 0 || $employee === []) {
+        return ['ok' => false, 'error' => 'employee_not_found'];
+    }
+    $normalizeTime = static function (mixed $value, string $fallback): string {
+        $text = trim((string) $value);
+        if (preg_match('/^\d{2}:\d{2}(?::\d{2})?$/', $text) !== 1) {
+            return $fallback;
+        }
+        return substr($text, 0, 5) . ':00';
+    };
+    $params = [
+        'employee_account_id' => $employeeId,
+        'branch_id' => clean_text((string) ($input['branch_id'] ?? $input['branchId'] ?? '')) ?: null,
+        'card_code' => clean_text((string) ($input['card_code'] ?? $input['cardCode'] ?? '')) ?: null,
+        'work_start_time' => $normalizeTime($input['work_start_time'] ?? $input['workStartTime'] ?? '', '09:00:00'),
+        'work_end_time' => $normalizeTime($input['work_end_time'] ?? $input['workEndTime'] ?? '', '18:00:00'),
+        'late_grace_minutes' => max(0, min(240, (int) ($input['late_grace_minutes'] ?? $input['lateGraceMinutes'] ?? 10))),
+        'expected_work_minutes' => max(1, min(1440, (int) ($input['expected_work_minutes'] ?? $input['expectedWorkMinutes'] ?? 480))),
+        'note' => clean_text((string) ($input['note_text'] ?? $input['noteText'] ?? '')) ?: null,
+        'updated_by_account_id' => (int) ($actor['id'] ?? 0) ?: null,
+        'updated_by_name' => clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system')),
+    ];
+
+    try {
+        $beforeStatement = $db->prepare('SELECT * FROM hr_attendance_profiles WHERE employee_account_id = :employee_id LIMIT 1');
+        $beforeStatement->execute(['employee_id' => $employeeId]);
+        $before = $beforeStatement->fetch(PDO::FETCH_ASSOC) ?: null;
+        $statement = $db->prepare(
+            'INSERT INTO hr_attendance_profiles (
+                employee_account_id, branch_id, card_code, work_start_time, work_end_time,
+                late_grace_minutes, expected_work_minutes, note, updated_by_account_id, updated_by_name
+             ) VALUES (
+                :employee_account_id, :branch_id, :card_code, :work_start_time, :work_end_time,
+                :late_grace_minutes, :expected_work_minutes, :note, :updated_by_account_id, :updated_by_name
+             )
+             ON DUPLICATE KEY UPDATE
+                branch_id = VALUES(branch_id),
+                card_code = VALUES(card_code),
+                work_start_time = VALUES(work_start_time),
+                work_end_time = VALUES(work_end_time),
+                late_grace_minutes = VALUES(late_grace_minutes),
+                expected_work_minutes = VALUES(expected_work_minutes),
+                note = VALUES(note),
+                status = "active",
+                updated_by_account_id = VALUES(updated_by_account_id),
+                updated_by_name = VALUES(updated_by_name)'
+        );
+        $statement->execute($params);
+        $beforeStatement->execute(['employee_id' => $employeeId]);
+        $after = $beforeStatement->fetch(PDO::FETCH_ASSOC) ?: [];
+        app_mgs_hr_write_audit(
+            $db,
+            'hr_attendance_profile_save',
+            $employeeId,
+            $actor,
+            'Davamiyyet profili saxlandi',
+            ['branch_id' => $params['branch_id']],
+            '',
+            $before,
+            $after
+        );
+        return ['ok' => true, 'profile' => $after];
+    } catch (Throwable $exception) {
+        return ['ok' => false, 'error' => 'attendance_profile_save_failed', 'detail' => $exception->getMessage()];
+    }
+}
+
 function app_mgs_record_hr_attendance_event(array $input, array $actor = [], ?PDO $db = null): array
 {
     $db = $db instanceof PDO ? $db : app_db();
@@ -1154,39 +1341,48 @@ function app_mgs_record_hr_attendance_event(array $input, array $actor = [], ?PD
     $note = clean_text((string) ($input['note'] ?? '')) ?: null;
     $employeeName = (string) ($employee['full_name'] ?? $employee['login'] ?? ('Employee #' . $employeeId));
 
+    $ownsTransaction = !$db->inTransaction();
     try {
-        $db->beginTransaction();
+        if ($ownsTransaction) {
+            $db->beginTransaction();
+        }
         $select = $db->prepare('SELECT * FROM hr_attendance_events WHERE employee_account_id = :employee_id AND work_date = :work_date FOR UPDATE');
         $select->execute(['employee_id' => $employeeId, 'work_date' => $workDate]);
         $before = $select->fetch(PDO::FETCH_ASSOC) ?: null;
 
         if ($eventType === 'check_in') {
             if (is_array($before) && !empty($before['check_in_at'])) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'already_checked_in'];
             }
-            $profile = $db->prepare('SELECT payload_json FROM mgs_operation_actions WHERE action_type = "attendance_profile_save" AND entity_id = :employee_id ORDER BY id DESC LIMIT 1');
+            $profile = $db->prepare(
+                'SELECT work_start_time, late_grace_minutes
+                   FROM hr_attendance_profiles
+                  WHERE employee_account_id = :employee_id
+                    AND status = "active"
+                  LIMIT 1'
+            );
             $profile->execute(['employee_id' => (string) $employeeId]);
-            $profilePayload = json_decode((string) ($profile->fetchColumn() ?: '{}'), true);
-            $profilePayload = is_array($profilePayload) ? $profilePayload : [];
-            $startTime = preg_match('/^\d{2}:\d{2}$/', (string) ($profilePayload['workStartTime'] ?? '09:00')) ? (string) $profilePayload['workStartTime'] : '09:00';
-            $graceMinutes = max(0, (int) ($profilePayload['lateGraceMinutes'] ?? 10));
+            $profilePayload = $profile->fetch(PDO::FETCH_ASSOC) ?: [];
+            $startTimeRaw = substr((string) ($profilePayload['work_start_time'] ?? '09:00'), 0, 5);
+            $startTime = preg_match('/^\d{2}:\d{2}$/', $startTimeRaw) === 1 ? $startTimeRaw : '09:00';
+            $graceMinutes = max(0, (int) ($profilePayload['late_grace_minutes'] ?? 10));
             $lateAfter = new DateTimeImmutable($workDate . ' ' . $startTime . ':00');
             $status = $eventAt > $lateAfter->modify('+' . $graceMinutes . ' minutes') ? 'late' : 'present';
             $insert = $db->prepare('INSERT INTO hr_attendance_events (employee_account_id,employee_name,work_date,check_in_at,attendance_status,branch_id,source,note,checked_in_by_account_id) VALUES (:employee_id,:employee_name,:work_date,:event_at,:status,:branch_id,:source,:note,:actor_id) ON DUPLICATE KEY UPDATE check_in_at=VALUES(check_in_at),attendance_status=VALUES(attendance_status),branch_id=VALUES(branch_id),source=VALUES(source),note=VALUES(note),checked_in_by_account_id=VALUES(checked_in_by_account_id)');
             $insert->execute(['employee_id' => $employeeId, 'employee_name' => $employeeName, 'work_date' => $workDate, 'event_at' => $eventAt->format('Y-m-d H:i:s'), 'status' => $status, 'branch_id' => $branchId, 'source' => $source, 'note' => $note, 'actor_id' => (int) ($actor['id'] ?? 0) ?: null]);
         } else {
             if (!is_array($before) || empty($before['check_in_at'])) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'check_in_required'];
             }
             if (!empty($before['check_out_at'])) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'already_checked_out'];
             }
             $checkIn = new DateTimeImmutable((string) $before['check_in_at']);
             if ($eventAt < $checkIn) {
-                $db->rollBack();
+                if ($ownsTransaction) $db->rollBack();
                 return ['ok' => false, 'error' => 'invalid_checkout_time'];
             }
             $workedMinutes = max(0, (int) floor(($eventAt->getTimestamp() - $checkIn->getTimestamp()) / 60));
@@ -1197,9 +1393,10 @@ function app_mgs_record_hr_attendance_event(array $input, array $actor = [], ?PD
         $select->execute(['employee_id' => $employeeId, 'work_date' => $workDate]);
         $after = $select->fetch(PDO::FETCH_ASSOC) ?: [];
         app_mgs_hr_write_audit($db, 'hr_attendance_' . $eventType, $employeeId, $actor, $employeeName . ': ' . $eventType, ['work_date' => $workDate, 'source' => $source], '', $before, $after);
-        $db->commit();
+        if ($ownsTransaction) $db->commit();
         return ['ok' => true, 'record' => $after];
     } catch (Throwable $exception) {
+        if (!$ownsTransaction) throw $exception;
         if ($db->inTransaction()) {
             $db->rollBack();
         }
@@ -1567,7 +1764,10 @@ function app_mgs_save_hr_employee_compensation(array $input, array $actor = [], 
     $employeeId = (int) ($input['employee_account_id'] ?? $input['employee_id'] ?? 0);
     $employee=app_mgs_hr_employee_record($db,$employeeId);if($employee===[])return['ok'=>false,'error'=>'employee_not_found'];
     $employeeName=clean_text((string)($employee['full_name']??$employee['login']??''));
-    try{$reason=app_mgs_hr_required_reason($input['reason']??$input['change_reason']??$input['note']??$input['note_text']??'');}catch(InvalidArgumentException){return['ok'=>false,'error'=>'reason_required'];}
+    $reason = clean_text((string) ($input['reason'] ?? $input['change_reason'] ?? $input['note'] ?? $input['note_text'] ?? ''));
+    if ($reason === '') {
+        $reason = 'Maaş profili yeniləndi';
+    }
     $salaryMode = app_mgs_hr_status((string) ($input['salary_mode'] ?? 'gross'), ['gross', 'net'], 'gross');
     $effectiveFrom = app_mgs_hr_date_value($input['effective_from'] ?? null) ?? date('Y-m-d');
     if ($salaryMode === 'net') {
@@ -1682,6 +1882,8 @@ function app_mgs_hr_score_reason_defaults(): array
         'discipline' => ['title' => 'Intizam pozuntusu', 'points' => -10.0, 'type' => 'penalty'],
         'bonus' => ['title' => 'Mukafat', 'points' => 10.0, 'type' => 'reward'],
         'quality' => ['title' => 'Keyfiyyetli icra', 'points' => 5.0, 'type' => 'reward'],
+        'ticket_verified' => ['title' => 'Bilet telemetriya ile tesdiqlendi', 'points' => 5.0, 'type' => 'reward'],
+        'ticket_verification_failed' => ['title' => 'Hell olunmamis bilet baglanmaga gonderildi', 'points' => -5.0, 'type' => 'penalty'],
         'manual' => ['title' => 'Manual qeyd', 'points' => 0.0, 'type' => 'penalty'],
     ];
 }
@@ -1715,6 +1917,92 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
     }
 
     $eventDate = app_mgs_hr_date_value($input['event_date'] ?? null) ?? date('Y-m-d');
+
+    // Fairness rule (docs vision §9.3): a penalty must never land on a day the
+    // employee was on approved leave/sick time. Rewards and resets are not
+    // blocked -- only a negative points_delta on a day already covered by an
+    // approved/paid hr_leave_requests row is refused. This does not touch
+    // existing leave/payroll data; it only gates the score-event write.
+    if ($eventType === 'penalty' && empty($input['override_leave_conflict'])) {
+        $leaveConflict = $db->prepare(
+            "SELECT id, leave_type FROM hr_leave_requests
+              WHERE employee_account_id = :employee_id
+                AND status IN ('approved', 'paid')
+                AND start_date IS NOT NULL AND end_date IS NOT NULL
+                AND :event_date BETWEEN start_date AND end_date
+              LIMIT 1"
+        );
+        $leaveConflict->execute(['employee_id' => $employeeId, 'event_date' => $eventDate]);
+        $conflictRow = $leaveConflict->fetch(PDO::FETCH_ASSOC);
+        if (is_array($conflictRow)) {
+            return [
+                'ok' => false,
+                'error' => 'penalty_blocked_by_approved_leave',
+                'leave_request_id' => (int) $conflictRow['id'],
+                'leave_type' => (string) $conflictRow['leave_type'],
+            ];
+        }
+    }
+
+    // Fairness rule (vision §9.3): "isciye verilmeyen tapsiriq onun aleyhine
+    // hesablanmir" -- a task_missed penalty must reference a real ticket that
+    // was actually assigned to this employee, not just typed in against them.
+    if ($eventType === 'penalty' && $reasonCode === 'task_missed' && empty($input['override_unassigned_task'])) {
+        $relatedTicketNo = mb_substr(clean_text((string) ($input['related_ticket_no'] ?? $input['source_id'] ?? '')), 0, 32);
+        if ($relatedTicketNo === '') {
+            return ['ok' => false, 'error' => 'task_missed_requires_ticket_reference'];
+        }
+        $ticketCheck = $db->prepare('SELECT id, assigned_technician_account_id FROM portal_tickets WHERE ticket_no = :ticket_no LIMIT 1');
+        $ticketCheck->execute(['ticket_no' => $relatedTicketNo]);
+        $ticketRow = $ticketCheck->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($ticketRow)) {
+            return ['ok' => false, 'error' => 'related_ticket_not_found'];
+        }
+        if ((int) ($ticketRow['assigned_technician_account_id'] ?? 0) !== $employeeId) {
+            return ['ok' => false, 'error' => 'task_not_assigned_to_employee'];
+        }
+        $input['source_type'] = $input['source_type'] ?? 'ticket';
+        $input['source_id'] = $relatedTicketNo;
+
+        // Fairness rule (vision §9.3): "musterinin cavab vermemesi ayrica
+        // statusdur" / "basqa sobeden asili gecikme ayrilir" -- if the ticket
+        // was sitting in "awaiting customer response" or "blocked on another
+        // department" as of the penalty's own event_date, the delay is not
+        // the assigned technician's fault.
+        if (empty($input['override_ticket_waiting_state'])) {
+            $waitingState = app_db_ticket_waiting_state_as_of((int) $ticketRow['id'], $eventDate);
+            if (!empty($waitingState['waiting'])) {
+                if ((string) ($waitingState['type'] ?? '') === 'customer_no_response') {
+                    return ['ok' => false, 'error' => 'penalty_blocked_by_customer_no_response'];
+                }
+                return [
+                    'ok' => false,
+                    'error' => 'penalty_blocked_by_dept_dependency',
+                    'waiting_on_department' => (string) ($waitingState['department'] ?? ''),
+                ];
+            }
+        }
+
+        // Fairness rule (vision §9.3): "kutlevi sebeke incident-i texnikin
+        // sexsi nasazligi sayilmir" -- if an unusual number of tickets opened
+        // company-wide the same day, treat it as a likely mass incident and
+        // refuse the individual penalty rather than silently accept it.
+        $massThreshold = (int) app_business_rule_get($db, 'hr_mass_incident_daily_ticket_threshold', 30);
+        if ($massThreshold > 0 && empty($input['override_mass_incident'])) {
+            $ticketSurge = $db->prepare('SELECT COUNT(*) FROM portal_tickets WHERE DATE(opened_at) = :event_date');
+            $ticketSurge->execute(['event_date' => $eventDate]);
+            $ticketCountThatDay = (int) $ticketSurge->fetchColumn();
+            if ($ticketCountThatDay >= $massThreshold) {
+                return [
+                    'ok' => false,
+                    'error' => 'penalty_blocked_by_mass_incident',
+                    'ticket_count' => $ticketCountThatDay,
+                    'threshold' => $massThreshold,
+                ];
+            }
+        }
+    }
+
     $record = [
         'employee_account_id' => $employeeId,
         'employee_name' => clean_text((string)($employee['full_name']??$employee['login']??'')),
@@ -1726,19 +2014,33 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
         'period_start' => app_mgs_hr_date_value($input['period_start'] ?? null),
         'period_end' => app_mgs_hr_date_value($input['period_end'] ?? null),
         'note' => clean_text((string) ($input['note'] ?? $input['note_text'] ?? '')),
+        'source_type' => clean_text((string) ($input['source_type'] ?? '')) ?: null,
+        'source_id' => clean_text((string) ($input['source_id'] ?? '')) ?: null,
+        'idempotency_key' => mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191) ?: null,
         'created_by_account_id' => (int) ($actor['id'] ?? 0) ?: null,
         'created_by_name' => clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system')),
     ];
 
     try {
         $db->beginTransaction();
+        if (is_string($record['idempotency_key']) && $record['idempotency_key'] !== '') {
+            $duplicate = $db->prepare('SELECT id FROM hr_score_events WHERE idempotency_key = :idempotency_key LIMIT 1 FOR UPDATE');
+            $duplicate->execute(['idempotency_key' => $record['idempotency_key']]);
+            $existingId = (int) ($duplicate->fetchColumn() ?: 0);
+            if ($existingId > 0) {
+                $db->rollBack();
+                return ['ok' => true, 'id' => $existingId, 'existing' => true, 'record' => $record];
+            }
+        }
         $statement = $db->prepare(
             'INSERT INTO hr_score_events (
                 employee_account_id, employee_name, event_type, reason_code, title, points_delta,
-                event_date, period_start, period_end, note, created_by_account_id, created_by_name
+                event_date, period_start, period_end, note, source_type, source_id, idempotency_key,
+                created_by_account_id, created_by_name
              ) VALUES (
                 :employee_account_id, :employee_name, :event_type, :reason_code, :title, :points_delta,
-                :event_date, :period_start, :period_end, :note, :created_by_account_id, :created_by_name
+                :event_date, :period_start, :period_end, :note, :source_type, :source_id, :idempotency_key,
+                :created_by_account_id, :created_by_name
              )'
         );
         $statement->execute($record);
@@ -1751,6 +2053,192 @@ function app_mgs_record_hr_score_event(array $input, array $actor = [], ?PDO $db
     }
 
     return ['ok' => true, 'id' => $id, 'record' => $record];
+}
+
+// Fairness rule (vision §9.3): "iscinin KPI-ye etiraz mexanizmi olur" -- an
+// employee (or HR on their behalf) can dispute a score event; an admin who is
+// not the appellant reviews it and, if overturned, the effect is reversed via
+// a new compensating hr_score_events entry (never edited/deleted in place).
+function app_mgs_hr_score_appeal_file(PDO $db, int $scoreEventId, string $reason, array $actor): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    $reason = mb_substr(clean_text($reason), 0, 500);
+    if ($scoreEventId <= 0 || $reason === '') {
+        return ['ok' => false, 'error' => 'invalid_appeal'];
+    }
+    $eventStatement = $db->prepare('SELECT id, employee_account_id, employee_name FROM hr_score_events WHERE id = :id LIMIT 1');
+    $eventStatement->execute(['id' => $scoreEventId]);
+    $eventRow = $eventStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($eventRow)) {
+        return ['ok' => false, 'error' => 'score_event_not_found'];
+    }
+    $employeeId = (int) $eventRow['employee_account_id'];
+    $actorId = (int) ($actor['id'] ?? 0);
+    $isSelf = $actorId > 0 && $actorId === $employeeId;
+    if (!$isSelf && !app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    $existing = $db->prepare("SELECT id FROM hr_score_appeals WHERE score_event_id = :score_event_id AND status = 'pending' LIMIT 1");
+    $existing->execute(['score_event_id' => $scoreEventId]);
+    if ((int) ($existing->fetchColumn() ?: 0) > 0) {
+        return ['ok' => false, 'error' => 'appeal_already_pending'];
+    }
+    try {
+        $db->beginTransaction();
+        $insert = $db->prepare(
+            'INSERT INTO hr_score_appeals (score_event_id, employee_account_id, appeal_reason, status, created_by_account_id, created_by_name)
+             VALUES (:score_event_id, :employee_account_id, :appeal_reason, "pending", :actor_id, :actor_name)'
+        );
+        $insert->execute([
+            'score_event_id' => $scoreEventId,
+            'employee_account_id' => $employeeId,
+            'appeal_reason' => $reason,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'employee')),
+        ]);
+        $id = (int) $db->lastInsertId();
+        app_mgs_hr_write_audit($db, 'hr_score_appeal', $employeeId, $actor, 'HR score appeal filed for event ' . $scoreEventId, ['id' => $id, 'score_event_id' => $scoreEventId], $reason, [], ['id' => $id, 'status' => 'pending'], 'score');
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'appeal_file_failed', 'message' => $exception->getMessage()];
+    }
+    return ['ok' => true, 'id' => $id];
+}
+
+function app_mgs_hr_score_appeal_resolve(PDO $db, int $appealId, string $decision, string $resolutionNote, array $actor): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['upheld', 'overturned'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 500);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    // NOTE: app_mgs_record_hr_score_event() manages its own top-level
+    // transaction, so it cannot be called while one is already open on $db --
+    // this function therefore does its read/validate and reversal-record
+    // steps OUTSIDE a transaction, then performs the actual status write as a
+    // single atomic UPDATE ... WHERE status = 'pending' (a compare-and-swap
+    // that fails safely if another reviewer already resolved the appeal).
+    $appealStatement = $db->prepare('SELECT * FROM hr_score_appeals WHERE id = :id LIMIT 1');
+    $appealStatement->execute(['id' => $appealId]);
+    $appeal = $appealStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($appeal)) {
+        return ['ok' => false, 'error' => 'appeal_not_found'];
+    }
+    if ((string) $appeal['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'appeal_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) $appeal['employee_account_id']) {
+        return ['ok' => false, 'error' => 'appellant_cannot_review_own_appeal'];
+    }
+
+    try {
+        $reversalId = null;
+        if ($decision === 'overturned') {
+            $eventStatement = $db->prepare('SELECT * FROM hr_score_events WHERE id = :id LIMIT 1');
+            $eventStatement->execute(['id' => (int) $appeal['score_event_id']]);
+            $scoreEvent = $eventStatement->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($scoreEvent)) {
+                return ['ok' => false, 'error' => 'original_score_event_missing'];
+            }
+            $originalPoints = (float) $scoreEvent['points_delta'];
+            $reversal = app_mgs_record_hr_score_event([
+                'employee_account_id' => (int) $scoreEvent['employee_account_id'],
+                'reason_code' => 'appeal_overturned',
+                'event_type' => $originalPoints < 0 ? 'reward' : 'penalty',
+                'points_delta' => abs($originalPoints),
+                'title' => 'Etiraz neticesinde geri qaytarildi',
+                'reason' => 'Appeal #' . $appealId . ' overturned: ' . $resolutionNote,
+                'note' => $resolutionNote,
+                'source_type' => 'hr_score_appeal',
+                'source_id' => (string) $appealId,
+                'idempotency_key' => 'appeal-reversal:' . $appealId,
+            ], $actor, $db);
+            if (empty($reversal['ok'])) {
+                return ['ok' => false, 'error' => 'reversal_failed', 'detail' => (string) ($reversal['error'] ?? '')];
+            }
+            $reversalId = (int) ($reversal['id'] ?? 0) ?: null;
+        }
+
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE hr_score_appeals SET status = :status, reviewed_by_account_id = :actor_id, reviewed_by_name = :actor_name,
+                resolution_note = :resolution_note, reversal_score_event_id = :reversal_id, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'reversal_id' => $reversalId,
+            'id' => $appealId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'appeal_already_resolved'];
+        }
+        app_mgs_hr_write_audit($db, 'hr_score_appeal', (int) $appeal['employee_account_id'], $actor, 'HR score appeal ' . $decision . ': #' . $appealId, ['id' => $appealId, 'decision' => $decision, 'reversal_score_event_id' => $reversalId], $resolutionNote, $appeal, ['id' => $appealId, 'status' => $decision], 'score');
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'appeal_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'status' => $decision, 'reversal_score_event_id' => $reversalId];
+}
+
+function app_mgs_hr_score_appeals(PDO $db, array $filters = []): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $where = [];
+    $params = [];
+    if (!empty($filters['status'])) {
+        $where[] = 'a.status = :status';
+        $params['status'] = (string) $filters['status'];
+    }
+    if (!empty($filters['employee_account_id'])) {
+        $where[] = 'a.employee_account_id = :employee_account_id';
+        $params['employee_account_id'] = (int) $filters['employee_account_id'];
+    }
+    $sql = 'SELECT a.*, e.employee_name AS score_event_title, e.points_delta AS score_event_points, e.reason_code AS score_event_reason_code
+            FROM hr_score_appeals a
+            LEFT JOIN hr_score_events e ON e.id = a.score_event_id'
+        . ($where !== [] ? ' WHERE ' . implode(' AND ', $where) : '')
+        . ' ORDER BY a.created_at DESC LIMIT 200';
+    $statement = $db->prepare($sql);
+    $statement->execute($params);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_mgs_hr_score_recent_events(PDO $db, int $limit = 25): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $limit = max(1, min(100, $limit));
+    $statement = $db->prepare(
+        "SELECT e.*, (SELECT COUNT(*) FROM hr_score_appeals a WHERE a.score_event_id = e.id AND a.status = 'pending') AS has_pending_appeal
+         FROM hr_score_events e
+         ORDER BY e.id DESC LIMIT {$limit}"
+    );
+    $statement->execute();
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
 function app_mgs_hr_score_summary(int $employeeId, ?string $periodStart = null, ?string $periodEnd = null, ?PDO $db = null): array
@@ -1988,90 +2476,124 @@ function app_mgs_hr_record_finance_expense(string $recordType, int $recordId, ar
         return ['ok' => false, 'error' => 'record_type_invalid'];
     }
 
-    $record = app_mgs_hr_load_record($db, $recordType, $recordId);
-    if (!is_array($record)) {
-        return ['ok' => false, 'error' => 'record_not_found'];
+    $employeeRole = strtolower(trim((string) ($actor['employee_role'] ?? '')));
+    if (!app_portal_is_admin($actor) && $employeeRole !== 'hr') {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+    if (!function_exists('app_finance_post_source_entry')) {
+        require_once __DIR__ . '/finance-operations-lib.php';
+    }
+    if (!function_exists('app_finance_post_source_entry')) {
+        return ['ok' => false, 'error' => 'finance_service_unavailable'];
     }
 
-    $recordStatus = (string) ($record['status'] ?? '');
-    if (!in_array($recordStatus, (array) $map['payable_statuses'], true)) {
-        return ['ok' => false, 'error' => 'record_not_payable'];
-    }
-
-    $amount = app_mgs_hr_money($record[$map['amount_column']] ?? 0);
-    if ($amount <= 0) {
-        return ['ok' => false, 'error' => 'amount_not_ready'];
-    }
-
-    $entityId = app_mgs_hr_record_entity_id($recordType, $recordId);
     try {
-        $existing = $db->prepare(
-            'SELECT *
-               FROM mgs_operation_actions
-              WHERE action_type = "hr_finance_expense_recorded"
-                AND entity_type = "finance"
-                AND entity_id = :entity_id
-              ORDER BY id DESC
-              LIMIT 1'
-        );
-        $existing->execute(['entity_id' => $entityId]);
-        $existingRow = $existing->fetch(PDO::FETCH_ASSOC);
-        if (is_array($existingRow)) {
-            return [
-                'ok' => true,
-                'action_id' => (int) ($existingRow['id'] ?? 0),
-                'amount' => $amount,
-                'record' => $record,
-                'existing' => true,
+        $db->beginTransaction();
+        $load = $db->prepare('SELECT * FROM ' . $map['table'] . ' WHERE id = :id FOR UPDATE');
+        $load->execute(['id' => $recordId]);
+        $record = $load->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($record)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'record_not_found'];
+        }
+
+        $recordStatus = (string) ($record['status'] ?? '');
+        if (!in_array($recordStatus, (array) $map['payable_statuses'], true)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'record_not_payable'];
+        }
+        $amount = app_mgs_hr_money($record[$map['amount_column']] ?? 0);
+        if ($amount <= 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'amount_not_ready'];
+        }
+
+        $employeeName = clean_text((string) ($record['employee_name'] ?? 'HR employee'));
+        $period = app_mgs_hr_record_period($record, $recordType);
+        $sourceId = $recordType . ':' . $recordId;
+        $payload = [
+            'source' => 'hr_finance_bridge',
+            'record_type' => $recordType,
+            'record_id' => $recordId,
+            'record_status' => $recordStatus,
+            'employee_name' => $employeeName,
+            'employee_account_id' => (int) ($record['employee_account_id'] ?? 0),
+            'period' => $period,
+        ];
+        if ($recordType === 'payroll') {
+            $payload['payroll_breakdown'] = [
+                'gross_salary' => app_mgs_hr_money($record['gross_salary'] ?? 0),
+                'leave_pay' => app_mgs_hr_money($record['leave_pay'] ?? 0),
+                'taxable_travel_amount' => app_mgs_hr_money($record['taxable_travel_amount'] ?? 0),
+                'payroll_tax_base' => app_mgs_hr_money($record['payroll_tax_base'] ?? 0),
+                'employee_income_tax' => app_mgs_hr_money($record['employee_income_tax'] ?? 0),
+                'employee_social_insurance' => app_mgs_hr_money($record['employee_social_insurance'] ?? 0),
+                'employee_unemployment_insurance' => app_mgs_hr_money($record['employee_unemployment_insurance'] ?? 0),
+                'employee_health_insurance' => app_mgs_hr_money($record['employee_health_insurance'] ?? 0),
+                'employee_total_deductions' => app_mgs_hr_money($record['employee_total_deductions'] ?? 0),
+                'net_salary' => app_mgs_hr_money($record['net_salary'] ?? 0),
+                'employer_social_insurance' => app_mgs_hr_money($record['employer_social_insurance'] ?? 0),
+                'employer_unemployment_insurance' => app_mgs_hr_money($record['employer_unemployment_insurance'] ?? 0),
+                'employer_health_insurance' => app_mgs_hr_money($record['employer_health_insurance'] ?? 0),
+                'employer_total_contributions' => app_mgs_hr_money($record['employer_total_contributions'] ?? 0),
+                'employer_total_cost' => app_mgs_hr_money($record['employer_total_cost'] ?? 0),
             ];
         }
-    } catch (Throwable) {
-    }
+        $result = app_finance_post_source_entry($db, [
+            'entry_type' => 'expense',
+            'title' => $map['label'] . ' xerc: ' . $employeeName,
+            'category' => (string) $map['category'],
+            'amount' => $amount,
+            'currency' => 'AZN',
+            'transaction_date' => substr((string) ($record['period_month'] ?? $record['start_date'] ?? date('Y-m-d')), 0, 10),
+            'employee_account_id' => (int) ($record['employee_account_id'] ?? 0),
+            'payment_source' => 'hr',
+            'source_type' => 'hr',
+            'source_id' => $sourceId,
+            'idempotency_key' => 'hr:' . $sourceId,
+            'correlation_id' => app_request_correlation_id(),
+            'payload' => $payload,
+        ], $actor);
+        if (empty($result['ok'])) {
+            $db->rollBack();
+            return $result;
+        }
 
-    $employeeName = clean_text((string) ($record['employee_name'] ?? 'HR employee'));
-    $period = app_mgs_hr_record_period($record, $recordType);
-    $payload = [
-        'source' => 'hr_finance_bridge',
-        'entryType' => 'expense',
-        'category' => (string) $map['category'],
-        'title' => $map['label'] . ' xerc: ' . $employeeName,
-        'amount' => $amount,
-        'employeeName' => $employeeName,
-        'employeeAccountId' => (int) ($record['employee_account_id'] ?? 0),
-        'recordType' => $recordType,
-        'recordId' => $recordId,
-        'recordStatus' => $recordStatus,
-        'period' => $period,
-    ];
-
-    try {
-        $statement = $db->prepare(
-            'INSERT INTO mgs_operation_actions (
-                action_type, entity_type, entity_id, status, actor_account_id, actor_name, summary, payload_json, executed_at
-             ) VALUES (
-                "hr_finance_expense_recorded", "finance", :entity_id, "executed", :actor_account_id, :actor_name, :summary, :payload_json, :executed_at
-             )'
+        app_mgs_hr_write_audit(
+            $db,
+            'hr_finance_expense_recorded',
+            (int) ($record['employee_account_id'] ?? 0),
+            $actor,
+            'HR xerc Finance ledger-e yazildi: ' . $map['label'] . ' #' . $recordId,
+            [
+                'recordType' => $recordType,
+                'recordId' => $recordId,
+                'financeEntryId' => (int) ($result['id'] ?? 0),
+                'amount' => $amount,
+                'correlationId' => app_request_correlation_id(),
+            ],
+            '',
+            null,
+            is_array($result['record'] ?? null) ? $result['record'] : [],
+            'write'
         );
-        $statement->execute([
-            'entity_id' => $entityId,
-            'actor_account_id' => (int) ($actor['id'] ?? 0) ?: null,
-            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system')),
-            'summary' => mb_substr('HR finance expense: ' . $map['label'] . ' ' . $employeeName, 0, 255),
-            'payload_json' => app_db_json_encode($payload),
-            'executed_at' => app_db_now(),
-        ]);
-    } catch (Throwable $exception) {
-        return ['ok' => false, 'error' => 'finance_expense_insert_failed', 'message' => $exception->getMessage()];
-    }
+        $db->commit();
 
-    return [
-        'ok' => true,
-        'action_id' => (int) $db->lastInsertId(),
-        'amount' => $amount,
-        'record' => $record,
-        'payload' => $payload,
-        'existing' => false,
-    ];
+        return [
+            'ok' => true,
+            'action_id' => (int) ($result['id'] ?? 0),
+            'finance_entry_id' => (int) ($result['id'] ?? 0),
+            'amount' => $amount,
+            'record' => $record,
+            'payload' => $payload,
+            'existing' => !empty($result['existing']),
+        ];
+    } catch (Throwable) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'finance_expense_insert_failed'];
+    }
 }
 
 function app_mgs_hr_cost_report_rows(?PDO $db = null, int $limit = 20): array
@@ -2130,16 +2652,22 @@ function app_mgs_hr_finance_bridge_rows(?PDO $db = null, int $limit = 10): array
 
     try {
         $statement = $db->prepare(
-            'SELECT *
-               FROM mgs_operation_actions
-              WHERE action_type = "hr_finance_expense_recorded"
+            'SELECT id, source_id, employee_account_id, amount, currency, status,
+                    correlation_id, payload_json, created_at, updated_at
+               FROM finance_entries
+              WHERE source_type = "hr"
               ORDER BY created_at DESC, id DESC
               LIMIT ' . max(1, min(50, $limit))
         );
         $statement->execute();
         $rows = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-            $row['payload'] = app_db_json_decode((string) ($row['payload_json'] ?? ''), []);
+            $payload = app_db_json_decode((string) ($row['payload_json'] ?? ''), []);
+            $payload['amount'] = app_mgs_hr_money($row['amount'] ?? 0);
+            $payload['currency'] = (string) ($row['currency'] ?? 'AZN');
+            $payload['employeeName'] = (string) ($payload['employee_name'] ?? '');
+            $row['entity_id'] = 'hr-' . str_replace(':', '-', (string) ($row['source_id'] ?? ''));
+            $row['payload'] = $payload;
             $rows[] = $row;
         }
 
@@ -2377,7 +2905,11 @@ function app_mgs_save_inventory_depreciation(array $input, array $actor = [], ?P
         'net_book_value' => (float) $preview['net_book_value'],
         'writeoff_threshold' => (float) $preview['writeoff_threshold'],
         'writeoff_allowed' => (int) $preview['writeoff_allowed'],
-        'writeoff_status' => (string) $preview['writeoff_status'],
+        // Maker-checker (vision 19.2 "asset silinmesi"): the same actor who
+        // enters the depreciation numbers can never immediately finalize a
+        // writeoff -- an eligible writeoff request lands as pending_writeoff
+        // and needs a different actor to call app_mgs_confirm_inventory_writeoff().
+        'writeoff_status' => (string) $preview['writeoff_status'] === 'written_off' ? 'pending_writeoff' : (string) $preview['writeoff_status'],
         'note' => clean_text((string) ($input['note'] ?? $input['note_text'] ?? '')),
         'calculation_json' => app_db_json_encode(['input' => $input, 'preview' => $preview]),
         'created_by_account_id' => (int) ($actor['id'] ?? 0) ?: null,
@@ -2398,17 +2930,6 @@ function app_mgs_save_inventory_depreciation(array $input, array $actor = [], ?P
         );
         $statement->execute($record);
         $recordId = (int) $db->lastInsertId();
-
-        if ($assetId > 0 && $record['writeoff_status'] === 'written_off') {
-            $assetUpdate = $db->prepare(
-                'UPDATE inventory_assets
-                    SET lifecycle_status = "written_off",
-                        condition_status = "written_off",
-                        updated_at = NOW()
-                  WHERE id = :id'
-            );
-            $assetUpdate->execute(['id' => $assetId]);
-        }
     } catch (Throwable $exception) {
         return ['ok' => false, 'error' => 'depreciation_save_failed', 'message' => $exception->getMessage()];
     }
@@ -2424,6 +2945,79 @@ function app_mgs_save_inventory_depreciation(array $input, array $actor = [], ?P
     ]);
 
     return ['ok' => true, 'id' => $recordId, 'record' => $record, 'preview' => $preview];
+}
+
+// Maker-checker confirm step (vision 19.2 "asset silinmesi"): a DIFFERENT
+// admin than the one who entered the depreciation numbers must confirm a
+// pending_writeoff before the asset is actually marked written_off.
+function app_mgs_confirm_inventory_writeoff(PDO $db, int $depreciationId, array $actor): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    try {
+        $db->beginTransaction();
+        $statement = $db->prepare('SELECT * FROM finance_asset_depreciations WHERE id = :id FOR UPDATE');
+        $statement->execute(['id' => $depreciationId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'depreciation_record_not_found'];
+        }
+        if ((string) $row['writeoff_status'] !== 'pending_writeoff') {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'not_pending_writeoff'];
+        }
+        if ($actorId > 0 && $actorId === (int) $row['created_by_account_id']) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'creator_cannot_confirm'];
+        }
+
+        $db->prepare(
+            "UPDATE finance_asset_depreciations
+                SET writeoff_status = 'written_off', confirmed_by_account_id = :actor_id,
+                    confirmed_by_name = :actor_name, confirmed_at = NOW()
+              WHERE id = :id"
+        )->execute([
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'id' => $depreciationId,
+        ]);
+
+        $assetId = (int) ($row['asset_id'] ?? 0);
+        if ($assetId > 0) {
+            $db->prepare(
+                'UPDATE inventory_assets
+                    SET lifecycle_status = "written_off",
+                        condition_status = "written_off",
+                        updated_at = NOW()
+                  WHERE id = :id'
+            )->execute(['id' => $assetId]);
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'writeoff_confirm_failed', 'message' => $exception->getMessage()];
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'finance_asset_writeoff_confirmed',
+        'entity_type' => 'finance',
+        'entity_id' => (string) $depreciationId,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => 'Asset writeoff confirmed: ' . (string) ($row['asset_label'] ?? ''),
+        'payload' => ['id' => $depreciationId, 'asset_id' => $row['asset_id'] ?? null],
+    ]);
+
+    return ['ok' => true, 'id' => $depreciationId];
 }
 
 function app_mgs_finance_depreciation_rows(?PDO $db = null, int $limit = 20): array
@@ -2785,6 +3379,160 @@ function app_mgs_record_finance_debt_payment(int $debtId, array $input, array $a
     ];
 }
 
+// Maker-checker (vision 19.2 "borc silinməsi" -- this feature did not exist
+// before). Forgiving/writing off a debt is never applied in the same call
+// that requests it: it always stages into finance_debt_writeoff_requests,
+// and only a DIFFERENT admin approving it actually reduces amount_open (via
+// the same finance_debt_payments ledger app_mgs_record_finance_debt_payment
+// uses, tagged payment_method="writeoff" so it is never mistaken for cash
+// received).
+function app_mgs_request_finance_debt_writeoff(PDO $db, int $debtId, float $amount, string $reason, array $actor = []): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    $debtStatement = $db->prepare('SELECT * FROM finance_debt_ledger WHERE id = :id LIMIT 1');
+    $debtStatement->execute(['id' => $debtId]);
+    $debt = $debtStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($debt)) {
+        return ['ok' => false, 'error' => 'debt_not_found'];
+    }
+    if (in_array((string) ($debt['status'] ?? ''), ['closed', 'void'], true)) {
+        return ['ok' => false, 'error' => 'debt_not_open'];
+    }
+    $openBalance = app_mgs_finance_money($debt['amount_open'] ?? 0);
+    $requestedAmount = $amount > 0 ? app_mgs_finance_money(min($amount, $openBalance)) : $openBalance;
+    if ($requestedAmount <= 0) {
+        return ['ok' => false, 'error' => 'debt_balance_empty'];
+    }
+
+    $insert = $db->prepare(
+        'INSERT INTO finance_debt_writeoff_requests (debt_id, requested_amount, reason, status, requested_by_account_id, requested_by_name)
+         VALUES (:debt_id, :requested_amount, :reason, "pending", :actor_id, :actor_name)'
+    );
+    $insert->execute([
+        'debt_id' => $debtId,
+        'requested_amount' => $requestedAmount,
+        'reason' => $reason,
+        'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+        'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'finance')),
+    ]);
+    $id = (int) $db->lastInsertId();
+
+    app_mgs_record_operation_action([
+        'action_type' => 'finance_debt_writeoff_requested',
+        'entity_type' => 'finance',
+        'entity_id' => (string) ($debt['document_no'] ?? ('debt:' . $debtId)),
+        'status' => 'pending',
+        'actor' => $actor,
+        'summary' => 'Debt writeoff requested: ' . (string) ($debt['counterparty_name'] ?? '-') . ' ' . $requestedAmount,
+        'payload' => ['id' => $id, 'debt_id' => $debtId, 'amount' => $requestedAmount, 'reason' => $reason],
+    ]);
+
+    return ['ok' => true, 'id' => $id, 'requested_amount' => $requestedAmount];
+}
+
+function app_mgs_finance_debt_writeoff_requests(PDO $db, string $status = 'pending'): array
+{
+    if (!app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $statement = $db->prepare(
+        'SELECT r.*, d.counterparty_name, d.ledger_type, d.amount_open, d.currency, d.document_no
+           FROM finance_debt_writeoff_requests r
+           LEFT JOIN finance_debt_ledger d ON d.id = r.debt_id
+          WHERE r.status = :status
+          ORDER BY r.created_at DESC LIMIT 100'
+    );
+    $statement->execute(['status' => $status]);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_mgs_resolve_finance_debt_writeoff(PDO $db, int $requestId, string $decision, string $resolutionNote, array $actor): array
+{
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['approved', 'rejected'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    if (!app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 255);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    $requestStatement = $db->prepare('SELECT * FROM finance_debt_writeoff_requests WHERE id = :id LIMIT 1');
+    $requestStatement->execute(['id' => $requestId]);
+    $request = $requestStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($request)) {
+        return ['ok' => false, 'error' => 'request_not_found'];
+    }
+    if ((string) $request['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'request_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) ($request['requested_by_account_id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'requester_cannot_approve_own_request'];
+    }
+
+    $paymentId = null;
+    if ($decision === 'approved') {
+        $applied = app_mgs_record_finance_debt_payment((int) $request['debt_id'], [
+            'payment_amount' => (float) $request['requested_amount'],
+            'payment_method' => 'writeoff',
+            'reference_no' => 'WRITEOFF-REQ-' . $requestId,
+            'note' => 'Debt writeoff approved: ' . $resolutionNote,
+        ], $actor, $db);
+        if (empty($applied['ok'])) {
+            return ['ok' => false, 'error' => 'writeoff_apply_failed', 'detail' => (string) ($applied['error'] ?? '')];
+        }
+        $paymentId = (int) ($applied['id'] ?? 0) ?: null;
+    }
+
+    try {
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE finance_debt_writeoff_requests SET status = :status, reviewed_by_account_id = :actor_id,
+                reviewed_by_name = :actor_name, resolution_note = :resolution_note, debt_payment_id = :payment_id, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'payment_id' => $paymentId,
+            'id' => $requestId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'request_already_resolved'];
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'request_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'finance_debt_writeoff_' . $decision,
+        'entity_type' => 'finance',
+        'entity_id' => 'debt:' . (string) $request['debt_id'],
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => 'Debt writeoff request #' . $requestId . ' ' . $decision,
+        'payload' => ['id' => $requestId, 'decision' => $decision, 'debt_payment_id' => $paymentId],
+    ]);
+
+    return ['ok' => true, 'status' => $decision, 'debt_payment_id' => $paymentId];
+}
+
 function app_mgs_finance_debt_payment_rows(?PDO $db = null, int $limit = 20): array
 {
     $db = $db instanceof PDO ? $db : app_db();
@@ -2842,9 +3590,10 @@ function app_mgs_parse_e_invoice_rows(string $text): array
             $row[$header] = trim((string) ($values[$index] ?? ''));
         }
 
-        $ledgerType = clean_text((string) ($row['ledger_type'] ?? $row['type'] ?? 'payable'));
+        $rawLedgerType = clean_text((string) ($row['ledger_type'] ?? $row['type'] ?? ''));
+        $ledgerType = $rawLedgerType === '' ? 'payable' : $rawLedgerType;
         if (!in_array($ledgerType, ['receivable', 'payable'], true)) {
-            $ledgerType = 'payable';
+            continue;
         }
         $amount = app_mgs_finance_money(str_replace(',', '.', (string) ($row['amount'] ?? $row['total'] ?? 0)));
         $counterpartyName = clean_text((string) ($row['counterparty_name'] ?? $row['supplier_name'] ?? $row['customer_name'] ?? ''));
@@ -2871,83 +3620,291 @@ function app_mgs_parse_e_invoice_rows(string $text): array
 function app_mgs_import_finance_e_invoice_rows(string|array $rows, array $actor = [], ?PDO $db = null): array
 {
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+    if (!$db instanceof PDO) {
         return ['ok' => false, 'error' => 'db_not_ready'];
+    }
+    if (!function_exists('app_finance_post_source_entry')) {
+        require_once __DIR__ . '/finance-operations-lib.php';
+    }
+    if (!function_exists('app_finance_post_source_entry')
+        || !function_exists('app_finance_stage1_schema_ready')
+        || !app_finance_stage1_schema_ready($db)) {
+        return ['ok' => false, 'error' => 'stage1_finance_schema_not_migrated'];
+    }
+    if (!app_stage1_feature_enabled($db, 'stage1_e_invoice_atomic_import')) {
+        return ['ok' => false, 'error' => 'stage1_e_invoice_atomic_import_disabled'];
+    }
+    if (!app_finance_actor_can_write($actor)) {
+        return ['ok' => false, 'error' => 'forbidden'];
     }
 
     $parsedRows = is_string($rows) ? app_mgs_parse_e_invoice_rows($rows) : array_values($rows);
     if ($parsedRows === []) {
         return ['ok' => false, 'error' => 'rows_empty'];
     }
-
-    $batchId = 'EINV-' . date('Ymd-His') . '-' . bin2hex(random_bytes(3));
-    $imported = 0;
-    $debtIds = [];
-
-    foreach ($parsedRows as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-
-        $debt = app_mgs_save_finance_debt_record([
-            'ledger_type' => (string) ($row['ledger_type'] ?? 'payable'),
-            'counterparty_name' => (string) ($row['counterparty_name'] ?? ''),
-            'counterparty_type' => (string) ($row['counterparty_type'] ?? 'other'),
-            'amount' => (float) ($row['amount'] ?? 0),
-            'document_no' => (string) ($row['document_no'] ?? ''),
-            'due_date' => (string) ($row['due_date'] ?? ''),
-            'note' => (string) ($row['note'] ?? 'E-qaime import'),
-        ], $actor, $db);
-        $debtId = (int) ($debt['id'] ?? 0);
-        if (empty($debt['ok']) || $debtId <= 0) {
-            continue;
-        }
-
-        try {
-            $statement = $db->prepare(
-                'INSERT INTO finance_e_invoice_imports (
-                    import_batch, debt_id, ledger_type, document_no, counterparty_name, counterparty_type,
-                    amount, due_date, status, row_json, created_by_account_id, created_by_name
-                 ) VALUES (
-                    :import_batch, :debt_id, :ledger_type, :document_no, :counterparty_name, :counterparty_type,
-                    :amount, :due_date, "imported", :row_json, :created_by_account_id, :created_by_name
-                 )'
-            );
-            $statement->execute([
-                'import_batch' => $batchId,
-                'debt_id' => $debtId,
-                'ledger_type' => (string) ($row['ledger_type'] ?? 'payable'),
-                'document_no' => clean_text((string) ($row['document_no'] ?? '')) ?: null,
-                'counterparty_name' => clean_text((string) ($row['counterparty_name'] ?? '')),
-                'counterparty_type' => clean_text((string) ($row['counterparty_type'] ?? 'other')) ?: 'other',
-                'amount' => app_mgs_finance_money($row['amount'] ?? 0),
-                'due_date' => app_mgs_hr_date_value($row['due_date'] ?? null),
-                'row_json' => app_db_json_encode($row),
-                'created_by_account_id' => (int) ($actor['id'] ?? 0) ?: null,
-                'created_by_name' => clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system')),
-            ]);
-            $imported++;
-            $debtIds[] = $debtId;
-        } catch (Throwable) {
+    if (is_string($rows)) {
+        $inputLines = preg_split('/\r\n|\r|\n/', trim($rows)) ?: [];
+        $inputLines = array_values(array_filter($inputLines, static fn (string $line): bool => trim($line) !== ''));
+        if (max(0, count($inputLines) - 1) !== count($parsedRows)) {
+            return ['ok' => false, 'error' => 'rows_invalid'];
         }
     }
 
-    app_mgs_record_operation_action([
-        'action_type' => 'finance_e_invoice_import',
-        'entity_type' => 'finance',
-        'entity_id' => $batchId,
-        'status' => $imported > 0 ? 'executed' : 'failed',
-        'actor' => $actor,
-        'summary' => 'Finance e-qaime import: ' . $imported . ' rows',
-        'payload' => ['batch_id' => $batchId, 'imported' => $imported, 'debt_ids' => $debtIds],
-    ]);
+    $normalizedRows = [];
+    foreach ($parsedRows as $row) {
+        if (!is_array($row)) {
+            return ['ok' => false, 'error' => 'rows_invalid'];
+        }
+        $ledgerType = strtolower(clean_text((string) ($row['ledger_type'] ?? 'payable')));
+        $documentNo = clean_text((string) ($row['document_no'] ?? ''));
+        $counterpartyName = clean_text((string) ($row['counterparty_name'] ?? ''));
+        $counterpartyType = clean_text((string) ($row['counterparty_type'] ?? 'other')) ?: 'other';
+        $amount = app_mgs_finance_money($row['amount'] ?? 0);
+        $dueDate = app_mgs_hr_date_value($row['due_date'] ?? null);
+        if (!in_array($ledgerType, ['receivable', 'payable'], true)
+            || $documentNo === '' || $counterpartyName === '' || $amount <= 0) {
+            return ['ok' => false, 'error' => 'rows_invalid'];
+        }
+        $normalized = [
+            'ledger_type' => $ledgerType,
+            'document_no' => $documentNo,
+            'counterparty_name' => $counterpartyName,
+            'counterparty_type' => $counterpartyType,
+            'amount' => $amount,
+            'due_date' => $dueDate,
+            'note' => clean_text((string) ($row['note'] ?? 'E-qaime import')),
+        ];
+        $normalized['document_key'] = hash(
+            'sha256',
+            implode('|', [
+                $ledgerType,
+                mb_strtolower(trim($counterpartyName), 'UTF-8'),
+                mb_strtolower(trim($documentNo), 'UTF-8'),
+            ])
+        );
+        $normalized['row_hash'] = hash('sha256', app_db_json_encode($normalized));
+        $normalizedRows[] = $normalized;
+    }
 
-    return [
-        'ok' => $imported > 0,
-        'batch_id' => $batchId,
-        'imported' => $imported,
-        'debt_ids' => $debtIds,
-    ];
+    $documentKeys = array_column($normalizedRows, 'document_key');
+    if (count($documentKeys) !== count(array_unique($documentKeys))) {
+        return ['ok' => false, 'error' => 'duplicate_document_in_batch'];
+    }
+
+    $requestHash = hash('sha256', app_db_json_encode($normalizedRows));
+    $batchId = 'EINV-' . strtoupper(substr($requestHash, 0, 24));
+    $correlationId = app_request_correlation_id();
+    $actorName = clean_text((string) ($actor['full_name'] ?? $actor['name'] ?? $actor['login'] ?? 'system'));
+    try {
+        $db->beginTransaction();
+        $insertBatch = $db->prepare(
+            'INSERT INTO finance_e_invoice_batches (
+                batch_key,request_hash,correlation_id,status,input_row_count,created_by_account_id,created_by_name
+             ) VALUES (
+                :batch_key,:request_hash,:correlation_id,"processing",:input_row_count,:actor_id,:actor_name
+             )
+             ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)'
+        );
+        $insertBatch->execute([
+            'batch_key' => $batchId,
+            'request_hash' => $requestHash,
+            'correlation_id' => $correlationId,
+            'input_row_count' => count($normalizedRows),
+            'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+            'actor_name' => $actorName,
+        ]);
+        $newBatch = $insertBatch->rowCount() === 1;
+        $batch = $db->prepare('SELECT * FROM finance_e_invoice_batches WHERE request_hash = :request_hash FOR UPDATE');
+        $batch->execute(['request_hash' => $requestHash]);
+        $batchRow = $batch->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($batchRow)) {
+            throw new RuntimeException('batch_registry_failed');
+        }
+        $batchId = (string) $batchRow['batch_key'];
+        if (!$newBatch && (string) $batchRow['status'] === 'completed') {
+            $existing = $db->prepare(
+                'SELECT debt_id FROM finance_e_invoice_imports
+                  WHERE import_batch = :batch_key ORDER BY id'
+            );
+            $existing->execute(['batch_key' => $batchId]);
+            $debtIds = array_map('intval', $existing->fetchAll(PDO::FETCH_COLUMN) ?: []);
+            $db->commit();
+            return [
+                'ok' => true,
+                'batch_id' => $batchId,
+                'imported' => (int) $batchRow['imported_row_count'],
+                'debt_ids' => $debtIds,
+                'existing' => true,
+            ];
+        }
+        if (!$newBatch && (string) $batchRow['status'] === 'processing') {
+            $db->commit();
+            return ['ok' => false, 'error' => 'import_in_progress', 'batch_id' => $batchId];
+        }
+        $db->prepare(
+            'UPDATE finance_e_invoice_batches
+                SET status = "processing", error_code = NULL, correlation_id = :correlation_id,
+                    input_row_count = :input_row_count, imported_row_count = 0
+              WHERE id = :id'
+        )->execute([
+            'correlation_id' => $correlationId,
+            'input_row_count' => count($normalizedRows),
+            'id' => (int) $batchRow['id'],
+        ]);
+        $db->commit();
+    } catch (Throwable) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'batch_registry_failed'];
+    }
+
+    $debtIds = [];
+    try {
+        $db->beginTransaction();
+        foreach ($normalizedRows as $row) {
+            $existingDocument = $db->prepare(
+                'SELECT id,row_hash FROM finance_e_invoice_imports
+                  WHERE document_key = :document_key LIMIT 1 FOR UPDATE'
+            );
+            $existingDocument->execute(['document_key' => $row['document_key']]);
+            if (is_array($existingDocument->fetch(PDO::FETCH_ASSOC))) {
+                throw new RuntimeException('document_already_imported');
+            }
+
+            $entry = app_finance_post_source_entry($db, [
+                'entry_type' => $row['ledger_type'] === 'payable' ? 'expense' : 'income',
+                'title' => 'E-qaime ' . $row['document_no'] . ': ' . $row['counterparty_name'],
+                'category' => 'e_invoice',
+                'amount' => $row['amount'],
+                'currency' => 'AZN',
+                'transaction_date' => $row['due_date'] ?? date('Y-m-d'),
+                'payment_source' => 'e_invoice',
+                'reference_no' => 'EINV-' . strtoupper(substr($row['document_key'], 0, 24)),
+                'note' => $row['note'],
+                'source_type' => 'e_invoice',
+                'source_id' => $row['document_key'],
+                'idempotency_key' => 'e_invoice:' . $row['document_key'],
+                'correlation_id' => $correlationId,
+                'payload' => $row,
+            ], $actor);
+            if (empty($entry['ok']) || !empty($entry['existing'])) {
+                throw new RuntimeException((string) ($entry['error'] ?? 'document_already_posted'));
+            }
+
+            $debt = $db->prepare(
+                'INSERT INTO finance_debt_ledger (
+                    ledger_type,counterparty_name,counterparty_type,amount_original,amount_open,
+                    currency,document_no,due_date,status,note,payload_json,source_document_key,
+                    finance_entry_id,correlation_id,created_by_account_id,created_by_name
+                 ) VALUES (
+                    :ledger_type,:counterparty_name,:counterparty_type,:amount,:amount,
+                    "AZN",:document_no,:due_date,"open",:note,:payload_json,:document_key,
+                    :finance_entry_id,:correlation_id,:actor_id,:actor_name
+                 )'
+            );
+            $debt->execute([
+                'ledger_type' => $row['ledger_type'],
+                'counterparty_name' => $row['counterparty_name'],
+                'counterparty_type' => $row['counterparty_type'],
+                'amount' => $row['amount'],
+                'document_no' => $row['document_no'],
+                'due_date' => $row['due_date'],
+                'note' => $row['note'],
+                'payload_json' => app_db_json_encode(['source' => 'e_invoice', 'batch_id' => $batchId, 'row' => $row]),
+                'document_key' => $row['document_key'],
+                'finance_entry_id' => (int) $entry['id'],
+                'correlation_id' => $correlationId,
+                'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+                'actor_name' => $actorName,
+            ]);
+            $debtId = (int) $db->lastInsertId();
+
+            $import = $db->prepare(
+                'INSERT INTO finance_e_invoice_imports (
+                    import_batch,row_hash,document_key,finance_entry_id,correlation_id,debt_id,
+                    ledger_type,document_no,counterparty_name,counterparty_type,amount,due_date,
+                    status,error_code,row_json,created_by_account_id,created_by_name
+                 ) VALUES (
+                    :import_batch,:row_hash,:document_key,:finance_entry_id,:correlation_id,:debt_id,
+                    :ledger_type,:document_no,:counterparty_name,:counterparty_type,:amount,:due_date,
+                    "imported",NULL,:row_json,:actor_id,:actor_name
+                 )'
+            );
+            $import->execute([
+                'import_batch' => $batchId,
+                'row_hash' => $row['row_hash'],
+                'document_key' => $row['document_key'],
+                'finance_entry_id' => (int) $entry['id'],
+                'correlation_id' => $correlationId,
+                'debt_id' => $debtId,
+                'ledger_type' => $row['ledger_type'],
+                'document_no' => $row['document_no'],
+                'counterparty_name' => $row['counterparty_name'],
+                'counterparty_type' => $row['counterparty_type'],
+                'amount' => $row['amount'],
+                'due_date' => $row['due_date'],
+                'row_json' => app_db_json_encode($row),
+                'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+                'actor_name' => $actorName,
+            ]);
+            $debtIds[] = $debtId;
+        }
+
+        $db->prepare(
+            'UPDATE finance_e_invoice_batches
+                SET status = "completed", imported_row_count = :imported, error_code = NULL
+              WHERE batch_key = :batch_key'
+        )->execute(['imported' => count($debtIds), 'batch_key' => $batchId]);
+        app_finance_record_audit(
+            $db,
+            'finance_e_invoice_imported',
+            $batchId,
+            $actor,
+            'Finance e-qaime import: ' . count($debtIds) . ' setir',
+            [
+                'batch_id' => $batchId,
+                'request_hash' => $requestHash,
+                'correlation_id' => $correlationId,
+                'imported' => count($debtIds),
+                'debt_ids' => $debtIds,
+            ],
+            '',
+            null,
+            null,
+            'import'
+        );
+        $db->commit();
+        return [
+            'ok' => true,
+            'batch_id' => $batchId,
+            'imported' => count($debtIds),
+            'debt_ids' => $debtIds,
+            'existing' => false,
+        ];
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        try {
+            $failed = $db->prepare(
+                'UPDATE finance_e_invoice_batches
+                    SET status = "failed", error_code = :error_code, imported_row_count = 0
+                  WHERE batch_key = :batch_key'
+            );
+            $failed->execute([
+                'error_code' => mb_substr($exception->getMessage(), 0, 96),
+                'batch_key' => $batchId,
+            ]);
+        } catch (Throwable) {
+        }
+        return [
+            'ok' => false,
+            'error' => 'e_invoice_atomic_import_failed',
+            'batch_id' => $batchId,
+            'correlation_id' => $correlationId,
+        ];
+    }
 }
 
 function app_mgs_finance_e_invoice_import_rows(?PDO $db = null, int $limit = 20): array
@@ -3133,6 +4090,21 @@ function app_mgs_normalize_bot_key(string $botKey): string
     return mb_substr($botKey, 0, 48);
 }
 
+function app_mgs_telegram_token_env_key(string $configKey): string
+{
+    $configKey = strtolower(trim($configKey));
+    if (preg_match('/^telegram_[a-z0-9_]+_token$/', $configKey) !== 1) {
+        return '';
+    }
+
+    return strtoupper($configKey);
+}
+
+function app_mgs_telegram_token_is_valid(string $token): bool
+{
+    return preg_match('/^[0-9]{6,16}:[A-Za-z0-9_-]{30,80}$/D', trim($token)) === 1;
+}
+
 function app_mgs_custom_telegram_bot_definition(string $botKey): ?array
 {
     $botKey = app_mgs_normalize_bot_key($botKey);
@@ -3186,19 +4158,34 @@ function app_mgs_telegram_bot_config(string $botKey, string $destination = ''): 
         return ['configured' => false, 'bot_key' => $botKey, 'reason' => 'unknown_bot'];
     }
 
-    $specificToken = app_mgs_runtime_setting((string) $definition['token_key']);
+    $tokenEnvKey = app_mgs_telegram_token_env_key((string) $definition['token_key']);
+    $specificToken = $tokenEnvKey !== '' ? app_communication_environment_secret($tokenEnvKey) : '';
     $specificChatId = app_mgs_runtime_setting((string) $definition['chat_key']);
     $token = $specificToken;
     $chatId = trim($destination) !== '' ? trim($destination) : $specificChatId;
     $fallbackTokenUsed = false;
 
-    if (($definition['fallback_generic_token'] ?? false) && $token === '') {
-        $token = app_config('telegram_token');
-        $fallbackTokenUsed = $token !== '';
+    if (($definition['fallback_generic_token'] ?? false) && !app_mgs_telegram_token_is_valid($token)) {
+        $token = app_communication_environment_secret('TELEGRAM_TOKEN');
+        $fallbackTokenUsed = app_mgs_telegram_token_is_valid($token);
+    }
+
+    if (!app_communication_channel_enabled('telegram')) {
+        return [
+            'bot_key' => $botKey,
+            'display_name' => (string) $definition['display_name'],
+            'purpose' => (string) $definition['purpose'],
+            'configured' => false,
+            'reason' => 'channel_disabled',
+            'endpoint' => '',
+            'destination' => $chatId,
+            'destination_masked' => app_mgs_mask($chatId),
+            'token_env_key' => $tokenEnvKey,
+        ];
     }
 
     $missing = [];
-    if ($token === '') {
+    if (!app_mgs_telegram_token_is_valid($token)) {
         $missing[] = 'token';
     }
     if ($chatId === '') {
@@ -3210,10 +4197,11 @@ function app_mgs_telegram_bot_config(string $botKey, string $destination = ''): 
         'display_name' => (string) $definition['display_name'],
         'purpose' => (string) $definition['purpose'],
         'token_config_key' => (string) $definition['token_key'],
+        'token_env_key' => $tokenEnvKey,
         'chat_config_key' => (string) $definition['chat_key'],
-        'configured' => $token !== '' && $chatId !== '',
+        'configured' => app_mgs_telegram_token_is_valid($token) && $chatId !== '',
         'reason' => empty($missing) ? '' : ('missing_' . implode('_and_', $missing)),
-        'endpoint' => $token !== '' ? ('https://api.telegram.org/bot' . $token . '/sendMessage') : '',
+        'endpoint' => app_mgs_telegram_token_is_valid($token) ? ('https://api.telegram.org/bot' . $token . '/sendMessage') : '',
         'destination' => $chatId,
         'destination_masked' => app_mgs_mask($chatId),
         'has_specific_token' => $specificToken !== '',
@@ -3358,6 +4346,69 @@ function app_notification_sanitize_message(string $message, string $category = '
     return mb_substr($message, 0, 3900);
 }
 
+function app_notification_format_event_message(array $event, string $category): string
+{
+    $labels = [
+        'CUSTOMER_REQUEST' => 'Musteri muracieti',
+        'CUSTOMER_TECHNICAL_SUPPORT' => 'Texniki destek',
+        'CUSTOMER_BILLING_REQUEST' => 'Musteri billing muracieti',
+        'NETWORK' => 'Sebeke', 'NOC' => 'NOC', 'OLT' => 'OLT', 'ONT' => 'ONT',
+        'PON' => 'PON', 'OPTICAL' => 'Optik xett', 'RADIUS' => 'RADIUS',
+        'NAS_ROUTER' => 'Router/NAS', 'SERVER_INFRASTRUCTURE' => 'Server infrastrukturu',
+        'BILLING' => 'Billing', 'PAYMENT_PROVIDER' => 'Odenis provideri', 'FINANCE' => 'Maliyye',
+        'FIELD_TECHNICIAN' => 'Sahe texniki', 'INVENTORY' => 'Anbar', 'SECURITY' => 'Tehlukesizlik',
+        'SYSTEM_HEALTH' => 'Sistem veziyyeti', 'BACKUP' => 'Backup',
+        'AI_AUTOMATION' => 'AI avtomatlasdirma', 'EXECUTIVE' => 'Idareetme', 'UNCLASSIFIED' => 'Bildiris',
+    ];
+    $metadata = is_array($event['metadata'] ?? null) ? $event['metadata'] : [];
+    $rawState = strtolower(trim((string) ($event['state'] ?? $event['status'] ?? $metadata['state'] ?? $metadata['status'] ?? '')));
+    $stateLabel = match (true) {
+        in_array($rawState, ['down', 'offline', 'unreachable', 'failed', 'error', 'open', 'problem'], true) => 'Offline / xeta var',
+        in_array($rawState, ['up', 'online', 'reachable', 'recovered', 'resolved', 'closed', 'ok'], true) => 'Online / berpa olunub',
+        default => $rawState !== '' ? $rawState : '',
+    };
+    $title = clean_text((string) ($event['title'] ?? ''));
+    $rawMessage = trim((string) ($event['message'] ?? $event['message_body'] ?? ''));
+    $object = clean_text((string) (
+        $event['object_name'] ?? $event['device_name'] ?? $event['object_id']
+        ?? $metadata['device_name'] ?? $metadata['object_name'] ?? $metadata['object_id'] ?? ''
+    ));
+    $reason = clean_text((string) (
+        $event['reason'] ?? $event['cause'] ?? $metadata['reason'] ?? $metadata['cause']
+        ?? $metadata['offline_reason'] ?? $metadata['error'] ?? ''
+    ));
+    $durationSeconds = max(0, (int) ($event['duration_seconds'] ?? $metadata['duration_seconds'] ?? 0));
+    $duration = '';
+    if ($durationSeconds > 0) {
+        $days = intdiv($durationSeconds, 86400);
+        $hours = intdiv($durationSeconds % 86400, 3600);
+        $minutes = intdiv($durationSeconds % 3600, 60);
+        $duration = trim(($days > 0 ? ($days . ' gun ') : '') . ($hours > 0 ? ($hours . ' saat ') : '') . ($minutes > 0 ? ($minutes . ' deqiqe') : ''));
+    }
+
+    $lines = ['[' . ($labels[$category] ?? $labels['UNCLASSIFIED']) . ']'];
+    if ($title !== '') {
+        $lines[] = 'Basliq: ' . $title;
+    }
+    if ($stateLabel !== '') {
+        $lines[] = 'Status: ' . $stateLabel;
+    }
+    if ($object !== '') {
+        $lines[] = 'Obyekt: ' . $object;
+    }
+    if ($duration !== '') {
+        $lines[] = 'Muddet: ' . $duration;
+    }
+    if ($reason !== '') {
+        $lines[] = 'Sebeb: ' . $reason;
+    }
+    if ($rawMessage !== '' && $rawMessage !== $title) {
+        $lines[] = 'Melumat: ' . $rawMessage;
+    }
+    $lines[] = 'Vaxt: ' . app_db_now() . ' (' . app_timezone() . ')';
+    return implode("\n", $lines);
+}
+
 function app_notification_sanitize_payload(array $payload): array
 {
     $blockedKeys = ['password', 'parol', 'sifre', 'şifrə', 'pwd', 'secret', 'token', 'api_key', 'apikey'];
@@ -3387,6 +4438,79 @@ function app_notification_deduplicate_event(array $event): array
         return ['suppressed' => false, 'dedup_key' => $dedupKey, 'reason' => 'db_unavailable'];
     }
 
+    $metadata = is_array($event['metadata'] ?? null) ? $event['metadata'] : [];
+    $rawState = strtolower(trim((string) ($event['state'] ?? $event['status'] ?? $metadata['state'] ?? $metadata['status'] ?? '')));
+    $transitionState = match (true) {
+        in_array($rawState, ['down', 'offline', 'unreachable', 'failed', 'error', 'open', 'problem'], true) => 'down',
+        in_array($rawState, ['up', 'online', 'reachable', 'recovered', 'resolved', 'closed', 'ok'], true) => 'up',
+        default => '',
+    };
+
+    if ($transitionState !== '' && app_mgs_ensure_schema($db)) {
+        $registryKey = 'notify:' . hash('sha256', $dedupKey);
+        $registry = $db->prepare('SELECT status, metadata_json FROM mgs_dedup_registry WHERE dedup_key = :dedup_key LIMIT 1');
+        $registry->execute(['dedup_key' => $registryKey]);
+        $row = $registry->fetch(PDO::FETCH_ASSOC);
+        $previousState = '';
+        $previousMetadata = '';
+        if (is_array($row)) {
+            $registryMetadata = app_db_json_decode((string) ($row['metadata_json'] ?? ''), []);
+            $lastState = strtolower(trim((string) ($registryMetadata['last_state'] ?? '')));
+            if ($lastState === '') {
+                $lastState = (string) ($row['status'] ?? '') === 'resolved' ? 'up' : 'down';
+            }
+            $previousState = $lastState;
+            $previousMetadata = (string) ($row['metadata_json'] ?? '');
+        }
+
+        $claimId = bin2hex(random_bytes(12));
+        $claimMetadata = app_db_json_encode([
+            'last_state' => $transitionState,
+            'transition_claim_id' => $claimId,
+            'transition_committed' => false,
+            'source_dedup_key_hash' => hash('sha256', $dedupKey),
+        ]);
+        $desiredStatus = $transitionState === 'up' ? 'resolved' : 'open';
+        try {
+            $claim = $db->prepare(
+                'INSERT INTO mgs_dedup_registry (dedup_key, dedup_domain, title, status, metadata_json)
+                 VALUES (:dedup_key, "notification_state", :title, :status, :metadata_json)
+                 ON DUPLICATE KEY UPDATE
+                    metadata_json = IF(status <> VALUES(status), VALUES(metadata_json), metadata_json),
+                    title = IF(status <> VALUES(status), VALUES(title), title),
+                    last_seen_at = IF(status <> VALUES(status), NOW(), last_seen_at),
+                    seen_count = IF(status <> VALUES(status), seen_count + 1, seen_count),
+                    status = IF(status <> VALUES(status), VALUES(status), status)'
+            );
+            $claim->execute([
+                'dedup_key' => $registryKey,
+                'title' => mb_substr(clean_text((string) ($event['title'] ?? $event['message'] ?? 'Notification state')), 0, 191),
+                'status' => $desiredStatus,
+                'metadata_json' => $claimMetadata,
+            ]);
+            $claimed = $claim->rowCount() > 0;
+        } catch (Throwable) {
+            return [
+                'suppressed' => true,
+                'dedup_key' => $dedupKey,
+                'registry_key' => $registryKey,
+                'transition_state' => $transitionState,
+                'reason' => 'transition_registry_error',
+            ];
+        }
+
+        return [
+            'suppressed' => !$claimed,
+            'dedup_key' => $dedupKey,
+            'registry_key' => $registryKey,
+            'transition_state' => $transitionState,
+            'transition_claim_id' => $claimed ? $claimId : '',
+            'previous_state' => $claimed ? $previousState : '',
+            'previous_metadata_json' => $claimed ? $previousMetadata : '',
+            'reason' => $claimed ? '' : 'duplicate_notification_state',
+        ];
+    }
+
     $statement = $db->prepare(
         'SELECT id
          FROM communication_messages
@@ -3406,6 +4530,74 @@ function app_notification_deduplicate_event(array $event): array
         'dedup_key' => $dedupKey,
         'reason' => $existing !== false ? 'duplicate_notification_24h' : '',
     ];
+}
+
+function app_notification_record_transition(array $event, array $dedupe): bool
+{
+    $state = (string) ($dedupe['transition_state'] ?? '');
+    $registryKey = (string) ($dedupe['registry_key'] ?? '');
+    if ($state === '' || $registryKey === '') {
+        return true;
+    }
+
+    $db = app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return false;
+    }
+
+    $metadata = [
+        'last_state' => $state,
+        'source_dedup_key_hash' => hash('sha256', (string) ($dedupe['dedup_key'] ?? '')),
+        'event_type' => clean_text((string) ($event['event_type'] ?? $event['alarm_type'] ?? 'notification')),
+        'source' => clean_text((string) ($event['source'] ?? '')),
+        'transition_committed' => true,
+    ];
+    $claimId = (string) ($dedupe['transition_claim_id'] ?? '');
+    $statement = $db->prepare(
+        'UPDATE mgs_dedup_registry
+         SET title = :title, status = :status, metadata_json = :metadata_json, last_seen_at = NOW()
+         WHERE dedup_key = :dedup_key
+           AND (:claim_id = "" OR metadata_json LIKE :claim_needle)'
+    );
+    return $statement->execute([
+        'dedup_key' => $registryKey,
+        'title' => mb_substr(clean_text((string) ($event['title'] ?? $event['message'] ?? 'Notification state')), 0, 191),
+        'status' => $state === 'up' ? 'resolved' : 'open',
+        'metadata_json' => app_db_json_encode($metadata),
+        'claim_id' => $claimId,
+        'claim_needle' => '%"transition_claim_id":"' . $claimId . '"%',
+    ]);
+}
+
+function app_notification_release_transition(array $dedupe): bool
+{
+    $registryKey = (string) ($dedupe['registry_key'] ?? '');
+    $claimId = (string) ($dedupe['transition_claim_id'] ?? '');
+    if ($registryKey === '' || $claimId === '') {
+        return true;
+    }
+    $db = app_db();
+    if (!$db instanceof PDO) {
+        return false;
+    }
+    $claimNeedle = '%"transition_claim_id":"' . $claimId . '"%';
+    $previousState = (string) ($dedupe['previous_state'] ?? '');
+    if ($previousState === '') {
+        $statement = $db->prepare('DELETE FROM mgs_dedup_registry WHERE dedup_key = :dedup_key AND metadata_json LIKE :claim_needle');
+        return $statement->execute(['dedup_key' => $registryKey, 'claim_needle' => $claimNeedle]);
+    }
+
+    $statement = $db->prepare(
+        'UPDATE mgs_dedup_registry
+         SET status = :status, metadata_json = :metadata_json, last_seen_at = NOW()
+         WHERE dedup_key = :dedup_key AND metadata_json LIKE :claim_needle'
+    );
+    return $statement->execute([
+        'status' => $previousState === 'up' ? 'resolved' : 'open',
+        'metadata_json' => (string) ($dedupe['previous_metadata_json'] ?? ''),
+        'dedup_key' => $registryKey,
+        'claim_needle' => $claimNeedle,
+    ]);
 }
 
 function app_notification_record_delivery(array $delivery): bool
@@ -3447,7 +4639,7 @@ function app_notification_route_event(array $event, bool $testMode = false, bool
     $category = (string) $route['category'];
     $botKey = (string) $route['bot_key'];
     $dedupe = app_notification_deduplicate_event($event);
-    $message = app_notification_sanitize_message((string) ($event['message'] ?? $event['message_body'] ?? $event['title'] ?? ''), $category);
+    $message = app_notification_sanitize_message(app_notification_format_event_message($event, $category), $category);
 
     $result = [
         'ok' => true,
@@ -3463,6 +4655,9 @@ function app_notification_route_event(array $event, bool $testMode = false, bool
     ];
 
     if (!$queueMessage || !empty($dedupe['suppressed'])) {
+        if (!$queueMessage && empty($dedupe['suppressed'])) {
+            app_notification_release_transition($dedupe);
+        }
         app_notification_record_delivery($result + ['summary' => 'Notification suppressed or queue disabled']);
         return $result;
     }
@@ -3493,8 +4688,10 @@ function app_notification_route_event(array $event, bool $testMode = false, bool
     $result['reason'] = empty($queued['ok']) ? (string) ($queued['reason'] ?? 'queue_failed') : '';
 
     if (empty($queued['ok'])) {
+        app_notification_release_transition($dedupe);
         app_notification_handle_delivery_failure($result);
     } else {
+        app_notification_record_transition($event, $dedupe);
         app_notification_record_delivery($result + ['summary' => 'Notification queued']);
     }
 
@@ -3668,8 +4865,10 @@ function app_mgs_telegram_bot_rows(?PDO $db = null): array
 function app_mgs_custom_bot_runtime_keys(string $botKey): array
 {
     $botKey = app_mgs_normalize_bot_key($botKey);
+    $tokenConfigKey = 'telegram_custom_' . $botKey . '_token';
     return [
-        'token' => 'telegram_custom_' . $botKey . '_token',
+        'token' => $tokenConfigKey,
+        'token_env' => app_mgs_telegram_token_env_key($tokenConfigKey),
         'chat' => 'telegram_custom_' . $botKey . '_chat_id',
     ];
 }
@@ -3680,7 +4879,6 @@ function app_mgs_upsert_custom_telegram_bot(PDO $db, array $payload, array $acto
     $botKey = app_mgs_normalize_bot_key((string) ($payload['bot_key'] ?? ''));
     $displayName = clean_text((string) ($payload['display_name'] ?? ''));
     $purpose = clean_text((string) ($payload['purpose'] ?? ''));
-    $token = trim((string) ($payload['token'] ?? ''));
     $chatId = trim((string) ($payload['chat_id'] ?? ''));
 
     if ($botKey === '') {
@@ -3701,19 +4899,13 @@ function app_mgs_upsert_custom_telegram_bot(PDO $db, array $payload, array $acto
         return ['ok' => false, 'reason' => 'bot_key_too_long'];
     }
 
-    $existingToken = app_mgs_runtime_setting($keys['token']);
     $existingChat = app_mgs_runtime_setting($keys['chat']);
-    if ($token === '') {
-        $token = $existingToken;
-    }
+    $token = app_communication_environment_secret((string) $keys['token_env']);
     if ($chatId === '') {
         $chatId = $existingChat;
     }
     if ($token === '') {
-        return ['ok' => false, 'reason' => 'token_required'];
-    }
-    if (!preg_match('/^\d+:[A-Za-z0-9_\-]{20,}$/', $token)) {
-        return ['ok' => false, 'reason' => 'invalid_bot_token_format'];
+        return ['ok' => false, 'reason' => 'token_environment_required', 'token_env_key' => (string) $keys['token_env']];
     }
     if ($chatId === '') {
         return ['ok' => false, 'reason' => 'chat_id_required'];
@@ -3722,7 +4914,7 @@ function app_mgs_upsert_custom_telegram_bot(PDO $db, array $payload, array $acto
         return ['ok' => false, 'reason' => 'invalid_chat_id_format'];
     }
 
-    app_mgs_set_runtime_setting($keys['token'], $token, $actor);
+    $db->prepare('DELETE FROM mgs_runtime_settings WHERE setting_key = :token_key')->execute(['token_key' => $keys['token']]);
     app_mgs_set_runtime_setting($keys['chat'], $chatId, $actor);
 
     $statement = $db->prepare(
@@ -3753,7 +4945,8 @@ function app_mgs_upsert_custom_telegram_bot(PDO $db, array $payload, array $acto
         'destination_masked' => app_mgs_mask($chatId),
         'metadata_json' => app_db_json_encode([
             'custom' => true,
-            'token_masked' => app_mgs_mask($token),
+            'token_env_key' => (string) $keys['token_env'],
+            'token_configured' => true,
             'chat_masked' => app_mgs_mask($chatId),
             'created_from' => 'mgs_integration_ui',
         ]),
@@ -3771,7 +4964,7 @@ function app_mgs_upsert_custom_telegram_bot(PDO $db, array $payload, array $acto
             'display_name' => $displayName,
             'purpose' => $purpose,
             'destination_masked' => app_mgs_mask($chatId),
-            'token_masked' => app_mgs_mask($token),
+            'token_env_key' => (string) $keys['token_env'],
         ],
     ]);
 
@@ -3780,6 +4973,7 @@ function app_mgs_upsert_custom_telegram_bot(PDO $db, array $payload, array $acto
         'bot_key' => $botKey,
         'display_name' => $displayName,
         'destination_masked' => app_mgs_mask($chatId),
+        'token_env_key' => (string) $keys['token_env'],
     ];
 }
 
@@ -3854,6 +5048,11 @@ function app_mgs_send_telegram_bot_test(string $botKey, string $message = '', st
         return $result;
     }
 
+    if (!app_communication_external_delivery_enabled()) {
+        $result['reason'] = 'external_delivery_paused';
+        return $result;
+    }
+
     $response = http_post_json((string) $config['endpoint'], [
         'chat_id' => (string) $config['destination'],
         'text' => $message,
@@ -3920,6 +5119,10 @@ function app_mgs_http_get_json(string $url): ?array
 
 function app_mgs_telegram_bot_send_message(string $botKey, string $text, string $destination = ''): array
 {
+    if (!app_communication_external_delivery_enabled()) {
+        return ['ok' => false, 'reason' => 'external_delivery_paused'];
+    }
+
     $config = app_mgs_telegram_bot_config($botKey, $destination);
     if (empty($config['configured'])) {
         return ['ok' => false, 'reason' => 'bot_not_configured'];
@@ -3945,8 +5148,13 @@ function app_mgs_telegram_bot_fetch_updates(string $botKey, int $offset = 0, int
         return ['ok' => false, 'reason' => 'unknown_bot'];
     }
 
-    $token = app_config((string) ($definition['token_key'] ?? ''));
-    if ($token === '') {
+    if (!app_communication_channel_enabled('telegram')) {
+        return ['ok' => false, 'reason' => 'channel_disabled'];
+    }
+
+    $tokenEnvKey = app_mgs_telegram_token_env_key((string) ($definition['token_key'] ?? ''));
+    $token = $tokenEnvKey !== '' ? app_communication_environment_secret($tokenEnvKey) : '';
+    if (!app_mgs_telegram_token_is_valid($token)) {
         return ['ok' => false, 'reason' => 'bot_not_configured'];
     }
 
@@ -4058,6 +5266,10 @@ function app_mgs_monitor_map_layout(string $mapKey, array $user, ?PDO $db = null
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return [];
     }
+    $authorization = app_noc_authorize($user, 'read_monitor_map', [], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
 
     $statement = $db->prepare(
         'SELECT device_id, x, y, scale, note, updated_at
@@ -4073,7 +5285,8 @@ function app_mgs_monitor_map_layout(string $mapKey, array $user, ?PDO $db = null
     $layout = [];
     foreach ($statement->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
         $deviceId = trim((string) ($row['device_id'] ?? ''));
-        if ($deviceId === '') {
+        if ($deviceId === ''
+            || empty(app_noc_authorize($user, 'read_monitor_map', ['device_key' => $deviceId], $db)['ok'])) {
             continue;
         }
         $layout[$deviceId] = [
@@ -4097,6 +5310,10 @@ function app_mgs_save_monitor_map_node(string $mapKey, array $user, string $devi
     }
     if ($deviceId === '') {
         return ['ok' => false, 'reason' => 'device_id_required'];
+    }
+    $authorization = app_noc_authorize($user, 'update_monitor_map', ['device_key' => $deviceId], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('update_monitor_map', $authorization);
     }
 
     $x = max(-8.0, min(108.0, $x));
@@ -4142,9 +5359,380 @@ function app_mgs_save_monitor_map_node(string $mapKey, array $user, string $devi
     ];
 }
 
+function app_mgs_is_private_management_ipv4(string $ip): bool
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return false;
+    }
+    $value = (int) (unpack('N', inet_pton($ip))[1] ?? 0);
+    $ranges = [
+        [0x0A000000, 0x0AFFFFFF],
+        [0x64400000, 0x647FFFFF],
+        [0xAC100000, 0xAC1FFFFF],
+        [0xC0A80000, 0xC0A8FFFF],
+    ];
+    foreach ($ranges as [$start, $end]) {
+        if ($value >= $start && $value <= $end) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function app_mgs_management_scan_hosts(string $target, int $maxHosts): array
+{
+    $target = trim($target);
+    $maxHosts = max(1, min(1024, $maxHosts));
+    $start = 0;
+    $end = 0;
+
+    if (str_contains($target, '/')) {
+        [$ip, $prefixText] = array_pad(explode('/', $target, 2), 2, '');
+        $prefix = ctype_digit($prefixText) ? (int) $prefixText : -1;
+        if (!app_mgs_is_private_management_ipv4($ip) || $prefix < 16 || $prefix > 32) {
+            return [];
+        }
+        $value = (int) (unpack('N', inet_pton($ip))[1] ?? 0);
+        $mask = $prefix === 0 ? 0 : ((0xFFFFFFFF << (32 - $prefix)) & 0xFFFFFFFF);
+        $network = $value & $mask;
+        $broadcast = $network | ((~$mask) & 0xFFFFFFFF);
+        $start = $prefix <= 30 ? $network + 1 : $network;
+        $end = $prefix <= 30 ? $broadcast - 1 : $broadcast;
+    } elseif (str_contains($target, '-')) {
+        [$first, $last] = array_pad(array_map('trim', explode('-', $target, 2)), 2, '');
+        if (!app_mgs_is_private_management_ipv4($first) || !app_mgs_is_private_management_ipv4($last)) {
+            return [];
+        }
+        $start = (int) (unpack('N', inet_pton($first))[1] ?? 0);
+        $end = (int) (unpack('N', inet_pton($last))[1] ?? 0);
+    } elseif (app_mgs_is_private_management_ipv4($target)) {
+        $start = $end = (int) (unpack('N', inet_pton($target))[1] ?? 0);
+    } else {
+        return [];
+    }
+
+    if ($start <= 0 || $end < $start || ($end - $start + 1) > $maxHosts) {
+        return [];
+    }
+    $hosts = [];
+    for ($value = $start; $value <= $end; $value++) {
+        $ip = inet_ntop(pack('N', $value));
+        if (!is_string($ip) || !app_mgs_is_private_management_ipv4($ip)) {
+            return [];
+        }
+        $hosts[] = $ip;
+    }
+    return $hosts;
+}
+
+function app_mgs_scan_management_network(array $payload, array $actor = [], ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'status' => 503, 'data' => [], 'error' => 'db_unavailable'];
+    }
+    $authorization = app_noc_authorize($actor, 'scan_network', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('scan_network', $authorization) + ['status' => 403, 'data' => []];
+    }
+
+    $target = clean_text((string) ($payload['target'] ?? ''));
+    $maxHosts = max(1, min(1024, (int) ($payload['maxHosts'] ?? 64)));
+    $hosts = app_mgs_management_scan_hosts($target, $maxHosts);
+    if ($hosts === []) {
+        return ['ok' => false, 'status' => 422, 'data' => [], 'error' => 'invalid_or_too_large_private_scan_target'];
+    }
+    $ports = array_values(array_unique(array_filter(
+        array_map('intval', preg_split('/[\s,;]+/', (string) ($payload['ports'] ?? '22,80,443')) ?: []),
+        static fn (int $port): bool => $port >= 1 && $port <= 65535
+    )));
+    $ports = array_slice($ports !== [] ? $ports : [22, 80, 443], 0, 12);
+    $serviceNames = [22 => 'ssh', 23 => 'telnet', 80 => 'http', 161 => 'snmp', 443 => 'https', 8291 => 'winbox'];
+    $results = [];
+
+    foreach ($hosts as $ip) {
+        $openPorts = [];
+        foreach ($ports as $port) {
+            $errno = 0;
+            $errstr = '';
+            $socket = @stream_socket_client(
+                'tcp://' . $ip . ':' . $port,
+                $errno,
+                $errstr,
+                0.18,
+                STREAM_CLIENT_CONNECT
+            );
+            if (!is_resource($socket)) {
+                continue;
+            }
+            fclose($socket);
+            $openPorts[] = [
+                'port' => $port,
+                'service' => $serviceNames[$port] ?? 'tcp',
+            ];
+        }
+        if ($openPorts !== []) {
+            $results[] = [
+                'ipAddress' => $ip,
+                'hostname' => '',
+                'deviceType' => 'auto',
+                'status' => 'tapildi',
+                'openPorts' => $openPorts,
+            ];
+        }
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'network_scan',
+        'entity_type' => 'management_network',
+        'entity_id' => $target,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => 'Management network scan completed',
+        'payload' => [
+            'target' => $target,
+            'host_count' => count($hosts),
+            'found_count' => count($results),
+            'ports' => $ports,
+        ],
+    ]);
+    return [
+        'ok' => true,
+        'status' => 200,
+        'data' => [
+            'target' => $target,
+            'results' => $results,
+            'scannedCount' => count($hosts),
+            'foundCount' => count($results),
+        ],
+        'error' => '',
+    ];
+}
+
+function app_mgs_create_monitor_device(array $payload, array $actor = [], ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'status' => 503, 'data' => [], 'error' => 'db_unavailable'];
+    }
+    $ip = trim((string) ($payload['ipAddress'] ?? $payload['ip_address'] ?? ''));
+    $name = clean_text((string) ($payload['name'] ?? $payload['deviceName'] ?? ''));
+    if (!app_mgs_is_private_management_ipv4($ip) || $name === '') {
+        return ['ok' => false, 'status' => 422, 'data' => [], 'error' => 'valid_private_ip_and_name_required'];
+    }
+    $authorization = app_noc_authorize(
+        $actor,
+        'create_monitor_device',
+        ['ip_address' => $ip, 'management_network' => clean_text((string) ($payload['location'] ?? ''))],
+        $db
+    );
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('create_monitor_device', $authorization) + ['status' => 403, 'data' => []];
+    }
+
+    $deviceType = strtolower(clean_text((string) ($payload['deviceType'] ?? 'auto')));
+    if (!in_array($deviceType, ['olt', 'router', 'switch', 'server', 'auto'], true)) {
+        $deviceType = 'auto';
+    }
+    $vendor = clean_text((string) ($payload['vendor'] ?? '')) ?: 'unknown';
+    $model = clean_text((string) ($payload['model'] ?? ''));
+    $vendorKey = strtolower($vendor);
+    $adapter = match (true) {
+        str_contains($vendorKey, 'huawei') && $deviceType === 'olt' => 'HuaweiSmartAXAdapter',
+        str_contains($vendorKey, 'hsgq') && $deviceType === 'olt' => 'HSGQOltAdapter',
+        str_contains($vendorKey, 'cisco') && $deviceType === 'router' => 'CiscoRouterAdapter',
+        str_contains($vendorKey, 'cisco') && $deviceType === 'switch' => 'CiscoSwitchAdapter',
+        default => 'GenericSnmpAdapter',
+    };
+    $existing = $db->prepare('SELECT device_key FROM device_learning_profiles WHERE ip_address = :ip LIMIT 1');
+    $existing->execute(['ip' => $ip]);
+    $deviceKey = clean_text((string) ($existing->fetchColumn() ?: ''));
+    if ($deviceKey === '') {
+        $deviceKey = trim(strtolower(preg_replace('/[^a-z0-9]+/i', '-', $deviceType . '-' . $vendor . '-' . $ip)), '-');
+        $deviceKey .= '-' . substr(hash('sha256', $ip), 0, 8);
+    }
+    $monitorPathReady = app_mgs_management_path_ready();
+    $reachability = $monitorPathReady ? 'unknown' : 'unreachable_because_monitor_path_down';
+    $status = $monitorPathReady ? 'pending_discovery' : 'waiting_mgmt_path';
+    $location = clean_text((string) ($payload['location'] ?? '')) ?: 'management';
+
+    try {
+        $statement = $db->prepare(
+            'INSERT INTO device_learning_profiles (
+                device_key, device_name, ip_address, device_type, vendor, model, adapter_key,
+                management_network, expected_reachability, monitoring_enabled, reachability_state,
+                confidence_score, features_json, command_map_json, snmp_oids_json, status
+             ) VALUES (
+                :device_key, :device_name, :ip_address, :device_type, :vendor, :model, :adapter_key,
+                :management_network, 1, 1, :reachability_state, :confidence_score, "[]", "{}", "{}", :status
+             )
+             ON DUPLICATE KEY UPDATE
+                device_name = VALUES(device_name),
+                device_type = VALUES(device_type),
+                vendor = VALUES(vendor),
+                model = VALUES(model),
+                adapter_key = VALUES(adapter_key),
+                management_network = VALUES(management_network),
+                monitoring_enabled = 1,
+                updated_at = CURRENT_TIMESTAMP'
+        );
+        $statement->execute([
+            'device_key' => $deviceKey,
+            'device_name' => $name,
+            'ip_address' => $ip,
+            'device_type' => $deviceType,
+            'vendor' => $vendor,
+            'model' => $model,
+            'adapter_key' => $adapter,
+            'management_network' => $location,
+            'reachability_state' => $reachability,
+            'confidence_score' => $vendor !== 'unknown' ? 0.65 : 0.25,
+            'status' => $status,
+        ]);
+
+        $sensitivePayload = [
+            'ssh_username' => (string) ($payload['sshUsername'] ?? ''),
+            'ssh_password' => (string) ($payload['sshPassword'] ?? ''),
+            'ssh_port' => (int) ($payload['sshPort'] ?? 22),
+            'snmp_read_community' => (string) ($payload['snmpReadCommunity'] ?? ''),
+            'snmp_write_community' => (string) ($payload['snmpWriteCommunity'] ?? ''),
+            'snmp_port' => (int) ($payload['snmpPort'] ?? 161),
+            'trap_port' => (int) ($payload['snmpTrapPort'] ?? 162),
+            'location' => $location,
+            'notes' => clean_text((string) ($payload['noteText'] ?? '')),
+        ];
+        if (array_filter($sensitivePayload, static fn (mixed $value, string $key): bool =>
+            in_array($key, ['ssh_username', 'ssh_password', 'snmp_read_community', 'snmp_write_community'], true)
+                && trim((string) $value) !== '', ARRAY_FILTER_USE_BOTH)) {
+            app_mgs_set_device_access_override($deviceKey, $sensitivePayload, $actor, $db);
+        }
+        app_mgs_record_operation_action([
+            'action_type' => 'monitor_device_create',
+            'entity_type' => 'device_learning',
+            'entity_id' => $deviceKey,
+            'status' => 'executed',
+            'actor' => $actor,
+            'summary' => 'Monitor device saved: ' . $name,
+            'payload' => [
+                'device_key' => $deviceKey,
+                'ip_address' => $ip,
+                'device_type' => $deviceType,
+                'vendor' => $vendor,
+                'model' => $model,
+            ],
+        ]);
+        return [
+            'ok' => true,
+            'status' => 200,
+            'data' => ['deviceKey' => $deviceKey, 'ipAddress' => $ip, 'name' => $name],
+            'error' => '',
+        ];
+    } catch (Throwable $exception) {
+        return ['ok' => false, 'status' => 500, 'data' => [], 'error' => 'device_save_failed'];
+    }
+}
+
+function app_mgs_create_technical_task(array $payload, array $actor = [], ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO) {
+        return ['ok' => false, 'error' => 'db_unavailable'];
+    }
+    $customerName = clean_text((string) ($payload['customerName'] ?? ''));
+    $taskType = clean_text((string) ($payload['taskType'] ?? 'field_work')) ?: 'field_work';
+    if ($customerName === '') {
+        return ['ok' => false, 'error' => 'customer_name_required'];
+    }
+    $assignedId = max(0, (int) ($payload['assignedUserId'] ?? 0));
+    $assignedName = '';
+    if ($assignedId > 0) {
+        $employee = app_mgs_hr_employee_record($db, $assignedId);
+        $assignedName = clean_text((string) ($employee['full_name'] ?? $employee['login'] ?? ''));
+    }
+    $ticketNo = app_db_next_ticket_no();
+    $ok = app_db_insert_ticket([
+        'ticket_no' => $ticketNo,
+        'customer_name' => $customerName,
+        'address' => clean_text((string) ($payload['customerAddress'] ?? '')),
+        'subject' => 'Texniki is: ' . $taskType,
+        'message' => clean_text((string) ($payload['noteText'] ?? 'Texniki tapshiriq')) ?: 'Texniki tapshiriq',
+        'status' => clean_text((string) ($payload['status'] ?? 'Aciqdir')) ?: 'Aciqdir',
+        'assigned_technician_account_id' => $assignedId,
+        'assigned_technician_name' => $assignedName,
+        'created_by_account_id' => (int) ($actor['id'] ?? 0),
+        'created_by_role' => clean_text((string) ($actor['employee_role'] ?? $actor['role'] ?? 'employee')),
+        'created_by_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'system')),
+        'metadata' => [
+            'task_type' => $taskType,
+            'priority' => clean_text((string) ($payload['priority'] ?? 'normal')),
+            'source' => 'unified_portal',
+        ],
+    ]);
+    return $ok
+        ? ['ok' => true, 'ticket_no' => $ticketNo]
+        : ['ok' => false, 'error' => 'technical_task_save_failed'];
+}
+
+function app_mgs_noc_service_request_json(
+    string $path,
+    string $method,
+    array $payload,
+    array $actor,
+    string $action,
+    array $object = [],
+    int $timeout = 20
+): array {
+    $authorization = app_noc_authorize($actor, $action, $object, app_db());
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($action, $authorization) + ['status' => 403, 'data' => []];
+    }
+
+    $cleanPath = '/' . ltrim($path, '/');
+    if (strtoupper($method) === 'POST' && $cleanPath === '/api/service/network-scan') {
+        return app_mgs_scan_management_network($payload, $actor, app_db());
+    }
+    if (strtoupper($method) === 'POST' && $cleanPath === '/api/service/devices') {
+        return app_mgs_create_monitor_device($payload, $actor, app_db());
+    }
+    return [
+        'ok' => false,
+        'status' => 404,
+        'data' => [],
+        'error' => 'unsupported_native_noc_action',
+    ];
+}
+
 function app_mgs_management_path_ready(): bool
 {
     return in_array(strtolower(app_mgs_runtime_setting('monitor_management_vlan_connected', '0')), ['1', 'true', 'yes', 'on'], true);
+}
+
+function app_mgs_set_management_path(bool $enabled, array $actor = [], ?PDO $db = null): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    $authorization = app_noc_authorize($actor, 'update_management_path', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('update_management_path', $authorization);
+    }
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    if (!app_mgs_set_runtime_setting('monitor_management_vlan_connected', $enabled ? '1' : '0', $actor)) {
+        return ['ok' => false, 'reason' => 'management_path_setting_failed'];
+    }
+
+    $result = app_mgs_refresh_device_reachability($db, false, $actor);
+    app_mgs_record_operation_action([
+        'action_type' => 'management_path_toggle',
+        'entity_type' => 'management_network',
+        'entity_id' => 'vlan550',
+        'status' => !empty($result['ok']) ? 'executed' : 'failed',
+        'actor' => $actor,
+        'summary' => $enabled ? 'VLAN 550 management path enabled' : 'VLAN 550 management path disabled',
+        'payload' => ['enabled' => $enabled, 'result' => $result],
+    ]);
+
+    return $result + ['enabled' => $enabled];
 }
 
 function app_mgs_default_processes(): array
@@ -4167,10 +5755,18 @@ function app_mgs_default_processes(): array
     ];
 }
 
-function app_mgs_sync_process_registry(?PDO $db = null): array
+function app_mgs_sync_process_registry(?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+    if (!$db instanceof PDO) {
+        return ['synced' => 0, 'ready' => 0, 'blocked' => 0];
+    }
+    $authorization = app_noc_authorize($actor, 'sync_process_registry', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('sync_process_registry', $authorization)
+            + ['synced' => 0, 'ready' => 0, 'blocked' => 0];
+    }
+    if (!app_mgs_ensure_schema($db)) {
         return ['synced' => 0, 'ready' => 0, 'blocked' => 0];
     }
 
@@ -4250,8 +5846,23 @@ function app_mgs_register_dedup_event(string $dedupKey, string $domain, string $
     ]);
 }
 
-function app_mgs_probe_ip(string $ip, int $timeoutMs = 900): array
+function app_mgs_probe_ip(
+    string $ip,
+    int $timeoutMs = 900,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'probe_device'
+): array
 {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return array_merge(
+            ['reachable' => false, 'method' => 'none'],
+            app_noc_authorization_failure($authorizationAction, $authorization)
+        );
+    }
     $ip = trim($ip);
     if ($ip === '') {
         return ['reachable' => false, 'method' => 'none', 'error' => 'empty_ip'];
@@ -4324,8 +5935,24 @@ function app_mgs_find_nmap_binary(): ?string
     return null;
 }
 
-function app_mgs_probe_tcp_port(string $ip, int $port, int $timeoutMs = 900): array
+function app_mgs_probe_tcp_port(
+    string $ip,
+    int $port,
+    int $timeoutMs = 900,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'probe_device'
+): array
 {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return array_merge(
+            ['reachable' => false, 'method' => 'tcp_' . $port],
+            app_noc_authorization_failure($authorizationAction, $authorization)
+        );
+    }
     $errno = 0;
     $errstr = '';
     $socket = @fsockopen($ip, $port, $errno, $errstr, max(0.2, $timeoutMs / 1000));
@@ -4344,11 +5971,12 @@ function app_mgs_find_python_binary(): ?string
         return $resolved;
     }
 
-    $candidates = ['python', 'py'];
+    $configuredPython = trim(app_config('mgs_python_binary', ''));
+    $candidates = array_values(array_filter([$configuredPython, 'python', 'py']));
     foreach ($candidates as $candidate) {
         $output = [];
         $exitCode = 1;
-        @exec($candidate . ' --version 2>&1', $output, $exitCode);
+        @exec(escapeshellarg($candidate) . ' --version 2>&1', $output, $exitCode);
         if ($exitCode === 0 && $output !== []) {
             $resolved = $candidate;
             return $resolved;
@@ -4361,12 +5989,24 @@ function app_mgs_find_python_binary(): ?string
 
 function app_mgs_legacy_project_root(): string
 {
-    return 'D:\\xampp\\htdocs\\oltidareetme';
+    $configured = trim((string) getenv('SUPEROPTIC_MGS_ROOT'));
+    if ($configured !== '') {
+        return rtrim($configured, "\\/");
+    }
+
+    return DIRECTORY_SEPARATOR === '\\'
+        ? 'D:\\xampp\\htdocs\\oltidareetme'
+        : '/opt/superoptic-mgs';
 }
 
 function app_mgs_billing_project_root(): string
 {
-    return 'D:\\xampp\\htdocs\\superopticnet';
+    $configured = trim((string) getenv('SUPEROPTIC_BILLING_ROOT'));
+    if ($configured !== '') {
+        return rtrim($configured, "\\/");
+    }
+
+    return dirname(__FILE__);
 }
 
 function app_mgs_backup_root(): string
@@ -4376,12 +6016,21 @@ function app_mgs_backup_root(): string
         return $configured;
     }
 
-    return app_mgs_legacy_project_root() . '\\data\\backups';
+    return DIRECTORY_SEPARATOR === '\\'
+        ? app_mgs_legacy_project_root() . '\\data\\backups'
+        : '/var/backups/superoptic/mgs';
 }
 
 function app_mgs_updates_root(): string
 {
-    return app_mgs_legacy_project_root() . '\\data\\updates';
+    $configured = trim((string) getenv('SUPEROPTIC_UPDATES_ROOT'));
+    if ($configured !== '') {
+        return rtrim($configured, "\\/");
+    }
+
+    return DIRECTORY_SEPARATOR === '\\'
+        ? app_mgs_legacy_project_root() . '\\data\\updates'
+        : '/var/lib/superoptic/updates';
 }
 
 function app_mgs_list_restore_points(int $limit = 10): array
@@ -4392,7 +6041,7 @@ function app_mgs_list_restore_points(int $limit = 10): array
     }
 
     $rows = [];
-    foreach ((array) glob($backupRoot . '\\superoptic-mgs-*.zip*') as $filePath) {
+    foreach ((array) glob($backupRoot . DIRECTORY_SEPARATOR . 'superoptic-mgs-*.zip*') as $filePath) {
         if (!is_file($filePath)) {
             continue;
         }
@@ -4413,6 +6062,27 @@ function app_mgs_list_restore_points(int $limit = 10): array
     });
 
     return array_slice($rows, 0, max(1, min($limit, 50)));
+}
+
+function app_mgs_path_is_absolute(string $path): bool
+{
+    if ($path === '') {
+        return false;
+    }
+    if (DIRECTORY_SEPARATOR === '\\') {
+        return preg_match('/^[A-Za-z]:\\\\/i', $path) === 1 || str_starts_with($path, '\\\\');
+    }
+    return str_starts_with($path, '/');
+}
+
+function app_mgs_path_is_within(string $path, string $root): bool
+{
+    $separator = DIRECTORY_SEPARATOR;
+    $normalizedRoot = rtrim($root, "\\/") . $separator;
+    if (DIRECTORY_SEPARATOR === '\\') {
+        return str_starts_with(strtolower($path), strtolower($normalizedRoot));
+    }
+    return str_starts_with($path, $normalizedRoot);
 }
 
 function app_mgs_find_npm_binary(): ?string
@@ -4511,7 +6181,7 @@ function app_mgs_resolve_restore_point(string $input): ?string
     }
 
     $candidate = $input;
-    if (!preg_match('/^[A-Za-z]:\\\\/i', $candidate) && !str_starts_with($candidate, '\\\\')) {
+    if (!app_mgs_path_is_absolute($candidate)) {
         $candidate = $backupRoot . DIRECTORY_SEPARATOR . basename($candidate);
     }
 
@@ -4520,7 +6190,7 @@ function app_mgs_resolve_restore_point(string $input): ?string
         return null;
     }
 
-    if (!str_starts_with(strtolower($resolved), strtolower($backupRoot . DIRECTORY_SEPARATOR))) {
+    if (!app_mgs_path_is_within($resolved, $backupRoot)) {
         return null;
     }
 
@@ -4537,12 +6207,24 @@ function app_mgs_resolve_update_package(string $input, array $channelStatus = []
 
     if ($input !== '') {
         $candidate = $input;
-        if (!preg_match('/^[A-Za-z]:\\\\/i', $candidate) && !str_starts_with($candidate, '\\\\')) {
+        if (!app_mgs_path_is_absolute($candidate)) {
             $candidate = $updatesRoot . DIRECTORY_SEPARATOR . basename($candidate);
         }
         $resolved = realpath($candidate);
         if ($resolved === false || !is_file($resolved)) {
             return ['ok' => false, 'error' => 'update_package_not_found'];
+        }
+
+        // Only packages inside the updates folder may be applied; absolute or
+        // UNC paths elsewhere on the host are rejected.
+        $rootReal = realpath($updatesRoot);
+        $insideRoot = $rootReal !== false
+            && str_starts_with(strtolower($resolved), strtolower(rtrim($rootReal, '\\/') . DIRECTORY_SEPARATOR));
+        $uploadsDir = realpath(__DIR__ . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'update-packages');
+        $insideUploads = $uploadsDir !== false
+            && str_starts_with(strtolower($resolved), strtolower(rtrim($uploadsDir, '\\/') . DIRECTORY_SEPARATOR));
+        if (!$insideRoot && !$insideUploads) {
+            return ['ok' => false, 'error' => 'update_package_outside_updates_root'];
         }
 
         return ['ok' => true, 'path' => $resolved, 'downloaded' => false];
@@ -4599,6 +6281,47 @@ function app_mgs_delete_tree(string $path): void
     @rmdir($path);
 }
 
+function app_mgs_zip_entry_is_safe(string $entryName): bool
+{
+    $normalized = str_replace('\\', '/', $entryName);
+    if ($normalized === '' || str_starts_with($normalized, '/') || preg_match('/^[a-zA-Z]:/', $normalized)) {
+        return false;
+    }
+
+    foreach (explode('/', $normalized) as $segment) {
+        if ($segment === '..') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function app_mgs_expand_archive_with_zip(string $archivePath, string $targetDir): array
+{
+    $zip = new ZipArchive();
+    if ($zip->open($archivePath) !== true) {
+        return ['ok' => false, 'stderr' => 'zip_open_failed', 'stdout' => '', 'exit_code' => 1];
+    }
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $entryName = $zip->getNameIndex($i);
+        if ($entryName === false || !app_mgs_zip_entry_is_safe($entryName)) {
+            $zip->close();
+            return ['ok' => false, 'stderr' => 'zip_entry_path_unsafe', 'stdout' => '', 'exit_code' => 1];
+        }
+    }
+
+    if (!$zip->extractTo($targetDir)) {
+        $zip->close();
+        return ['ok' => false, 'stderr' => 'zip_extract_failed', 'stdout' => '', 'exit_code' => 1];
+    }
+
+    $zip->close();
+
+    return ['ok' => true, 'stdout' => '', 'stderr' => '', 'exit_code' => 0];
+}
+
 function app_mgs_expand_archive(string $archivePath, string $targetDir): array
 {
     if (!is_file($archivePath)) {
@@ -4609,14 +6332,22 @@ function app_mgs_expand_archive(string $archivePath, string $targetDir): array
         @mkdir($targetDir, 0777, true);
     }
 
-    return app_mgs_run_process([
-        'powershell.exe',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        'Expand-Archive -LiteralPath ' . escapeshellarg($archivePath) . ' -DestinationPath ' . escapeshellarg($targetDir) . ' -Force',
-    ]);
+    if (class_exists(ZipArchive::class)) {
+        return app_mgs_expand_archive_with_zip($archivePath, $targetDir);
+    }
+
+    if (PHP_OS_FAMILY === 'Windows') {
+        return app_mgs_run_process([
+            'powershell.exe',
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-Command',
+            'Expand-Archive -LiteralPath ' . escapeshellarg($archivePath) . ' -DestinationPath ' . escapeshellarg($targetDir) . ' -Force',
+        ]);
+    }
+
+    return ['ok' => false, 'stderr' => 'zip_extraction_unavailable', 'stdout' => '', 'exit_code' => 1];
 }
 
 function app_mgs_update_package_root(string $expandedDir): string
@@ -4993,9 +6724,31 @@ function app_mgs_backup_center_action(string $action, array $options = [], array
     return $result;
 }
 
-function app_mgs_probe_ssh_auth(string $ip, string $username, string $password, int $port = 22, int $timeoutMs = 2200): array
+function app_mgs_probe_ssh_auth(
+    string $ip,
+    string $username,
+    string $password,
+    int $port = 22,
+    int $timeoutMs = 2200,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'probe_device',
+    string $healthProfile = ''
+): array
 {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return array_merge(
+            ['reachable' => false, 'method' => 'ssh_auth'],
+            app_noc_authorization_failure($authorizationAction, $authorization)
+        );
+    }
     $username = trim($username);
+    if ($healthProfile !== '' && ($healthProfile !== 'cisco_health' || strtoupper((string)($device['vendor'] ?? '')) !== 'CISCO')) {
+        return ['reachable'=>false, 'method'=>'ssh_auth', 'error'=>'unsupported_health_profile'];
+    }
     if ($username === '' || $password === '') {
         return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'missing_ssh_credentials'];
     }
@@ -5006,26 +6759,47 @@ function app_mgs_probe_ssh_auth(string $ip, string $username, string $password, 
         return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'ssh_auth_helper_unavailable'];
     }
 
-    $payloadFile = tempnam(sys_get_temp_dir(), 'mgs_ssh_');
-    if ($payloadFile === false) {
-        return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'ssh_auth_payload_temp_failed'];
-    }
     $payload = [
         'host' => $ip,
         'port' => $port,
         'username' => $username,
         'password' => $password,
         'timeout_ms' => max(800, $timeoutMs),
+        'health_profile' => $healthProfile,
     ];
-    file_put_contents($payloadFile, json_encode($payload, JSON_UNESCAPED_SLASHES));
-
-    $command = escapeshellarg($python)
-        . ' ' . escapeshellarg($script)
-        . ' --payload-file ' . escapeshellarg($payloadFile);
-    $output = [];
-    $exitCode = 1;
-    @exec($command . ' 2>&1', $output, $exitCode);
-    @unlink($payloadFile);
+    // Credentials travel through stdin, not command arguments or a plaintext temp file.
+    $process = @proc_open([$python, $script, '--payload-stdin'],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, __DIR__);
+    if (!is_resource($process)) {
+        return ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'ssh_auth_helper_unavailable'];
+    }
+    fwrite($pipes[0], json_encode($payload, JSON_UNESCAPED_SLASHES));
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $stdout = '';
+    $stderr = '';
+    $started = microtime(true);
+    $timedOut = false;
+    do {
+        $stdout .= (string)stream_get_contents($pipes[1]);
+        $stderr .= (string)stream_get_contents($pipes[2]);
+        $running = proc_get_status($process)['running'];
+        if (!$running) { break; }
+        if (microtime(true) - $started > ($healthProfile !== '' ? 18 : 12)) {
+            $timedOut = true;
+            proc_terminate($process);
+            break;
+        }
+        usleep(50000);
+    } while (true);
+    $stdout .= (string)stream_get_contents($pipes[1]);
+    $stderr .= (string)stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
+    if ($timedOut) { return ['reachable'=>false,'method'=>'ssh_auth','error'=>'ssh_auth_timeout']; }
+    $output = explode("\n", trim($stdout !== '' ? $stdout : $stderr));
     $lines = array_values(array_filter(array_map(static fn ($line): string => trim((string) $line), $output), static fn ($line): bool => $line !== ''));
     $text = implode("\n", $lines);
     $jsonCandidate = $text;
@@ -5045,13 +6819,68 @@ function app_mgs_probe_ssh_auth(string $ip, string $username, string $password, 
         'method' => 'ssh_auth',
         'error' => (string) ($decoded['error'] ?? ''),
         'banner' => (string) ($decoded['banner'] ?? ''),
+        'health' => is_array($decoded['health'] ?? null) ? $decoded['health'] : null,
         'port' => (int) ($decoded['port'] ?? $port),
         'username' => $username,
     ];
 }
 
-function app_mgs_hsgq_cli_discovery_probe(string $ip, string $username, string $password, int $port = 22, int $timeoutMs = 4500): array
+/**
+ * "Ogren" / CLI-discovery vendor registry. Each entry is a live-SSH probe
+ * (walks the device's real CLI menus/help text) plus a derive step that
+ * turns the raw discovery into a proposed command map -- see
+ * app_mgs_hsgq_cli_discovery_probe() / app_mgs_hsgq_derived_command_map_from_discovery()
+ * for the reference implementation this was extracted from.
+ *
+ * To onboard a NEW vendor's "ogren" button: write a
+ * `tools/<vendor>-cli-discovery.py` helper that logs in over SSH and walks
+ * that vendor's own menu/help conventions (the walking logic is inherently
+ * vendor-specific -- there is no generic CLI menu format to auto-detect),
+ * add an `app_mgs_<vendor>_cli_discovery_probe()` wrapper following the HSGQ
+ * one's signature, an `app_mgs_<vendor>_derived_command_map_from_discovery()`,
+ * then add one entry below. Nothing else in the dispatch path needs to
+ * change. The derived command map is always a PROPOSAL for a human to
+ * review before it is trusted for config_change/vlan_push/ont_control --
+ * never auto-apply it.
+ */
+function app_mgs_cli_discovery_handler_registry(): array
 {
+    return [
+        'HSGQ' => [
+            'probe' => 'app_mgs_hsgq_cli_discovery_probe',
+            'derive' => 'app_mgs_hsgq_derived_command_map_from_discovery',
+            'source_label' => 'live_hsgq_cli_discovery',
+        ],
+        'CISCO' => [
+            'probe' => 'app_mgs_cisco_cli_discovery_probe',
+            'derive' => 'app_mgs_cisco_derived_command_map_from_discovery',
+            'source_label' => 'live_cisco_cli_discovery',
+        ],
+    ];
+}
+
+function app_mgs_cli_discovery_supported_vendors(): array
+{
+    return array_keys(app_mgs_cli_discovery_handler_registry());
+}
+
+function app_mgs_hsgq_cli_discovery_probe(
+    string $ip,
+    string $username,
+    string $password,
+    int $port = 22,
+    int $timeoutMs = 4500,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'preview_device_backup'
+): array
+{
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
     $username = trim($username);
     if ($username === '' || $password === '') {
         return ['ok' => false, 'error' => 'missing_ssh_credentials'];
@@ -5114,8 +6943,24 @@ function app_mgs_hsgq_cli_discovery_probe(string $ip, string $username, string $
     ];
 }
 
-function app_mgs_hsgq_exec_commands(string $ip, string $username, string $password, array $commands, int $port = 22, int $timeoutMs = 5000): array
+function app_mgs_hsgq_exec_commands(
+    string $ip,
+    string $username,
+    string $password,
+    array $commands,
+    int $port = 22,
+    int $timeoutMs = 5000,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'execute_device_command'
+): array
 {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
     $username = trim($username);
     $commands = array_values(array_filter(array_map(static fn ($item): string => trim((string) $item), $commands), static fn ($item): bool => $item !== ''));
     if ($username === '' || $password === '') {
@@ -5125,7 +6970,15 @@ function app_mgs_hsgq_exec_commands(string $ip, string $username, string $passwo
         return ['ok' => false, 'reason' => 'missing_commands'];
     }
 
-    $preflight = app_mgs_probe_tcp_port($ip, $port, 900);
+    $preflight = app_mgs_probe_tcp_port(
+        $ip,
+        $port,
+        900,
+        $actor,
+        $target,
+        $db,
+        $authorizationAction
+    );
     if (empty($preflight['reachable'])) {
         return ['ok' => false, 'reason' => 'ssh_port_unreachable'];
     }
@@ -5361,9 +7214,13 @@ function app_mgs_parse_hsgq_optical_state_output(string $text): array
     return $result;
 }
 
-function app_mgs_hsgq_live_ont_snapshot(array $device, int|string $pon, int|string $ontId, ?PDO $db = null): array
+function app_mgs_hsgq_live_ont_snapshot(array $device, int|string $pon, int|string $ontId, array $actor = [], ?PDO $db = null): array
 {
     $db = $db instanceof PDO ? $db : app_db();
+    $authorization = app_noc_authorize($actor, 'read_ont_live', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('read_ont_live', $authorization);
+    }
     if (!app_mgs_management_path_ready()) {
         return ['ok' => false, 'reason' => 'management_path_down'];
     }
@@ -5377,7 +7234,7 @@ function app_mgs_hsgq_live_ont_snapshot(array $device, int|string $pon, int|stri
         return ['ok' => false, 'reason' => 'missing_pon_or_ont'];
     }
 
-    $access = app_mgs_device_access_profile($device, $db);
+    $access = app_mgs_device_access_profile($device, $db, $actor, 'read_ont_live');
     $sshUsername = trim((string) ($access['ssh_username'] ?? ''));
     $sshPassword = (string) ($access['ssh_password'] ?? '');
     if ($sshUsername === '' || $sshPassword === '') {
@@ -5385,7 +7242,7 @@ function app_mgs_hsgq_live_ont_snapshot(array $device, int|string $pon, int|stri
     }
 
     $commandMap = app_mgs_json_decode_array($device['command_map_json'] ?? null);
-    $discoverySummary = app_mgs_latest_cli_discovery_summary($device, $db);
+    $discoverySummary = app_mgs_latest_cli_discovery_summary($device, $db, $actor);
     $derivedCommandMap = is_array($discoverySummary['derived_command_map'] ?? null) ? $discoverySummary['derived_command_map'] : [];
     if ($derivedCommandMap !== []) {
         $commandMap = array_merge($commandMap, $derivedCommandMap);
@@ -5422,7 +7279,11 @@ function app_mgs_hsgq_live_ont_snapshot(array $device, int|string $pon, int|stri
         $sshPassword,
         array_values($commands),
         (int) ($access['ssh_port'] ?? 22),
-        6500
+        6500,
+        $actor,
+        $device,
+        $db,
+        'read_ont_live'
     );
     if (empty($run['ok'])) {
         return ['ok' => false, 'reason' => (string) ($run['reason'] ?? 'command_probe_failed')];
@@ -5474,14 +7335,18 @@ function app_mgs_hsgq_live_ont_snapshot(array $device, int|string $pon, int|stri
     ];
 }
 
-function app_mgs_device_command_map(array $device, ?PDO $db = null): array
+function app_mgs_device_command_map(array $device, ?PDO $db = null, array $actor = []): array
 {
+    $authorization = app_noc_authorize($actor, 'read_device_sensitive', $device, $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
     $commandMap = [];
     if (strtoupper((string) ($device['vendor'] ?? '')) === 'HSGQ') {
         $commandMap = app_mgs_hsgq_default_command_map();
     }
     $commandMap = array_merge($commandMap, app_mgs_json_decode_array($device['command_map_json'] ?? null));
-    $discoverySummary = app_mgs_latest_cli_discovery_summary($device, $db);
+    $discoverySummary = app_mgs_latest_cli_discovery_summary($device, $db, $actor);
     $derivedCommandMap = is_array($discoverySummary['derived_command_map'] ?? null) ? $discoverySummary['derived_command_map'] : [];
     if ($derivedCommandMap !== []) {
         $commandMap = array_merge($commandMap, $derivedCommandMap);
@@ -5530,6 +7395,11 @@ function app_mgs_execute_device_command_plan(array $device, array $commands, arr
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
+    $authorizationAction = clean_text((string) ($options['authorization_action'] ?? 'execute_device_command'));
+    $authorization = app_noc_authorize($actor, $authorizationAction, $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
     if (!app_mgs_management_path_ready() && !empty($device['management_network']) && (string) $device['management_network'] !== 'public') {
         return ['ok' => false, 'reason' => 'management_path_down'];
     }
@@ -5540,7 +7410,7 @@ function app_mgs_execute_device_command_plan(array $device, array $commands, arr
     }
 
     $deviceKey = (string) ($device['device_key'] ?? '');
-    $access = app_mgs_device_access_profile($device, $db);
+    $access = app_mgs_device_access_profile($device, $db, $actor, $authorizationAction);
     $sshUsername = trim((string) ($access['ssh_username'] ?? ''));
     $sshPassword = (string) ($access['ssh_password'] ?? '');
     if ($sshUsername === '' || $sshPassword === '') {
@@ -5567,13 +7437,42 @@ function app_mgs_execute_device_command_plan(array $device, array $commands, arr
         ];
     }
 
+    // Maker-checker (vision 19.2 "router konfiqurasiyası"): gate on the
+    // caller's own allow_dangerous signal, not just the dangerous-keyword
+    // list above -- constructive config-push commands (VLAN create/bind,
+    // ONT provisioning) don't contain words like "delete"/"shutdown" but are
+    // exactly the kind of live-device write the vision doc worries about.
+    // Every caller that sets allow_dangerous=true is already asserting "this
+    // is a real device apply"; that intent alone is what stages here. Only
+    // app_mgs_resolve_device_command_request() (a DIFFERENT admin) can let it
+    // reach app_mgs_hsgq_exec_commands() below. Plain read commands never set
+    // allow_dangerous and are completely unaffected. The post-approval
+    // execution path sets _post_approval_execution to skip this gate exactly
+    // once, for the request it was created to run.
+    if ($allowDangerous && empty($options['_post_approval_execution'])) {
+        return app_mgs_stage_device_command_request(
+            $db,
+            $device,
+            $commands,
+            $dangerousHits,
+            (string) ($options['reason'] ?? ''),
+            $actor,
+            (string) ($options['action_type'] ?? 'device_command_apply'),
+            $authorizationAction
+        );
+    }
+
     $run = app_mgs_hsgq_exec_commands(
         (string) ($device['ip_address'] ?? ''),
         $sshUsername,
         $sshPassword,
         $commands,
         (int) ($access['ssh_port'] ?? 22),
-        (int) ($options['timeout_ms'] ?? 9000)
+        (int) ($options['timeout_ms'] ?? 9000),
+        $actor,
+        $device,
+        $db,
+        $authorizationAction
     );
 
     $ok = !empty($run['ok']);
@@ -5607,8 +7506,156 @@ function app_mgs_execute_device_command_plan(array $device, array $commands, arr
     ];
 }
 
-function app_mgs_hsgq_ont_control_plan(array $device, string $operation, int|string $pon, int|string $ontId, ?PDO $db = null): array
+function app_mgs_stage_device_command_request(
+    PDO $db,
+    array $device,
+    array $commands,
+    array $dangerousTokens,
+    string $reason,
+    array $actor,
+    string $actionType,
+    string $authorizationAction
+): array {
+    $reason = mb_substr(clean_text($reason), 0, 255);
+    if ($reason === '') {
+        return ['ok' => false, 'reason' => 'reason_required'];
+    }
+    $deviceKey = (string) ($device['device_key'] ?? '');
+    $insert = $db->prepare(
+        'INSERT INTO mgs_device_command_requests (
+            device_key, device_name, device_ip, commands_json, dangerous_tokens_json,
+            action_type, authorization_action, reason, status, requested_by_account_id, requested_by_name
+         ) VALUES (
+            :device_key, :device_name, :device_ip, :commands_json, :dangerous_tokens_json,
+            :action_type, :authorization_action, :reason, "pending", :actor_id, :actor_name
+         )'
+    );
+    $insert->execute([
+        'device_key' => $deviceKey,
+        'device_name' => (string) ($device['device_name'] ?? ''),
+        'device_ip' => (string) ($device['ip_address'] ?? ''),
+        'commands_json' => app_db_json_encode($commands),
+        'dangerous_tokens_json' => app_db_json_encode($dangerousTokens),
+        'action_type' => $actionType,
+        'authorization_action' => $authorizationAction,
+        'reason' => $reason,
+        'actor_id' => (int) ($actor['id'] ?? 0) ?: null,
+        'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+    ]);
+    $id = (int) $db->lastInsertId();
+
+    app_mgs_record_operation_action([
+        'action_type' => $actionType . '_requested',
+        'entity_type' => 'device_learning',
+        'entity_id' => $deviceKey,
+        'status' => 'pending',
+        'actor' => $actor,
+        'summary' => 'Dangerous device command staged for approval: ' . (string) ($device['device_name'] ?? $deviceKey),
+        'payload' => ['id' => $id, 'device_key' => $deviceKey, 'commands' => $commands, 'dangerous_tokens' => $dangerousTokens, 'reason' => $reason],
+    ]);
+
+    return [
+        'ok' => false,
+        'reason' => 'dangerous_command_staged_for_approval',
+        'request_id' => $id,
+        'dangerous_tokens' => $dangerousTokens,
+    ];
+}
+
+function app_mgs_device_command_requests(PDO $db, string $status = 'pending'): array
 {
+    $statement = $db->prepare('SELECT * FROM mgs_device_command_requests WHERE status = :status ORDER BY created_at DESC LIMIT 50');
+    $statement->execute(['status' => $status]);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function app_mgs_resolve_device_command_request(PDO $db, int $requestId, string $decision, string $resolutionNote, array $actor, ?PDO $deviceDb = null): array
+{
+    if (!app_portal_is_admin($actor)) {
+        return ['ok' => false, 'error' => 'permission_denied'];
+    }
+    if (!in_array($decision, ['approved', 'rejected'], true)) {
+        return ['ok' => false, 'error' => 'invalid_decision'];
+    }
+    $resolutionNote = mb_substr(clean_text($resolutionNote), 0, 255);
+    $actorId = (int) ($actor['id'] ?? 0);
+
+    $requestStatement = $db->prepare('SELECT * FROM mgs_device_command_requests WHERE id = :id LIMIT 1');
+    $requestStatement->execute(['id' => $requestId]);
+    $request = $requestStatement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($request)) {
+        return ['ok' => false, 'error' => 'request_not_found'];
+    }
+    if ((string) $request['status'] !== 'pending') {
+        return ['ok' => false, 'error' => 'request_already_resolved'];
+    }
+    if ($actorId > 0 && $actorId === (int) ($request['requested_by_account_id'] ?? 0)) {
+        return ['ok' => false, 'error' => 'requester_cannot_approve_own_request'];
+    }
+
+    $execResult = null;
+    if ($decision === 'approved') {
+        $deviceDb = $deviceDb instanceof PDO ? $deviceDb : $db;
+        $device = app_mgs_device_learning_profile_by_key((string) $request['device_key'], $deviceDb, $actor);
+        if (!is_array($device)) {
+            return ['ok' => false, 'error' => 'device_not_found'];
+        }
+        $commands = app_mgs_json_decode_array($request['commands_json'] ?? []);
+        $execResult = app_mgs_execute_device_command_plan($device, $commands, $actor, $deviceDb, [
+            'allow_dangerous' => true,
+            'action_type' => (string) $request['action_type'],
+            'authorization_action' => (string) $request['authorization_action'],
+            'reason' => (string) $request['reason'],
+            '_post_approval_execution' => true,
+        ]);
+        if (empty($execResult['ok'])) {
+            return ['ok' => false, 'error' => 'device_command_execution_failed', 'detail' => (string) ($execResult['reason'] ?? '')];
+        }
+    }
+
+    try {
+        $db->beginTransaction();
+        $update = $db->prepare(
+            "UPDATE mgs_device_command_requests SET status = :status, reviewed_by_account_id = :actor_id,
+                reviewed_by_name = :actor_name, resolution_note = :resolution_note, result_json = :result_json, reviewed_at = NOW()
+             WHERE id = :id AND status = 'pending'"
+        );
+        $update->execute([
+            'status' => $decision,
+            'actor_id' => $actorId ?: null,
+            'actor_name' => clean_text((string) ($actor['full_name'] ?? $actor['login'] ?? 'admin')),
+            'resolution_note' => $resolutionNote ?: null,
+            'result_json' => $execResult !== null ? app_db_json_encode($execResult) : null,
+            'id' => $requestId,
+        ]);
+        if ($update->rowCount() === 0) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'request_already_resolved'];
+        }
+        $db->commit();
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'request_resolve_failed', 'message' => $exception->getMessage()];
+    }
+
+    return ['ok' => true, 'status' => $decision, 'exec_result' => $execResult];
+}
+
+function app_mgs_hsgq_ont_control_plan(
+    array $device,
+    string $operation,
+    int|string $pon,
+    int|string $ontId,
+    ?PDO $db = null,
+    array $actor = []
+): array
+{
+    $authorization = app_noc_authorize($actor, 'execute_ont_control', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('execute_ont_control', $authorization);
+    }
     $operation = strtolower(trim($operation));
     $aliases = [
         'restart' => 'ont_restart',
@@ -5633,7 +7680,7 @@ function app_mgs_hsgq_ont_control_plan(array $device, string $operation, int|str
         return ['ok' => false, 'reason' => 'missing_pon_or_ont'];
     }
 
-    $commandMap = app_mgs_device_command_map($device, $db);
+    $commandMap = app_mgs_device_command_map($device, $db, $actor);
     $commands = [];
     foreach (['enter_enable', 'enter_config', 'enter_gpon_context', $key] as $templateKey) {
         $template = trim((string) ($commandMap[$templateKey] ?? ''));
@@ -5661,7 +7708,12 @@ function app_mgs_hsgq_ont_control_plan(array $device, string $operation, int|str
 
 function app_mgs_execute_hsgq_ont_control(array $device, string $operation, int|string $pon, int|string $ontId, array $actor = [], ?PDO $db = null): array
 {
-    $plan = app_mgs_hsgq_ont_control_plan($device, $operation, $pon, $ontId, $db);
+    $db = $db instanceof PDO ? $db : app_db();
+    $authorization = app_noc_authorize($actor, 'execute_ont_control', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('execute_ont_control', $authorization);
+    }
+    $plan = app_mgs_hsgq_ont_control_plan($device, $operation, $pon, $ontId, $db, $actor);
     if (empty($plan['ok'])) {
         app_mgs_record_operation_action([
             'action_type' => 'ont_control_apply',
@@ -5677,6 +7729,7 @@ function app_mgs_execute_hsgq_ont_control(array $device, string $operation, int|
 
     $result = app_mgs_execute_device_command_plan($device, (array) $plan['commands'], $actor, $db, [
         'allow_dangerous' => true,
+        'authorization_action' => 'execute_ont_control',
         'action_type' => 'ont_control_apply',
         'timeout_ms' => 11000,
     ]);
@@ -5690,12 +7743,25 @@ function app_mgs_execute_hsgq_ont_control(array $device, string $operation, int|
 function app_mgs_device_name_fingerprint(string $value): string
 {
     $value = app_repair_mojibake_dynamic(app_repair_mojibake(trim($value)));
+    // Device labels often use ASCII (Kurdexani) while CRM areas are stored
+    // with Azerbaijani characters (Kürdəxanı). Normalize both forms before
+    // matching an OLT to its service area.
+    $value = strtr($value, [
+        'Ə' => 'E', 'ə' => 'e', 'Ü' => 'U', 'ü' => 'u', 'Ö' => 'O', 'ö' => 'o',
+        'Ş' => 'S', 'ş' => 's', 'Ç' => 'C', 'ç' => 'c', 'Ğ' => 'G', 'ğ' => 'g',
+        'İ' => 'I', 'ı' => 'i',
+    ]);
     $value = strtolower($value);
     $value = preg_replace('/[^a-z0-9]+/', '', $value);
     return (string) $value;
 }
 
-function app_mgs_hsgq_device_by_olt_name(string $oltName, ?PDO $db = null): ?array
+function app_mgs_hsgq_device_by_olt_name(
+    string $oltName,
+    ?PDO $db = null,
+    array $actor = [],
+    string $purposeAction = 'read_device'
+): ?array
 {
     $needle = app_mgs_device_name_fingerprint($oltName);
     if ($needle === '') {
@@ -5704,6 +7770,10 @@ function app_mgs_hsgq_device_by_olt_name(string $oltName, ?PDO $db = null): ?arr
 
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return null;
+    }
+    $authorization = app_noc_authorize($actor, $purposeAction, [], $db);
+    if (empty($authorization['ok'])) {
         return null;
     }
 
@@ -5716,6 +7786,9 @@ function app_mgs_hsgq_device_by_olt_name(string $oltName, ?PDO $db = null): ?arr
           ORDER BY id'
     );
     $rows = $statement !== false ? ($statement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    if ($purposeAction !== 'read_ont_live') {
+        $rows = app_noc_filter_objects($rows, $actor, $db);
+    }
     foreach ($rows as $row) {
         if (!is_array($row)) {
             continue;
@@ -5727,7 +7800,8 @@ function app_mgs_hsgq_device_by_olt_name(string $oltName, ?PDO $db = null): ?arr
         ];
         foreach ($candidates as $candidate) {
             if (app_mgs_device_name_fingerprint($candidate) === $needle) {
-                return $row;
+                $objectAuthorization = app_noc_authorize($actor, $purposeAction, $row, $db);
+                return !empty($objectAuthorization['ok']) ? $row : null;
             }
         }
     }
@@ -5832,10 +7906,14 @@ function app_mgs_modem_search_accounts(PDO $db, string $query, int $limit = 40):
     return array_values(array_filter($statement->fetchAll(PDO::FETCH_ASSOC) ?: [], 'is_array'));
 }
 
-function app_mgs_modem_search_candidates(string $query, int $limit = 8, ?PDO $db = null): array
+function app_mgs_modem_search_candidates(string $query, int $limit = 8, ?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return [];
+    }
+    $authorization = app_noc_authorize($actor, 'read_ont_live', [], $db);
+    if (empty($authorization['ok'])) {
         return [];
     }
 
@@ -5919,7 +7997,7 @@ function app_mgs_modem_search_candidates(string $query, int $limit = 8, ?PDO $db
                             acctinputoctets, acctoutputoctets
                        FROM radacct
                       WHERE username = :username
-                        AND acctstoptime IS NULL
+                        AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
                       ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
                       LIMIT 1'
                 );
@@ -5977,7 +8055,16 @@ function app_mgs_modem_search_candidates(string $query, int $limit = 8, ?PDO $db
                 $row['last_ticket_opened_at'] = (string) ($ticket['opened_at'] ?? '');
             }
 
-            $device = app_mgs_hsgq_device_by_olt_name((string) $row['olt'], $db);
+            $candidateActor = $actor;
+            if (!empty($candidateActor['ticket_resolution_scope'])) {
+                $candidateActor['ticket_resolution_device'] = (string) $row['olt'];
+            }
+            $device = app_mgs_hsgq_device_by_olt_name(
+                (string) $row['olt'],
+                $db,
+                $candidateActor,
+                'read_ont_live'
+            );
             $row['device_key'] = (string) ($device['device_key'] ?? '');
             $row['device_ip'] = (string) ($device['ip_address'] ?? '');
             $row['live_capable'] = is_array($device) && app_mgs_management_path_ready();
@@ -6030,18 +8117,169 @@ function app_mgs_parse_hsgq_ont_info_all_rows(string $text): array
     return $rows;
 }
 
-function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8): ?array
+/**
+ * Parse the bounded HSGQ "show ont-optical all" table.  The device prints
+ * PON/ONU, serial, temperature, voltage, bias, ONT TX, ONT RX and (on newer
+ * firmware) the receive level observed by the OLT.  Raw CLI output is never
+ * returned to agent callers; only these typed telemetry fields leave this
+ * parser.
+ */
+function app_mgs_parse_hsgq_ont_optical_all_rows(string $text): array
+{
+    $rows = [];
+    $text = app_repair_mojibake_dynamic(app_repair_mojibake($text));
+    $text = preg_replace('/\x1b\[[0-9;]*[A-Za-z]/', '', $text);
+    foreach (preg_split('/\r?\n/', (string) $text) ?: [] as $line) {
+        $line = trim((string) $line);
+        if ($line === '' || str_starts_with($line, 'PON/ONU') || str_starts_with($line, 'OLT(')) {
+            continue;
+        }
+        if (preg_match(
+            '/^(\d+\/\d+)\s+(\S+)\s+(-?\d+(?:\.\d+)?)\s+C\s+([\d.]+)\s+V\s+([\d.]+)\s+mA\s+([+-]?[\d.]+)\s+dBm\s+([+-]?[\d.]+)\s+dBm(?:\s+([+-]?[\d.]+)\s+dBm)?(?:\s+(\S+))?$/i',
+            $line,
+            $match
+        ) !== 1) {
+            continue;
+        }
+        [$pon, $ontId] = array_pad(explode('/', (string) $match[1], 2), 2, '');
+        $rows[] = [
+            'pon' => $pon,
+            'ont_id' => $ontId,
+            'serial' => trim((string) $match[2]),
+            'temperature' => (float) $match[3],
+            'voltage' => (float) $match[4],
+            'bias_current' => (float) $match[5],
+            'ont_tx' => (float) $match[6],
+            'ont_rx' => (float) $match[7],
+            'olt_rx' => isset($match[8]) && $match[8] !== '' ? (float) $match[8] : null,
+            'name' => (string) ($match[9] ?? ''),
+        ];
+    }
+
+    return $rows;
+}
+
+/**
+ * Read the complete ONT inventory and optical table from one registered HSGQ
+ * OLT.  This is a read-only operation: only fixed show commands are sent and
+ * no device or database configuration is changed.
+ */
+function app_mgs_hsgq_live_ont_inventory(array $device, array $actor = [], ?PDO $db = null): array
 {
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db) || !app_mgs_management_path_ready()) {
+    $authorization = app_noc_authorize($actor, 'read_ont_live', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('read_ont_live', $authorization);
+    }
+    if (!app_mgs_management_path_ready()) {
+        return ['ok' => false, 'reason' => 'management_path_down'];
+    }
+    if (strtoupper((string) ($device['vendor'] ?? '')) !== 'HSGQ') {
+        return ['ok' => false, 'reason' => 'unsupported_vendor'];
+    }
+
+    $access = app_mgs_device_access_profile($device, $db, $actor, 'read_ont_live');
+    $username = trim((string) ($access['ssh_username'] ?? ''));
+    $password = (string) ($access['ssh_password'] ?? '');
+    if ($username === '' || $password === '') {
+        return ['ok' => false, 'reason' => 'missing_ssh_credentials'];
+    }
+
+    $map = app_mgs_device_command_map($device, $db, $actor);
+    $commands = [
+        trim((string) ($map['enter_enable'] ?? 'enable')),
+        trim((string) ($map['enter_config'] ?? 'configure')),
+        trim((string) ($map['ont_info_all'] ?? 'show ont-info all')),
+        trim((string) ($map['ont_optical_all'] ?? 'show ont-optical all')),
+    ];
+    $commands = array_values(array_filter($commands, static fn (string $command): bool => $command !== ''));
+    $run = app_mgs_hsgq_exec_commands(
+        (string) ($device['ip_address'] ?? ''),
+        $username,
+        $password,
+        $commands,
+        (int) ($access['ssh_port'] ?? 22),
+        12000,
+        $actor,
+        $device,
+        $db,
+        'read_ont_live'
+    );
+    if (empty($run['ok'])) {
+        return ['ok' => false, 'reason' => (string) ($run['reason'] ?? 'command_probe_failed')];
+    }
+
+    $outputs = is_array($run['outputs'] ?? null) ? $run['outputs'] : [];
+    $infoCommand = $commands[count($commands) - 2] ?? 'show ont-info all';
+    $opticalCommand = $commands[count($commands) - 1] ?? 'show ont-optical all';
+    $infoRows = app_mgs_parse_hsgq_ont_info_all_rows((string) ($outputs[$infoCommand] ?? ''));
+    $opticalRows = app_mgs_parse_hsgq_ont_optical_all_rows((string) ($outputs[$opticalCommand] ?? ''));
+
+    $byPath = [];
+    foreach ($infoRows as $row) {
+        $path = trim((string) ($row['pon'] ?? '')) . '/' . trim((string) ($row['ont_id'] ?? ''));
+        if ($path === '/') {
+            continue;
+        }
+        $runState = strtolower(trim((string) ($row['run_state'] ?? '')));
+        $adminState = strtolower(trim((string) ($row['state'] ?? '')));
+        $byPath[$path] = [
+            'pon' => (string) ($row['pon'] ?? ''),
+            'ont_id' => (string) ($row['ont_id'] ?? ''),
+            'serial' => (string) ($row['serial'] ?? ''),
+            'status' => $runState === 'online' ? 'online' : ($adminState === 'inactive' ? 'disabled' : 'offline'),
+            'name' => (string) ($row['ont_name'] ?? ''),
+        ];
+    }
+    foreach ($opticalRows as $row) {
+        $path = trim((string) ($row['pon'] ?? '')) . '/' . trim((string) ($row['ont_id'] ?? ''));
+        if ($path === '/') {
+            continue;
+        }
+        $byPath[$path] = array_replace($byPath[$path] ?? [
+            'pon' => (string) ($row['pon'] ?? ''),
+            'ont_id' => (string) ($row['ont_id'] ?? ''),
+            'status' => 'unknown',
+        ], array_filter($row, static fn ($value): bool => $value !== '' && $value !== null));
+    }
+
+    ksort($byPath, SORT_NATURAL);
+    return [
+        'ok' => true,
+        'checked_at' => date(DATE_ATOM),
+        'device_key' => (string) ($device['device_key'] ?? ''),
+        'device_name' => (string) ($device['device_name'] ?? ''),
+        'device_ip' => (string) ($device['ip_address'] ?? ''),
+        'onts_total' => count($byPath),
+        'optical_rows' => count($opticalRows),
+        'rows' => array_values($byPath),
+    ];
+}
+
+function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int $maxPon = 8, array $actor = [], ?string &$reason = null): ?array
+{
+    $reason = null;
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        $reason = 'db_unavailable';
+        return null;
+    }
+    if (!app_mgs_management_path_ready()) {
+        $reason = 'management_path_down';
+        return null;
+    }
+    $authorization = app_noc_authorize($actor, 'read_ont_live', [], $db);
+    if (empty($authorization['ok'])) {
         return null;
     }
 
     $query = trim($query);
     if ($query === '') {
+        $reason = 'empty_query';
         return null;
     }
     $needle = app_mgs_search_text_lower($query);
+    $needleCompact = preg_replace('/[^a-z0-9]/', '', $needle) ?? '';
 
     $statement = $db->query(
         'SELECT *
@@ -6052,14 +8290,22 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
           ORDER BY id'
     );
     $devices = $statement !== false ? ($statement->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    $devices = app_noc_filter_objects($devices, $actor, $db);
+    if ($devices === []) {
+        $reason = 'no_olt_profile';
+        return null;
+    }
+    $credentialed = 0;
+    $reachable = 0;
     foreach ($devices as $device) {
         if (!is_array($device)) {
             continue;
         }
-        $access = app_mgs_device_access_profile($device, $db);
+        $access = app_mgs_device_access_profile($device, $db, $actor, 'read_ont_live');
         if (trim((string) ($access['ssh_username'] ?? '')) === '' || (string) ($access['ssh_password'] ?? '') === '') {
             continue;
         }
+        $credentialed++;
         for ($pon = 1; $pon <= max(1, $maxPon); $pon++) {
             $run = app_mgs_hsgq_exec_commands(
                 (string) ($device['ip_address'] ?? ''),
@@ -6067,15 +8313,22 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
                 (string) ($access['ssh_password'] ?? ''),
                 ['enable', 'configure', 'interface gpon ' . $pon, 'show ont-info all'],
                 (int) ($access['ssh_port'] ?? 22),
-                6500
+                6500,
+                $actor,
+                $device,
+                $db,
+                'read_ont_live'
             );
             if (empty($run['ok'])) {
                 continue;
             }
+            $reachable++;
             $table = (string) (($run['outputs']['show ont-info all'] ?? ''));
             foreach (app_mgs_parse_hsgq_ont_info_all_rows($table) as $row) {
-                if (app_mgs_search_text_matches($needle, [$row['serial'] ?? '', $row['ont_name'] ?? '', $row['line'] ?? '', $row['pon'] . '/' . $row['ont_id']])) {
-                    $snapshot = app_mgs_hsgq_live_ont_snapshot($device, (string) ($row['pon'] ?? ''), (string) ($row['ont_id'] ?? ''), $db);
+                $compactSerial = preg_replace('/[^a-z0-9]/', '', app_mgs_search_text_lower((string) ($row['serial'] ?? ''))) ?? '';
+                $serialHit = $needleCompact !== '' && strlen($needleCompact) >= 6 && $compactSerial !== '' && str_contains($compactSerial, $needleCompact);
+                if ($serialHit || app_mgs_search_text_matches($needle, [$row['serial'] ?? '', $row['ont_name'] ?? '', $row['line'] ?? '', $row['pon'] . '/' . $row['ont_id']])) {
+                    $snapshot = app_mgs_hsgq_live_ont_snapshot($device, (string) ($row['pon'] ?? ''), (string) ($row['ont_id'] ?? ''), $actor, $db);
                     if (!empty($snapshot['ok'])) {
                         $snapshot['live_lookup'] = $row;
                         return $snapshot;
@@ -6085,12 +8338,31 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
         }
     }
 
+    $reason = $credentialed === 0 ? 'no_ssh_credentials' : ($reachable === 0 ? 'olt_unreachable' : 'not_on_olt');
+
     return null;
 }
 
-function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true, ?PDO $db = null): array
+function app_mgs_live_lookup_reason_text(string $reason): string
+{
+    return match ($reason) {
+        'management_path_down' => 'OLT-e canli sorgu bagli: idareetme yolu (VLAN 550) sistemde "qosulub" kimi isharelenmeyib. NOC > Idareetme yolu bolmesinden aktiv edin.',
+        'no_olt_profile' => 'Monitorinq aktiv HSGQ OLT profili tapilmadi.',
+        'no_ssh_credentials' => 'OLT profillerinde SSH istifadeci/parol yoxdur.',
+        'olt_unreachable' => 'OLT-lere SSH ile qosulmaq alinmadi (IP, port ve ya parolu yoxlayin).',
+        'not_on_olt' => 'OLT-lerde bu SN/ad tapilmadi. MAC ile axtaris yalniz bazadaki melumata gore isleyir.',
+        'db_unavailable' => 'Baza hazir deyil.',
+        default => '',
+    };
+}
+
+function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true, ?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
+    $authorization = app_noc_authorize($actor, 'read_ont_live', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('read_ont_live', $authorization);
+    }
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
@@ -6100,12 +8372,22 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
         return ['ok' => false, 'reason' => 'empty_query'];
     }
 
-    $candidates = app_mgs_modem_search_candidates($query, 3, $db);
+    $candidates = app_mgs_modem_search_candidates($query, 3, $db, $actor);
     $liveOnly = null;
     if ($candidates === [] && $preferLive) {
-        $liveOnly = app_mgs_hsgq_live_find_ont_by_query($query, $db);
+        if (!empty($actor['ticket_resolution_scope'])) {
+            return ['ok' => false, 'reason' => 'customer_ont_not_linked'];
+        }
+        $liveFailReason = null;
+        $liveOnly = app_mgs_hsgq_live_find_ont_by_query($query, $db, 8, $actor, $liveFailReason);
         if ($liveOnly === null) {
-            return ['ok' => false, 'reason' => 'not_found'];
+            $hint = app_mgs_live_lookup_reason_text((string) $liveFailReason);
+            return [
+                'ok' => false,
+                'reason' => 'not_found',
+                'live_reason' => (string) $liveFailReason,
+                'text' => 'Bazada tapilmadi.' . ($hint !== '' ? ' ' . $hint : ''),
+            ];
         }
         $candidate = [
             'account_id' => 0,
@@ -6150,9 +8432,22 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
     if ($preferLive && $liveOnly !== null) {
         $live = $liveOnly;
     } elseif ($preferLive && !empty($candidate['live_capable'])) {
-        $device = app_mgs_hsgq_device_by_olt_name((string) ($candidate['olt'] ?? ''), $db);
+        $deviceActor = $actor;
+        $deviceActor['ticket_resolution_device'] = (string) ($candidate['olt'] ?? '');
+        $device = app_mgs_hsgq_device_by_olt_name(
+            (string) ($candidate['olt'] ?? ''),
+            $db,
+            $deviceActor,
+            'read_ont_live'
+        );
         if (is_array($device)) {
-            $liveResult = app_mgs_hsgq_live_ont_snapshot($device, (string) ($candidate['pon'] ?? ''), (string) ($candidate['ont_id'] ?? ''), $db);
+            $liveResult = app_mgs_hsgq_live_ont_snapshot(
+                $device,
+                (string) ($candidate['pon'] ?? ''),
+                (string) ($candidate['ont_id'] ?? ''),
+                $deviceActor,
+                $db
+            );
             if (!empty($liveResult['ok'])) {
                 $live = $liveResult;
             } else {
@@ -6164,6 +8459,9 @@ function app_mgs_build_modem_search_reply(string $query, bool $preferLive = true
     }
 
     $liveOnt = is_array($live['ont'] ?? null) ? $live['ont'] : [];
+    if ($liveOnt !== [] && (int) ($candidate['account_id'] ?? 0) > 0) {
+        app_mgs_store_live_ont_snapshot((int) $candidate['account_id'], $candidate, $liveOnt, $db);
+    }
     $ontRx = (string) (($liveOnt['ont_rx'] ?? '') !== '' ? $liveOnt['ont_rx'] : ($candidate['ont_rx'] ?? '-'));
     $ontTx = (string) (($liveOnt['ont_tx'] ?? '') !== '' ? $liveOnt['ont_tx'] : ($candidate['ont_tx'] ?? '-'));
     $oltRx = (string) (($liveOnt['olt_rx'] ?? '') !== '' ? $liveOnt['olt_rx'] : ($candidate['olt_rx'] ?? '-'));
@@ -6276,7 +8574,127 @@ function app_mgs_hsgq_derived_command_map_from_discovery(array $discovery): arra
     return $map;
 }
 
-function app_mgs_sync_device_command_map(string $deviceKey, array $commandMap, ?PDO $db = null): array
+/**
+ * Cisco IOS/IOS-XE CLI discovery (docs/39_MGS_NODE_CONSOLIDATION.md Faza 3
+ * -- the first non-HSGQ vendor onboarded into the per-vendor CLI-discovery
+ * registry). Structurally identical to app_mgs_hsgq_cli_discovery_probe()
+ * (same tools/*.py + payload-file + JSON-line-decode plumbing), but does
+ * not need HSGQ's exploratory "?"-at-every-level menu walk: IOS `show`
+ * command syntax is standardized and documented, so tools/cisco-cli-
+ * discovery.py just confirms device identity and runs a fixed set of safe
+ * read-only show commands instead of deriving the command set live.
+ */
+function app_mgs_cisco_cli_discovery_probe(
+    string $ip,
+    string $username,
+    string $password,
+    int $port = 22,
+    int $timeoutMs = 4500,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'preview_device_backup'
+): array {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
+    $username = trim($username);
+    if ($username === '' || $password === '') {
+        return ['ok' => false, 'error' => 'missing_ssh_credentials'];
+    }
+
+    $python = app_mgs_find_python_binary();
+    $script = __DIR__ . '/tools/cisco-cli-discovery.py';
+    if ($python === null || !is_file($script) || !function_exists('exec')) {
+        return ['ok' => false, 'error' => 'cisco_cli_helper_unavailable'];
+    }
+
+    $payloadFile = tempnam(sys_get_temp_dir(), 'mgs_cisco_');
+    if ($payloadFile === false) {
+        return ['ok' => false, 'error' => 'cisco_cli_payload_temp_failed'];
+    }
+
+    $payload = [
+        'host' => $ip,
+        'port' => $port,
+        'username' => $username,
+        'password' => $password,
+        'timeout_ms' => max(1800, $timeoutMs),
+    ];
+    file_put_contents($payloadFile, json_encode($payload, JSON_UNESCAPED_SLASHES));
+
+    $command = escapeshellarg($python)
+        . ' ' . escapeshellarg($script)
+        . ' --payload-file ' . escapeshellarg($payloadFile);
+    $output = [];
+    $exitCode = 1;
+    @exec($command . ' 2>&1', $output, $exitCode);
+    @unlink($payloadFile);
+
+    $lines = array_values(array_filter(array_map(static fn ($line): string => trim((string) $line), $output), static fn ($line): bool => $line !== ''));
+    $text = implode("\n", $lines);
+    $jsonCandidate = $text;
+    if ($lines !== []) {
+        $lastLine = $lines[count($lines) - 1];
+        if (str_starts_with($lastLine, '{') && str_ends_with($lastLine, '}')) {
+            $jsonCandidate = $lastLine;
+        }
+    }
+
+    $decoded = json_decode($jsonCandidate, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'error' => $text !== '' ? $text : 'cisco_cli_invalid_response'];
+    }
+
+    return [
+        'ok' => !empty($decoded['ok']),
+        'error' => (string) ($decoded['error'] ?? ''),
+        'host' => (string) ($decoded['host'] ?? $ip),
+        'port' => (int) ($decoded['port'] ?? $port),
+        'username' => $username,
+        'prompts' => is_array($decoded['prompts'] ?? null) ? $decoded['prompts'] : [],
+        'is_cisco_ios' => !empty($decoded['is_cisco_ios']),
+        'hostname' => (string) ($decoded['hostname'] ?? ''),
+        'privileged_mode' => !empty($decoded['privileged_mode']),
+        'outputs' => is_array($decoded['outputs'] ?? null) ? $decoded['outputs'] : [],
+        'welcome' => (string) ($decoded['welcome'] ?? ''),
+    ];
+}
+
+/**
+ * Unlike HSGQ's derive function (which builds the command map FROM live
+ * exploration output, since HSGQ's menu structure isn't independently
+ * documented), this confirms the probe actually reached a real Cisco IOS
+ * device (is_cisco_ios) and, if so, returns the same fixed standard IOS
+ * command set app_mgs_default_device_profiles() already seeds for
+ * CiscoRouterAdapter/CiscoSwitchAdapter -- so a freshly-onboarded Cisco
+ * device converges on the identical, already-reviewed command map rather
+ * than an ad-hoc derived one.
+ */
+function app_mgs_cisco_derived_command_map_from_discovery(array $discovery): array
+{
+    if (empty($discovery['is_cisco_ios'])) {
+        return [];
+    }
+
+    $map = [
+        'show_version' => 'show version',
+        'ip_interface_brief' => 'show ip interface brief',
+        'interfaces_status' => 'show interfaces status',
+        'vlan_brief' => 'show vlan brief',
+        'mac_table' => 'show mac address-table',
+        'inventory' => 'show inventory',
+    ];
+    if (!empty($discovery['privileged_mode'])) {
+        $map['enter_enable'] = 'enable';
+    }
+
+    return $map;
+}
+
+function app_mgs_sync_device_command_map(string $deviceKey, array $commandMap, array $actor = [], ?PDO $db = null): array
 {
     $deviceKey = trim($deviceKey);
     $db = $db instanceof PDO ? $db : app_db();
@@ -6284,9 +8702,13 @@ function app_mgs_sync_device_command_map(string $deviceKey, array $commandMap, ?
         return ['ok' => false, 'reason' => 'invalid_sync_request'];
     }
 
-    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $actor);
     if (!is_array($device)) {
         return ['ok' => false, 'reason' => 'device_not_found'];
+    }
+    $authorization = app_noc_authorize($actor, 'update_command_map', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('update_command_map', $authorization);
     }
 
     $existing = app_mgs_json_decode_array($device['command_map_json'] ?? null);
@@ -6302,12 +8724,37 @@ function app_mgs_sync_device_command_map(string $deviceKey, array $commandMap, ?
         'command_map_json' => app_db_json_encode($merged),
         'device_key' => $deviceKey,
     ]);
+    app_mgs_record_operation_action([
+        'action_type' => 'device_command_map_update',
+        'entity_type' => 'device_learning',
+        'entity_id' => $deviceKey,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => 'Device command map updated: ' . (string) ($device['device_name'] ?? $deviceKey),
+        'payload' => ['keys' => array_keys($commandMap)],
+    ]);
 
     return ['ok' => true, 'device_key' => $deviceKey, 'command_count' => count($merged)];
 }
 
-function app_mgs_probe_udp_port_nmap(string $ip, int $port = 161, int $timeoutMs = 1800): array
+function app_mgs_probe_udp_port_nmap(
+    string $ip,
+    int $port = 161,
+    int $timeoutMs = 1800,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'probe_device'
+): array
 {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return array_merge(
+            ['reachable' => false, 'method' => 'udp_' . $port],
+            app_noc_authorization_failure($authorizationAction, $authorization)
+        );
+    }
     $binary = app_mgs_find_nmap_binary();
     if ($binary === null || !function_exists('exec')) {
         return ['reachable' => false, 'method' => 'udp_' . $port, 'error' => 'nmap_unavailable'];
@@ -6338,15 +8785,24 @@ function app_mgs_snmp_defaults(): array
     return [
         'trap_server' => app_config('mgs_snmp_trap_server', '172.16.5.2'),
         'trap_port' => (int) app_config('mgs_snmp_trap_port', '162'),
-        'read_community' => app_config('mgs_snmp_read_community', 'public'),
-        'write_community' => app_config('mgs_snmp_write_community', 'private'),
+        'read_community' => app_environment_secret('MGS_SNMP_READ_COMMUNITY') !== ''
+            ? app_environment_secret('MGS_SNMP_READ_COMMUNITY')
+            : app_environment_secret('SNMP_COMMUNITY'),
+        'write_community' => app_environment_secret('MGS_SNMP_WRITE_COMMUNITY'),
         'port' => (int) app_config('mgs_snmp_port', '161'),
         'contact' => app_config('mgs_snmp_contact', 'Contact'),
         'location' => app_config('mgs_snmp_location', 'Location'),
     ];
 }
 
-function app_mgs_device_access_override_by_key(string $deviceKey, ?PDO $db = null): ?array
+function app_mgs_device_access_override_by_key(
+    string $deviceKey,
+    ?PDO $db = null,
+    array $actor = [],
+    string $purposeAction = 'read_device_sensitive',
+    bool $ensureSchema = true,
+    array $authorizationObject = []
+): ?array
 {
     $deviceKey = clean_text($deviceKey);
     if ($deviceKey === '') {
@@ -6354,7 +8810,16 @@ function app_mgs_device_access_override_by_key(string $deviceKey, ?PDO $db = nul
     }
 
     $db = $db instanceof PDO ? $db : app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+    if (!$db instanceof PDO || !($ensureSchema ? app_mgs_ensure_schema($db) : app_mgs_schema_ready($db))) {
+        return null;
+    }
+    $authorization = app_noc_authorize(
+        $actor,
+        $purposeAction,
+        array_replace(['device_key' => $deviceKey], $authorizationObject),
+        $db
+    );
+    if (empty($authorization['ok'])) {
         return null;
     }
 
@@ -6365,8 +8830,18 @@ function app_mgs_device_access_override_by_key(string $deviceKey, ?PDO $db = nul
     return is_array($row) ? $row : null;
 }
 
-function app_mgs_device_access_profile(array $device, ?PDO $db = null): array
+function app_mgs_device_access_profile(
+    array $device,
+    ?PDO $db = null,
+    array $actor = [],
+    string $purposeAction = 'read_device_sensitive',
+    bool $ensureSchema = true
+): array
 {
+    $authorization = app_noc_authorize($actor, $purposeAction, $device, $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
     $snmpDefaults = app_mgs_snmp_defaults();
     $profile = [
         'ssh_username' => '',
@@ -6382,22 +8857,13 @@ function app_mgs_device_access_profile(array $device, ?PDO $db = null): array
         'notes' => '',
     ];
 
-    $hardcodedOverrides = [
-        'switch-cisco-2960-172-16-5-41' => [
-            'read_community' => 'SuperOptikRO',
-            'write_community' => 'SuperOptikRW',
-            'port' => 161,
-            'contact' => 'Sardar',
-            'location' => 'Kurdexani-Ofis',
-        ],
-    ];
-
+    // Device-specific communities must never be embedded in source code.
+    // Store them in the encrypted device credential vault (or environment
+    // defaults) and let the authorization layer decide whether they may be
+    // revealed to this actor.
     $deviceKey = (string) ($device['device_key'] ?? '');
-    if ($deviceKey !== '' && isset($hardcodedOverrides[$deviceKey])) {
-        $profile = array_merge($profile, $hardcodedOverrides[$deviceKey]);
-    }
 
-    $override = app_mgs_device_access_override_by_key($deviceKey, $db);
+    $override = app_mgs_device_access_override_by_key($deviceKey, $db, $actor, $purposeAction, $ensureSchema, $device);
     if (is_array($override)) {
         $map = [
             'ssh_username' => 'ssh_username',
@@ -6428,12 +8894,38 @@ function app_mgs_device_access_profile(array $device, ?PDO $db = null): array
     $profile['port'] = max(1, (int) ($profile['port'] ?? 161));
     $profile['trap_port'] = max(1, (int) ($profile['trap_port'] ?? 162));
 
+    // Encrypted vault takes precedence over the plaintext override columns
+    // above. A device saved before the vault existed (or written while
+    // MGS_SECRETS_MASTER_KEY was unavailable to the writer) simply has no
+    // vault row yet, so the plaintext value already merged in stands as the
+    // fallback -- this must never hard-fail a live device probe.
+    if ($deviceKey !== '') {
+        $vaultDb = $db instanceof PDO ? $db : app_db();
+        if ($vaultDb instanceof PDO) {
+            $vaultFields = [
+                'ssh_password' => 'ssh_password',
+                'read_community' => 'snmp_read_community',
+                'write_community' => 'snmp_write_community',
+            ];
+            foreach ($vaultFields as $target => $credentialType) {
+                try {
+                    $vaultValue = app_device_credential_reveal($vaultDb, $deviceKey, $credentialType);
+                } catch (Throwable) {
+                    $vaultValue = null;
+                }
+                if ($vaultValue !== null && $vaultValue !== '') {
+                    $profile[$target] = $vaultValue;
+                }
+            }
+        }
+    }
+
     return $profile;
 }
 
-function app_mgs_device_snmp_profile(array $device): array
+function app_mgs_device_snmp_profile(array $device, array $actor = [], ?PDO $db = null): array
 {
-    return app_mgs_device_access_profile($device);
+    return app_mgs_device_access_profile($device, $db, $actor);
 }
 
 function app_mgs_set_device_access_override(string $deviceKey, array $payload, array $actor = [], ?PDO $db = null): array
@@ -6448,24 +8940,64 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
 
-    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $actor);
     if (!is_array($device)) {
         return ['ok' => false, 'reason' => 'device_not_found'];
     }
+    $authorization = app_noc_authorize($actor, 'update_device_access', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('update_device_access', $authorization);
+    }
 
-    $existing = app_mgs_device_access_override_by_key($deviceKey, $db) ?? [];
-    $sshPassword = trim((string) ($payload['ssh_password'] ?? ''));
-    if ($sshPassword === '' && !empty($existing['ssh_password'])) {
-        $sshPassword = (string) $existing['ssh_password'];
+    $existing = app_mgs_device_access_override_by_key($deviceKey, $db, $actor, 'update_device_access') ?? [];
+    // "Effective current value" for carry-forward must check the vault first --
+    // once a secret has been migrated there, the plaintext column is blanked
+    // (see below), so falling back to $existing alone would silently wipe an
+    // unsubmitted field on the next save.
+    $effectiveSecret = static function (string $payloadKey, string $credentialType) use ($payload, $existing, $db, $deviceKey): string {
+        $submitted = trim((string) ($payload[$payloadKey] ?? ''));
+        if ($submitted !== '') {
+            return $submitted;
+        }
+        try {
+            $vaultValue = app_device_credential_reveal($db, $deviceKey, $credentialType);
+        } catch (Throwable) {
+            $vaultValue = null;
+        }
+        if ($vaultValue !== null && $vaultValue !== '') {
+            return $vaultValue;
+        }
+        return (string) ($existing[$payloadKey] ?? '');
+    };
+    $sshPassword = $effectiveSecret('ssh_password', 'ssh_password');
+    $snmpReadCommunity = clean_text((string) ($payload['snmp_read_community'] ?? '')) ?: $effectiveSecret('snmp_read_community', 'snmp_read_community');
+    $snmpWriteCommunity = clean_text((string) ($payload['snmp_write_community'] ?? '')) ?: $effectiveSecret('snmp_write_community', 'snmp_write_community');
+
+    // Vault-first: if the master key is configured, encrypt these three
+    // fields and never let the plaintext write below carry a real value for
+    // them. If the key isn't available yet in this environment (deploy not
+    // rolled out here), fall back to the previous plaintext behavior rather
+    // than breaking device-credential updates entirely during the transition.
+    $vaultUsed = app_device_credential_vault_key_available();
+    if ($vaultUsed) {
+        foreach ([
+            'ssh_password' => $sshPassword,
+            'snmp_read_community' => $snmpReadCommunity,
+            'snmp_write_community' => $snmpWriteCommunity,
+        ] as $credentialType => $secretValue) {
+            if ($secretValue !== '') {
+                app_device_credential_store($db, $deviceKey, $credentialType, $secretValue);
+            }
+        }
     }
 
     $row = [
         'device_key' => $deviceKey,
         'ssh_username' => clean_text((string) ($payload['ssh_username'] ?? ($existing['ssh_username'] ?? ''))),
-        'ssh_password' => $sshPassword,
+        'ssh_password' => $vaultUsed ? '' : $sshPassword,
         'ssh_port' => max(1, (int) ($payload['ssh_port'] ?? ($existing['ssh_port'] ?? 22))),
-        'snmp_read_community' => clean_text((string) ($payload['snmp_read_community'] ?? ($existing['snmp_read_community'] ?? ''))),
-        'snmp_write_community' => clean_text((string) ($payload['snmp_write_community'] ?? ($existing['snmp_write_community'] ?? ''))),
+        'snmp_read_community' => $vaultUsed ? '' : $snmpReadCommunity,
+        'snmp_write_community' => $vaultUsed ? '' : $snmpWriteCommunity,
         'snmp_port' => max(1, (int) ($payload['snmp_port'] ?? ($existing['snmp_port'] ?? 161))),
         'trap_server' => clean_text((string) ($payload['trap_server'] ?? ($existing['trap_server'] ?? ''))),
         'trap_port' => max(1, (int) ($payload['trap_port'] ?? ($existing['trap_port'] ?? 162))),
@@ -6501,7 +9033,7 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
     );
     $statement->execute($row);
 
-    $effective = app_mgs_device_access_profile($device, $db);
+    $effective = app_mgs_device_access_profile($device, $db, $actor, 'update_device_access');
     app_mgs_record_operation_action([
         'action_type' => 'device_access_override',
         'entity_type' => 'device_learning',
@@ -6513,10 +9045,11 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
             'device_key' => $deviceKey,
             'ssh_username' => $effective['ssh_username'] ?? '',
             'ssh_port' => $effective['ssh_port'] ?? 22,
-            'snmp_read_community' => $effective['read_community'] ?? '',
+            'snmp_read_community_set' => (string) ($effective['read_community'] ?? '') !== '',
             'snmp_port' => $effective['port'] ?? 161,
             'trap_server' => $effective['trap_server'] ?? '',
             'trap_port' => $effective['trap_port'] ?? 162,
+            'vault_used' => $vaultUsed,
         ],
     ]);
 
@@ -6525,6 +9058,7 @@ function app_mgs_set_device_access_override(string $deviceKey, array $payload, a
         'device_key' => $deviceKey,
         'device_name' => (string) ($device['device_name'] ?? $deviceKey),
         'profile' => $effective,
+        'vault_used' => $vaultUsed,
     ];
 }
 
@@ -6538,6 +9072,10 @@ function app_mgs_apply_vendor_access_defaults(string $vendor, array $actor = [],
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $authorization = app_noc_authorize($actor, 'update_vendor_defaults', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('update_vendor_defaults', $authorization);
     }
 
     $statement = $db->prepare(
@@ -6560,8 +9098,8 @@ function app_mgs_apply_vendor_access_defaults(string $vendor, array $actor = [],
     $results = [];
     foreach ($deviceKeys as $deviceKey) {
         $results[] = app_mgs_set_device_access_override($deviceKey, [
-            'snmp_read_community' => (string) ($defaults['read_community'] ?? 'public'),
-            'snmp_write_community' => (string) ($defaults['write_community'] ?? 'private'),
+            'snmp_read_community' => (string) ($defaults['read_community'] ?? app_environment_secret('MGS_SNMP_READ_COMMUNITY')),
+            'snmp_write_community' => (string) ($defaults['write_community'] ?? app_environment_secret('MGS_SNMP_WRITE_COMMUNITY')),
             'snmp_port' => (int) ($defaults['port'] ?? 161),
             'trap_server' => (string) ($defaults['trap_server'] ?? '172.16.5.2'),
             'trap_port' => (int) ($defaults['trap_port'] ?? 162),
@@ -6664,16 +9202,34 @@ function app_mgs_snmp_ber_oid(string $oid): string
     return app_mgs_snmp_ber_wrap(0x06, $encoded);
 }
 
-function app_mgs_snmp_build_get_request(string $community, string $oid, int $requestId): string
+function app_mgs_snmp_build_get_request(string $community, string $oid, int $requestId, int $version = 0): string
 {
+    $version = $version === 1 ? 1 : 0;
     $varBind = app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_oid($oid) . app_mgs_snmp_ber_null());
     $varBindList = app_mgs_snmp_ber_wrap(0x30, $varBind);
     $pdu = app_mgs_snmp_ber_wrap(0xA0, app_mgs_snmp_ber_integer($requestId) . app_mgs_snmp_ber_integer(0) . app_mgs_snmp_ber_integer(0) . $varBindList);
-    return app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_integer(0) . app_mgs_snmp_ber_string($community) . $pdu);
+    return app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_integer($version) . app_mgs_snmp_ber_string($community) . $pdu);
 }
 
-function app_mgs_probe_snmp(string $ip, ?string $community = null, ?int $port = null, int $timeoutMs = 1200): array
+function app_mgs_probe_snmp(
+    string $ip,
+    ?string $community = null,
+    ?int $port = null,
+    int $timeoutMs = 1200,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'probe_device'
+): array
 {
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return array_merge(
+            ['reachable' => false, 'method' => 'snmp_v1'],
+            app_noc_authorization_failure($authorizationAction, $authorization)
+        );
+    }
     $defaults = app_mgs_snmp_defaults();
     $community = trim((string) ($community ?? $defaults['read_community']));
     $port = (int) ($port ?? $defaults['port']);
@@ -6681,61 +9237,1387 @@ function app_mgs_probe_snmp(string $ip, ?string $community = null, ?int $port = 
         return ['reachable' => false, 'method' => 'snmp_v1', 'error' => 'missing_snmp_config'];
     }
 
-    $requestId = random_int(100000, 9999999);
-    $packet = app_mgs_snmp_build_get_request($community, '1.3.6.1.2.1.1.1.0', $requestId);
-    $errno = 0;
-    $errstr = '';
-    $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.4, $timeoutMs / 1000));
-    if (!is_resource($socket)) {
-        return ['reachable' => false, 'method' => 'snmp_v1', 'error' => $errstr !== '' ? $errstr : 'socket_open_failed'];
-    }
-
-    stream_set_timeout($socket, 0, max(100000, $timeoutMs * 1000));
-    $written = @fwrite($socket, $packet);
-    if ($written === false || $written <= 0) {
-        fclose($socket);
-        return ['reachable' => false, 'method' => 'snmp_v1', 'error' => 'socket_write_failed'];
-    }
-
-    $response = @fread($socket, 4096);
-    $meta = stream_get_meta_data($socket);
-    fclose($socket);
-
-    if (is_string($response) && $response !== '' && ($meta['timed_out'] ?? false) !== true) {
+    $probe = app_mgs_snmp_get_raw($ip, $community, $port, '1.3.6.1.2.1.1.1.0', $timeoutMs);
+    $version = (int) ($probe['version'] ?? 0);
+    if (empty($probe['ok'])) {
         return [
-            'reachable' => true,
-            'method' => 'snmp_v1',
-            'error' => '',
-            'bytes' => strlen($response),
-            'community' => $community,
-            'port' => $port,
+            'reachable' => false,
+            'method' => 'snmp_v1_v2c',
+            'error' => (string) ($probe['error'] ?? 'snmp_timeout'),
         ];
     }
 
-    return ['reachable' => false, 'method' => 'snmp_v1', 'error' => ($meta['timed_out'] ?? false) ? 'snmp_timeout' : 'empty_snmp_response'];
+    // Never return the community: callers only need capability/reachability,
+    // and leaking it would turn an otherwise harmless health endpoint into a
+    // credential disclosure path.
+    return [
+        'reachable' => true,
+        'method' => $version === 1 ? 'snmp_v2c' : 'snmp_v1',
+        'version' => $version === 1 ? '2c' : '1',
+        'error' => '',
+        'bytes' => (int) ($probe['bytes'] ?? 0),
+        'port' => $port,
+    ];
 }
 
-function app_mgs_probe_device_services(string $ip, int $timeoutMs = 900, ?array $accessProfile = null): array
+/**
+ * IF-MIB (RFC1213) interface inventory columns walked by
+ * app_mgs_discover_device_interfaces() -- the "interfeys inventarı"
+ * prerequisite for a future interface-traffic collector
+ * (docs/39_MGS_NODE_CONSOLIDATION.md Faza 1). ifIndex itself is not walked
+ * separately: it is derived from the last OID arc of every other column.
+ */
+function app_mgs_if_mib_columns(): array
 {
-    $base = app_mgs_probe_ip($ip, $timeoutMs);
+    return [
+        'if_descr' => '1.3.6.1.2.1.2.2.1.2',
+        'if_type' => '1.3.6.1.2.1.2.2.1.3',
+        'if_speed' => '1.3.6.1.2.1.2.2.1.5',
+        'if_phys_address' => '1.3.6.1.2.1.2.2.1.6',
+        'if_admin_status' => '1.3.6.1.2.1.2.2.1.7',
+        'if_oper_status' => '1.3.6.1.2.1.2.2.1.8',
+    ];
+}
+
+function app_mgs_snmp_build_getnext_request(string $community, string $oid, int $requestId, int $version = 0): string
+{
+    $version = $version === 1 ? 1 : 0;
+    $varBind = app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_oid($oid) . app_mgs_snmp_ber_null());
+    $varBindList = app_mgs_snmp_ber_wrap(0x30, $varBind);
+    $pdu = app_mgs_snmp_ber_wrap(0xA1, app_mgs_snmp_ber_integer($requestId) . app_mgs_snmp_ber_integer(0) . app_mgs_snmp_ber_integer(0) . $varBindList);
+    return app_mgs_snmp_ber_wrap(0x30, app_mgs_snmp_ber_integer($version) . app_mgs_snmp_ber_string($community) . $pdu);
+}
+
+/**
+ * Reads one BER TLV (tag, length, value) at $offset. Returns null on any
+ * malformed/truncated input instead of throwing -- SNMP responses come from
+ * untrusted network devices, so the decoder must fail closed, not crash the
+ * caller.
+ */
+function app_mgs_snmp_ber_read_tlv(string $data, int $offset): ?array
+{
+    $len = strlen($data);
+    if ($offset < 0 || $offset >= $len) {
+        return null;
+    }
+    $tag = ord($data[$offset]);
+    $offset++;
+    if ($offset >= $len) {
+        return null;
+    }
+    $lengthByte = ord($data[$offset]);
+    $offset++;
+    if ($lengthByte < 0x80) {
+        $length = $lengthByte;
+    } else {
+        $numBytes = $lengthByte & 0x7F;
+        if ($numBytes === 0 || $numBytes > 4 || $offset + $numBytes > $len) {
+            return null;
+        }
+        $length = 0;
+        for ($i = 0; $i < $numBytes; $i++) {
+            $length = ($length << 8) | ord($data[$offset + $i]);
+        }
+        $offset += $numBytes;
+    }
+    if ($length < 0 || $offset + $length > $len) {
+        return null;
+    }
+
+    return ['tag' => $tag, 'value' => substr($data, $offset, $length), 'next' => $offset + $length];
+}
+
+function app_mgs_snmp_ber_decode_oid(string $bytes): string
+{
+    if ($bytes === '') {
+        return '';
+    }
+    $first = ord($bytes[0]);
+    $parts = [intdiv($first, 40), $first % 40];
+    $value = 0;
+    $length = strlen($bytes);
+    for ($i = 1; $i < $length; $i++) {
+        $byte = ord($bytes[$i]);
+        $value = ($value << 7) | ($byte & 0x7F);
+        if (($byte & 0x80) === 0) {
+            $parts[] = $value;
+            $value = 0;
+        }
+    }
+
+    return implode('.', $parts);
+}
+
+function app_mgs_snmp_ber_decode_unsigned(string $bytes): int
+{
+    $value = 0;
+    $length = strlen($bytes);
+    for ($i = 0; $i < $length; $i++) {
+        $value = ($value << 8) | ord($bytes[$i]);
+    }
+
+    return $value;
+}
+
+/**
+ * Turns one decoded varbind's raw BER bytes into a usable PHP value based on
+ * its ASN.1/SNMP tag. INTEGER (0x02) and the SNMP application types
+ * Counter32/Gauge32/TimeTicks/Counter64 (0x41/0x42/0x43/0x46) are all plain
+ * big-endian byte sequences here -- every IF-MIB column this module walks
+ * (ifIndex, ifType, ifSpeed, ifAdminStatus, ifOperStatus) is small and
+ * non-negative, so an unsigned decode is sufficient and avoids sign-bit
+ * edge cases entirely. noSuchObject/noSuchInstance/endOfMibView
+ * (0x80/0x81/0x82) are SNMPv2-style exception tags some agents still send
+ * in response to a v1 GETNEXT past the end of a table; treated as "no
+ * value" so the walk loop's subtree check below ends the walk cleanly.
+ */
+function app_mgs_snmp_decode_value(int $tag, string $raw): int|string|null
+{
+    return match (true) {
+        in_array($tag, [0x02, 0x41, 0x42, 0x43, 0x46], true) => app_mgs_snmp_ber_decode_unsigned($raw),
+        $tag === 0x06 => app_mgs_snmp_ber_decode_oid($raw),
+        in_array($tag, [0x05, 0x80, 0x81, 0x82], true) => null,
+        default => $raw,
+    };
+}
+
+/**
+ * Decodes a full SNMPv1/v2c message (version, community, GetResponse-PDU with
+ * request-id/error-status/error-index/varbind-list). Only the shape this
+ * module's own GET/GETNEXT requests can trigger a response to is parsed;
+ * anything else is reported as ok=false rather than guessed at.
+ */
+function app_mgs_snmp_decode_response(string $packet): array
+{
+    $outer = app_mgs_snmp_ber_read_tlv($packet, 0);
+    if ($outer === null || $outer['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_packet'];
+    }
+    $body = $outer['value'];
+
+    $version = app_mgs_snmp_ber_read_tlv($body, 0);
+    if ($version === null || $version['tag'] !== 0x02) {
+        return ['ok' => false, 'error' => 'malformed_version'];
+    }
+    $community = app_mgs_snmp_ber_read_tlv($body, $version['next']);
+    if ($community === null || $community['tag'] !== 0x04) {
+        return ['ok' => false, 'error' => 'malformed_community'];
+    }
+    $pdu = app_mgs_snmp_ber_read_tlv($body, $community['next']);
+    if ($pdu === null) {
+        return ['ok' => false, 'error' => 'malformed_pdu'];
+    }
+
+    $pduBody = $pdu['value'];
+    $requestId = app_mgs_snmp_ber_read_tlv($pduBody, 0);
+    if ($requestId === null) {
+        return ['ok' => false, 'error' => 'malformed_request_id'];
+    }
+    $errorStatus = app_mgs_snmp_ber_read_tlv($pduBody, $requestId['next']);
+    if ($errorStatus === null) {
+        return ['ok' => false, 'error' => 'malformed_error_status'];
+    }
+    $errorIndex = app_mgs_snmp_ber_read_tlv($pduBody, $errorStatus['next']);
+    if ($errorIndex === null) {
+        return ['ok' => false, 'error' => 'malformed_error_index'];
+    }
+    $varbindList = app_mgs_snmp_ber_read_tlv($pduBody, $errorIndex['next']);
+    if ($varbindList === null || $varbindList['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_varbind_list'];
+    }
+
+    $varbinds = [];
+    $offset = 0;
+    $listBody = $varbindList['value'];
+    $listLength = strlen($listBody);
+    while ($offset < $listLength) {
+        $pair = app_mgs_snmp_ber_read_tlv($listBody, $offset);
+        if ($pair === null || $pair['tag'] !== 0x30) {
+            break;
+        }
+        $offset = $pair['next'];
+        $oidTlv = app_mgs_snmp_ber_read_tlv($pair['value'], 0);
+        if ($oidTlv === null || $oidTlv['tag'] !== 0x06) {
+            break;
+        }
+        $valueTlv = app_mgs_snmp_ber_read_tlv($pair['value'], $oidTlv['next']);
+        if ($valueTlv === null) {
+            break;
+        }
+        $varbinds[] = ['oid' => app_mgs_snmp_ber_decode_oid($oidTlv['value']), 'tag' => $valueTlv['tag'], 'raw' => $valueTlv['value']];
+    }
+
+    return [
+        'ok' => true,
+        'version' => app_mgs_snmp_ber_decode_unsigned($version['value']),
+        'pdu_tag' => (int) $pdu['tag'],
+        'community' => (string) $community['value'],
+        'request_id' => app_mgs_snmp_ber_decode_unsigned($requestId['value']),
+        'error_status' => app_mgs_snmp_ber_decode_unsigned($errorStatus['value']),
+        'error_index' => app_mgs_snmp_ber_decode_unsigned($errorIndex['value']),
+        'varbinds' => $varbinds,
+    ];
+}
+
+/**
+ * Sends one raw SNMPv1 GETNEXT for $oid and decodes the single varbind that
+ * comes back. No authorization check here -- this is the low-level UDP/BER
+ * mechanic, mirroring how app_mgs_snmp_build_get_request() itself is
+ * unauthenticated; callers (app_mgs_discover_device_interfaces()) authorize
+ * once before looping, not once per GETNEXT round-trip.
+ */
+function app_mgs_snmp_getnext_raw(string $ip, string $community, int $port, string $oid, int $timeoutMs, ?int $version = null): array
+{
+    static $versionCache = [];
+    $cacheKey = $ip . ':' . $port . ':' . hash('sha256', $community);
+    $versions = in_array($version, [0, 1], true)
+        ? [(int) $version]
+        : (isset($versionCache[$cacheKey])
+            ? [(int) $versionCache[$cacheKey], (int) $versionCache[$cacheKey] === 0 ? 1 : 0]
+            : [0, 1]);
+    $lastError = 'snmp_timeout';
+
+    foreach ($versions as $candidateVersion) {
+        $requestId = random_int(100000, 9999999);
+        $packet = app_mgs_snmp_build_getnext_request($community, $oid, $requestId, $candidateVersion);
+        $errno = 0;
+        $errstr = '';
+        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000));
+        if (!is_resource($socket)) {
+            $lastError = $errstr !== '' ? $errstr : 'socket_open_failed';
+            continue;
+        }
+        stream_set_timeout($socket, 0, max(100000, $timeoutMs * 1000));
+        $written = @fwrite($socket, $packet);
+        if ($written === false || $written <= 0) {
+            fclose($socket);
+            $lastError = 'socket_write_failed';
+            continue;
+        }
+        $response = @fread($socket, 4096);
+        $meta = stream_get_meta_data($socket);
+        fclose($socket);
+        if (!is_string($response) || $response === '' || ($meta['timed_out'] ?? false) === true) {
+            $lastError = ($meta['timed_out'] ?? false) ? 'snmp_timeout' : 'empty_snmp_response';
+            continue;
+        }
+
+        $decoded = app_mgs_snmp_decode_response($response);
+        if (empty($decoded['ok']) || $decoded['varbinds'] === []) {
+            $lastError = (string) ($decoded['error'] ?? 'decode_failed');
+            continue;
+        }
+        if (($decoded['community'] ?? null) !== $community ||
+            (int) ($decoded['version'] ?? -1) !== $candidateVersion ||
+            (int) ($decoded['request_id'] ?? -1) !== $requestId ||
+            (int) ($decoded['pdu_tag'] ?? 0) !== 0xA2) {
+            $lastError = 'snmp_response_mismatch';
+            continue;
+        }
+        if ((int) $decoded['error_status'] !== 0) {
+            $lastError = 'snmp_error_status_' . $decoded['error_status'];
+            continue;
+        }
+        $varbind = $decoded['varbinds'][0];
+        $versionCache[$cacheKey] = $candidateVersion;
+
+        return [
+            'ok' => true,
+            'oid' => (string) $varbind['oid'],
+            'tag' => (int) $varbind['tag'],
+            'value' => app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']),
+            'version' => $candidateVersion,
+            'bytes' => strlen($response),
+        ];
+    }
+
+    return ['ok' => false, 'error' => $lastError];
+}
+
+/**
+ * Walks one MIB column via repeated GETNEXT starting at $baseOid, stopping
+ * as soon as the returned OID leaves the $baseOid subtree (the portable
+ * SNMPv1 end-of-table signal), a GETNEXT stops making progress (safety
+ * against a misbehaving agent looping the same OID forever), or $maxRows is
+ * reached (bounds worst-case round-trips against a slow/unreachable device).
+ * Returns [oid => ['tag' => int, 'value' => mixed]] keyed by the full
+ * returned OID; app_mgs_discover_device_interfaces() derives the ifIndex
+ * from each key's last arc.
+ */
+function app_mgs_snmp_walk_column(string $ip, string $community, int $port, string $baseOid, int $timeoutMs, int $maxRows, ?int $version = null): array
+{
+    $results = [];
+    $currentOid = $baseOid;
+    $selectedVersion = $version;
+    for ($i = 0; $i < $maxRows; $i++) {
+        $step = app_mgs_snmp_getnext_raw($ip, $community, $port, $currentOid, $timeoutMs, $selectedVersion);
+        if (empty($step['ok'])) {
+            break;
+        }
+        $selectedVersion = (int) ($step['version'] ?? 0);
+        $nextOid = (string) $step['oid'];
+        if ($nextOid === '' || $nextOid === $currentOid || !str_starts_with($nextOid . '.', $baseOid . '.')) {
+            break;
+        }
+        $results[$nextOid] = ['tag' => $step['tag'], 'value' => $step['value']];
+        $currentOid = $nextOid;
+    }
+
+    return $results;
+}
+
+function app_mgs_snmp_if_index_from_oid(string $oid, string $baseOid): ?int
+{
+    $prefix = $baseOid . '.';
+    if (!str_starts_with($oid, $prefix)) {
+        return null;
+    }
+    $suffix = substr($oid, strlen($prefix));
+
+    return ctype_digit($suffix) ? (int) $suffix : null;
+}
+
+/**
+ * Discovers (or re-syncs) one device's IF-MIB interface inventory via a real
+ * SNMP walk and stores it in device_interfaces. This is the "interfeys
+ * inventarı" step docs/39_MGS_NODE_CONSOLIDATION.md Faza 1 calls out as the
+ * prerequisite for an interface-traffic collector -- deliberately built with
+ * a real writer (this function) in the same change as the schema, not left
+ * as an empty table.
+ */
+function app_mgs_discover_device_interfaces(array $device, ?PDO $db = null, array $actor = [], int $maxInterfaces = 128): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $deviceKey = (string) ($device['device_key'] ?? '');
+    $ip = trim((string) ($device['ip_address'] ?? ''));
+    if ($deviceKey === '' || $ip === '') {
+        return ['ok' => false, 'reason' => 'missing_device_target'];
+    }
+    $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('probe_device', $authorization);
+    }
+
+    $accessProfile = app_mgs_device_access_profile($device, $db, $actor, 'probe_device');
+    $community = (string) ($accessProfile['read_community'] ?? '');
+    $port = (int) ($accessProfile['port'] ?? 161);
+    if ($community === '') {
+        return ['ok' => false, 'reason' => 'missing_snmp_config'];
+    }
+
+    $columns = app_mgs_if_mib_columns();
+    $rowsByIndex = [];
+    foreach ($columns as $field => $baseOid) {
+        $walked = app_mgs_snmp_walk_column($ip, $community, $port, $baseOid, 700, $maxInterfaces);
+        if ($walked === [] && $field === 'if_descr') {
+            // ifDescr is the defining column; if the walk can't even read that,
+            // the device is unreachable/unsupported for this pass -- fail fast
+            // instead of silently persisting a "0 interfaces" result.
+            return ['ok' => false, 'reason' => 'snmp_walk_unreachable_or_empty'];
+        }
+        foreach ($walked as $oid => $entry) {
+            $index = app_mgs_snmp_if_index_from_oid($oid, $baseOid);
+            if ($index === null) {
+                continue;
+            }
+            $rowsByIndex[$index][$field] = $entry['value'];
+        }
+    }
+
+    $adminStatusMap = [1 => 'up', 2 => 'down', 3 => 'testing'];
+    $operStatusMap = [1 => 'up', 2 => 'down', 3 => 'testing', 4 => 'unknown', 5 => 'dormant', 6 => 'not_present', 7 => 'lower_layer_down'];
+
+    $upsert = $db->prepare(
+        'INSERT INTO device_interfaces
+            (device_key, if_index, if_descr, if_type, if_speed_bps, if_phys_address, if_admin_status, if_oper_status, last_polled_at)
+         VALUES (:device_key, :if_index, :if_descr, :if_type, :if_speed_bps, :if_phys_address, :if_admin_status, :if_oper_status, NOW())
+         ON DUPLICATE KEY UPDATE
+            if_descr = VALUES(if_descr),
+            if_type = VALUES(if_type),
+            if_speed_bps = VALUES(if_speed_bps),
+            if_phys_address = VALUES(if_phys_address),
+            if_admin_status = VALUES(if_admin_status),
+            if_oper_status = VALUES(if_oper_status),
+            last_polled_at = NOW()'
+    );
+
+    $stored = 0;
+    foreach ($rowsByIndex as $index => $row) {
+        $physRaw = (string) ($row['if_phys_address'] ?? '');
+        $physFormatted = strlen($physRaw) === 6 ? strtoupper(implode(':', str_split(bin2hex($physRaw), 2))) : '';
+        $upsert->execute([
+            'device_key' => $deviceKey,
+            'if_index' => $index,
+            'if_descr' => clean_text((string) ($row['if_descr'] ?? '')),
+            'if_type' => (int) ($row['if_type'] ?? 0),
+            'if_speed_bps' => (int) ($row['if_speed'] ?? 0),
+            'if_phys_address' => $physFormatted,
+            'if_admin_status' => $adminStatusMap[(int) ($row['if_admin_status'] ?? 0)] ?? 'unknown',
+            'if_oper_status' => $operStatusMap[(int) ($row['if_oper_status'] ?? 0)] ?? 'unknown',
+        ]);
+        $stored++;
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'device_interface_discovery',
+        'entity_type' => 'device_learning_profiles',
+        'entity_id' => $deviceKey,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => $stored . ' interfeys aşkarlandı/yeniləndi',
+        'payload' => ['device_key' => $deviceKey, 'interface_count' => $stored],
+    ]);
+
+    return ['ok' => true, 'device_key' => $deviceKey, 'interface_count' => $stored];
+}
+
+/**
+ * Read-only listing for a device's discovered interfaces (UI + smoke). Same
+ * authorization as reading any other device detail.
+ */
+function app_mgs_device_interfaces(string $deviceKey, ?PDO $db = null, array $actor = []): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $deviceKey === '') {
+        return [];
+    }
+    $authorization = app_noc_authorize($actor, 'read_device', ['device_key' => $deviceKey], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
+    $statement = $db->prepare('SELECT * FROM device_interfaces WHERE device_key = :device_key ORDER BY if_index ASC');
+    $statement->execute(['device_key' => $deviceKey]);
+
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/**
+ * Sends one raw SNMPv1 GET for $oid and decodes the single varbind that
+ * comes back. Same unauthenticated low-level layering as
+ * app_mgs_snmp_getnext_raw() -- callers authorize once, not per request.
+ */
+function app_mgs_snmp_get_raw(string $ip, string $community, int $port, string $oid, int $timeoutMs, ?int $version = null): array
+{
+    static $versionCache = [];
+    $cacheKey = $ip . ':' . $port . ':' . hash('sha256', $community);
+    $versions = in_array($version, [0, 1], true)
+        ? [(int) $version]
+        : (isset($versionCache[$cacheKey])
+            ? [(int) $versionCache[$cacheKey], (int) $versionCache[$cacheKey] === 0 ? 1 : 0]
+            : [0, 1]);
+    $lastError = 'snmp_timeout';
+
+    foreach ($versions as $candidateVersion) {
+        $requestId = random_int(100000, 9999999);
+        $packet = app_mgs_snmp_build_get_request($community, $oid, $requestId, $candidateVersion);
+        $errno = 0;
+        $errstr = '';
+        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000));
+        if (!is_resource($socket)) {
+            $lastError = $errstr !== '' ? $errstr : 'socket_open_failed';
+            continue;
+        }
+        stream_set_timeout($socket, 0, max(100000, $timeoutMs * 1000));
+        $written = @fwrite($socket, $packet);
+        if ($written === false || $written <= 0) {
+            fclose($socket);
+            $lastError = 'socket_write_failed';
+            continue;
+        }
+        $response = @fread($socket, 4096);
+        $meta = stream_get_meta_data($socket);
+        fclose($socket);
+        if (!is_string($response) || $response === '' || ($meta['timed_out'] ?? false) === true) {
+            $lastError = ($meta['timed_out'] ?? false) ? 'snmp_timeout' : 'empty_snmp_response';
+            continue;
+        }
+
+        $decoded = app_mgs_snmp_decode_response($response);
+        if (empty($decoded['ok']) || $decoded['varbinds'] === []) {
+            $lastError = (string) ($decoded['error'] ?? 'decode_failed');
+            continue;
+        }
+        if (($decoded['community'] ?? null) !== $community ||
+            (int) ($decoded['version'] ?? -1) !== $candidateVersion ||
+            (int) ($decoded['request_id'] ?? -1) !== $requestId ||
+            (int) ($decoded['pdu_tag'] ?? 0) !== 0xA2) {
+            $lastError = 'snmp_response_mismatch';
+            continue;
+        }
+        if ((int) $decoded['error_status'] !== 0) {
+            $lastError = 'snmp_error_status_' . $decoded['error_status'];
+            continue;
+        }
+        $varbind = $decoded['varbinds'][0];
+        $versionCache[$cacheKey] = $candidateVersion;
+
+        return [
+            'ok' => true,
+            'oid' => (string) $varbind['oid'],
+            'tag' => (int) $varbind['tag'],
+            'value' => app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']),
+            'version' => $candidateVersion,
+            'bytes' => strlen($response),
+        ];
+    }
+
+    return ['ok' => false, 'error' => $lastError];
+}
+
+/**
+ * IF-MIB 32-bit octet counters and ifXTable (RFC2863) 64-bit "high capacity"
+ * counters for the same columns. HC counters are tried first: a 32-bit
+ * Counter32 wraps every ~34s on a saturated 1Gbps link, which is exactly the
+ * kind of interface this collector needs to poll -- ifSpeed already reports
+ * 1Gbps+ links in this dataset (see device_interfaces). Devices too old to
+ * support ifXTable fall back to the 32-bit pair.
+ */
+function app_mgs_interface_octet_oids(): array
+{
+    return [
+        'hc_in' => '1.3.6.1.2.1.31.1.1.1.6',
+        'hc_out' => '1.3.6.1.2.1.31.1.1.1.10',
+        'in' => '1.3.6.1.2.1.2.2.1.10',
+        'out' => '1.3.6.1.2.1.2.2.1.16',
+    ];
+}
+
+/**
+ * Reads one interface's in/out octet counters, preferring the 64-bit HC
+ * pair and falling back to the 32-bit pair only if either HC OID doesn't
+ * resolve (both must succeed together so a delta is never computed across
+ * mismatched counter widths).
+ */
+function app_mgs_read_interface_octets(string $ip, string $community, int $port, int $ifIndex, int $timeoutMs): array
+{
+    $oids = app_mgs_interface_octet_oids();
+    $hcIn = app_mgs_snmp_get_raw($ip, $community, $port, $oids['hc_in'] . '.' . $ifIndex, $timeoutMs);
+    $hcOut = app_mgs_snmp_get_raw($ip, $community, $port, $oids['hc_out'] . '.' . $ifIndex, $timeoutMs);
+    if (!empty($hcIn['ok']) && !empty($hcOut['ok']) && is_int($hcIn['value']) && is_int($hcOut['value'])) {
+        return ['ok' => true, 'in_octets' => $hcIn['value'], 'out_octets' => $hcOut['value'], 'counter_bits' => 64];
+    }
+
+    $in = app_mgs_snmp_get_raw($ip, $community, $port, $oids['in'] . '.' . $ifIndex, $timeoutMs);
+    $out = app_mgs_snmp_get_raw($ip, $community, $port, $oids['out'] . '.' . $ifIndex, $timeoutMs);
+    if (!empty($in['ok']) && !empty($out['ok']) && is_int($in['value']) && is_int($out['value'])) {
+        return ['ok' => true, 'in_octets' => $in['value'], 'out_octets' => $out['value'], 'counter_bits' => 32];
+    }
+
+    return ['ok' => false, 'error' => 'octet_counters_unreadable'];
+}
+
+/**
+ * Bits-per-second rate between two octet counter readings of the same
+ * width, wraparound-aware for 32-bit Counter32 (the only width that can
+ * realistically wrap between two polls). Returns null when a rate can't be
+ * trusted: no previous sample, a counter-width change (device rebooted
+ * ifXTable support, or vice versa), a non-positive time delta, a gap long
+ * enough that a wrapped 32-bit counter would be indistinguishable from a
+ * real decrease, or a counter reset (current < previous on a 64-bit counter,
+ * which never legitimately wraps within any realistic poll gap).
+ */
+function app_mgs_interface_traffic_bps(int $currentOctets, int $previousOctets, int $counterBits, int $elapsedSeconds): ?int
+{
+    if ($elapsedSeconds <= 0) {
+        return null;
+    }
+    if ($counterBits === 32) {
+        if ($elapsedSeconds > 900) {
+            // A gap this long makes a single wraparound indistinguishable
+            // from several -- refuse to guess rather than report a wrong rate.
+            return null;
+        }
+        $delta = $currentOctets >= $previousOctets
+            ? $currentOctets - $previousOctets
+            : (4294967296 - $previousOctets) + $currentOctets;
+    } else {
+        if ($currentOctets < $previousOctets) {
+            return null;
+        }
+        $delta = $currentOctets - $previousOctets;
+    }
+
+    return (int) round(($delta * 8) / $elapsedSeconds);
+}
+
+/**
+ * Polls in/out octet counters for every known interface (device_interfaces)
+ * of every monitored device, computes a bits-per-second rate against the
+ * previous sample, and stores it. Dry-run by default -- $apply=false reports
+ * what would be polled/stored without writing, matching this codebase's
+ * cron-worker convention (tools/billing-maintenance.php et al).
+ */
+function app_mgs_poll_device_interface_traffic(
+    PDO $db,
+    array $actor,
+    bool $apply,
+    ?string $onlyDeviceKey = null,
+    int $maxInterfacesPerDevice = 200
+): array {
+    $hasSamplesTable = (int) $db->query(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "device_interface_traffic_samples"'
+    )->fetchColumn() > 0;
+    if (!$hasSamplesTable) {
+        return ['ok' => false, 'reason' => 'device_interface_traffic_samples_not_migrated'];
+    }
+
+    $deviceKeyStatement = $onlyDeviceKey !== null
+        ? $db->prepare('SELECT DISTINCT device_key FROM device_interfaces WHERE device_key = :device_key')
+        : $db->prepare('SELECT DISTINCT device_key FROM device_interfaces');
+    $deviceKeyStatement->execute($onlyDeviceKey !== null ? ['device_key' => $onlyDeviceKey] : []);
+    $deviceKeys = $deviceKeyStatement->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+    $sampledAt = date('Y-m-d H:i:s');
+    $insertSample = $db->prepare(
+        'INSERT INTO device_interface_traffic_samples
+            (device_key, if_index, sampled_at, in_octets, out_octets, in_bps, out_bps, counter_bits)
+         VALUES (:device_key, :if_index, :sampled_at, :in_octets, :out_octets, :in_bps, :out_bps, :counter_bits)
+         ON DUPLICATE KEY UPDATE
+            in_octets = VALUES(in_octets), out_octets = VALUES(out_octets),
+            in_bps = VALUES(in_bps), out_bps = VALUES(out_bps), counter_bits = VALUES(counter_bits)'
+    );
+    $previousStatement = $db->prepare(
+        'SELECT in_octets, out_octets, counter_bits, sampled_at
+         FROM device_interface_traffic_samples
+         WHERE device_key = :device_key AND if_index = :if_index
+         ORDER BY sampled_at DESC LIMIT 1'
+    );
+
+    $polled = 0;
+    $stored = 0;
+    $failed = 0;
+    $skipped = 0;
+    $deviceFailures = [];
+    $details = [];
+
+    foreach ($deviceKeys as $deviceKey) {
+        $device = app_mgs_device_learning_profile_by_key((string) $deviceKey, $db, $actor);
+        if (!is_array($device) || empty($device['monitoring_enabled'])) {
+            continue;
+        }
+        $ip = trim((string) ($device['ip_address'] ?? ''));
+        if ($ip === '') {
+            continue;
+        }
+        $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+        if (empty($authorization['ok'])) {
+            continue;
+        }
+        $accessProfile = app_mgs_device_access_profile($device, $db, $actor, 'probe_device');
+        $community = (string) ($accessProfile['read_community'] ?? '');
+        $port = (int) ($accessProfile['port'] ?? 161);
+        if ($community === '') {
+            continue;
+        }
+
+        $ifaceStatement = $db->prepare('SELECT if_index FROM device_interfaces WHERE device_key = :device_key ORDER BY if_index ASC LIMIT ' . max(1, $maxInterfacesPerDevice));
+        $ifaceStatement->execute(['device_key' => $deviceKey]);
+        $interfaceIndexes = $ifaceStatement->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+        $consecutiveFailures = 0;
+        $interfaceCount = count($interfaceIndexes);
+        foreach ($interfaceIndexes as $position => $ifIndex) {
+            $ifIndex = (int) $ifIndex;
+            $polled++;
+            $reading = app_mgs_read_interface_octets($ip, $community, $port, $ifIndex, 700);
+            if (empty($reading['ok'])) {
+                $failed++;
+                $consecutiveFailures++;
+                // A device-wide SNMP outage previously caused one scheduled
+                // pass to spend minutes retrying every known interface. Three
+                // consecutive failures are enough evidence to stop this
+                // device for the current pass while allowing the remaining
+                // devices to be sampled and the supervisor to stay healthy.
+                if ($consecutiveFailures >= 3) {
+                    $remaining = max(0, $interfaceCount - ((int) $position + 1));
+                    $skipped += $remaining;
+                    $deviceFailures[] = [
+                        'device_key' => (string) $deviceKey,
+                        'reason' => 'snmp_consecutive_failures',
+                        'failed_attempts' => $consecutiveFailures,
+                        'skipped_interfaces' => $remaining,
+                    ];
+                    break;
+                }
+                continue;
+            }
+            $consecutiveFailures = 0;
+
+            $previousStatement->execute(['device_key' => $deviceKey, 'if_index' => $ifIndex]);
+            $previous = $previousStatement->fetch(PDO::FETCH_ASSOC);
+            $inBps = null;
+            $outBps = null;
+            if (is_array($previous) && (int) $previous['counter_bits'] === (int) $reading['counter_bits']) {
+                $elapsedSeconds = strtotime($sampledAt) - strtotime((string) $previous['sampled_at']);
+                $inBps = app_mgs_interface_traffic_bps((int) $reading['in_octets'], (int) $previous['in_octets'], (int) $reading['counter_bits'], $elapsedSeconds);
+                $outBps = app_mgs_interface_traffic_bps((int) $reading['out_octets'], (int) $previous['out_octets'], (int) $reading['counter_bits'], $elapsedSeconds);
+            }
+
+            if ($apply) {
+                $insertSample->execute([
+                    'device_key' => $deviceKey,
+                    'if_index' => $ifIndex,
+                    'sampled_at' => $sampledAt,
+                    'in_octets' => $reading['in_octets'],
+                    'out_octets' => $reading['out_octets'],
+                    'in_bps' => $inBps,
+                    'out_bps' => $outBps,
+                    'counter_bits' => $reading['counter_bits'],
+                ]);
+                $stored++;
+            }
+            $details[] = ['device_key' => $deviceKey, 'if_index' => $ifIndex, 'in_bps' => $inBps, 'out_bps' => $outBps, 'counter_bits' => $reading['counter_bits']];
+        }
+    }
+
+    if ($apply) {
+        app_mgs_record_operation_action([
+            'action_type' => 'device_interface_traffic_poll',
+            'entity_type' => 'device_interface_traffic_samples',
+            'entity_id' => $onlyDeviceKey ?? 'all',
+            'status' => 'executed',
+            'actor' => $actor,
+            'summary' => $stored . '/' . $polled . ' interfeys trafik nümunəsi saxlanıldı',
+            'payload' => ['polled' => $polled, 'stored' => $stored, 'failed' => $failed,
+                          'skipped' => $skipped, 'device_failures' => $deviceFailures],
+        ]);
+    }
+
+    return ['ok' => true, 'mode' => $apply ? 'apply' : 'dry_run', 'sampled_at' => $sampledAt,
+            'polled' => $polled, 'stored' => $stored, 'failed' => $failed, 'skipped' => $skipped,
+            'device_failures' => $deviceFailures, 'details' => $details];
+}
+
+/**
+ * Re-aggregates the last $lookbackHours of raw samples into
+ * device_interface_traffic_hourly. Idempotent (ON DUPLICATE KEY UPDATE) and
+ * always re-covers a small trailing window rather than tracking "last
+ * rolled-up hour" state, so a missed/late worker run self-heals on the next
+ * one instead of leaving a permanent gap.
+ */
+function app_mgs_rollup_device_interface_traffic_hourly(PDO $db, int $lookbackHours = 25): array
+{
+    $statement = $db->prepare(
+        'INSERT INTO device_interface_traffic_hourly
+            (device_key, if_index, hour_start, avg_in_bps, avg_out_bps, max_in_bps, max_out_bps, sample_count)
+         SELECT device_key, if_index,
+                DATE_FORMAT(sampled_at, "%Y-%m-%d %H:00:00") AS hour_start,
+                COALESCE(AVG(in_bps), 0), COALESCE(AVG(out_bps), 0),
+                COALESCE(MAX(in_bps), 0), COALESCE(MAX(out_bps), 0),
+                COUNT(*)
+         FROM device_interface_traffic_samples
+         WHERE sampled_at >= (NOW() - INTERVAL :lookback_hours HOUR)
+         GROUP BY device_key, if_index, hour_start
+         ON DUPLICATE KEY UPDATE
+            avg_in_bps = VALUES(avg_in_bps), avg_out_bps = VALUES(avg_out_bps),
+            max_in_bps = VALUES(max_in_bps), max_out_bps = VALUES(max_out_bps),
+            sample_count = VALUES(sample_count)'
+    );
+    $statement->execute(['lookback_hours' => max(1, $lookbackHours)]);
+
+    return ['ok' => true, 'rows_affected' => $statement->rowCount()];
+}
+
+/**
+ * Same idempotent re-aggregation as the hourly rollup, one level up
+ * (hourly -> daily).
+ */
+function app_mgs_rollup_device_interface_traffic_daily(PDO $db, int $lookbackDays = 3): array
+{
+    $statement = $db->prepare(
+        'INSERT INTO device_interface_traffic_daily
+            (device_key, if_index, day_start, avg_in_bps, avg_out_bps, max_in_bps, max_out_bps, sample_count)
+         SELECT device_key, if_index,
+                DATE(hour_start) AS day_start,
+                COALESCE(AVG(avg_in_bps), 0), COALESCE(AVG(avg_out_bps), 0),
+                COALESCE(MAX(max_in_bps), 0), COALESCE(MAX(max_out_bps), 0),
+                SUM(sample_count)
+         FROM device_interface_traffic_hourly
+         WHERE hour_start >= (NOW() - INTERVAL :lookback_days DAY)
+         GROUP BY device_key, if_index, day_start
+         ON DUPLICATE KEY UPDATE
+            avg_in_bps = VALUES(avg_in_bps), avg_out_bps = VALUES(avg_out_bps),
+            max_in_bps = VALUES(max_in_bps), max_out_bps = VALUES(max_out_bps),
+            sample_count = VALUES(sample_count)'
+    );
+    $statement->execute(['lookback_days' => max(1, $lookbackDays)]);
+
+    return ['ok' => true, 'rows_affected' => $statement->rowCount()];
+}
+
+/**
+ * Deletes raw samples older than $retainDays. Hourly/daily rollups (already
+ * aggregated, orders of magnitude smaller) are kept indefinitely -- this
+ * only bounds the high-volume raw table, matching the vision doc's "yüksək
+ * həcmli trafik jurnalları əməliyyat bazasını yükləməməlidir" guidance
+ * (docs/00_VISION.md 5.3, written about CGNAT logs but the same concern
+ * applies here).
+ */
+function app_mgs_prune_device_interface_traffic_samples(PDO $db, int $retainDays = 30): array
+{
+    $statement = $db->prepare('DELETE FROM device_interface_traffic_samples WHERE sampled_at < (NOW() - INTERVAL :retain_days DAY)');
+    $statement->execute(['retain_days' => max(1, $retainDays)]);
+
+    return ['ok' => true, 'deleted' => $statement->rowCount()];
+}
+
+/**
+ * SNMPv1 standard generic-trap codes (RFC1157). Only these -- never
+ * enterprise-specific (6) or vendor-specific v2c trap OIDs, which need a
+ * per-vendor catalog we don't have -- are eligible for the conservative
+ * alarm bridge in app_mgs_record_snmp_trap(). linkUp is deliberately
+ * excluded: it is a recovery signal, not a problem, and auto-alarming on
+ * recovery is exactly the alert-fatigue pattern docs/00_VISION.md 6.2 warns
+ * against ("40 ayrı problem yaratmamalı").
+ */
+function app_mgs_snmp_v1_generic_trap_labels(): array
+{
+    return [0 => 'coldStart', 1 => 'warmStart', 2 => 'linkDown', 3 => 'linkUp', 4 => 'authenticationFailure', 5 => 'egpNeighborLoss', 6 => 'enterpriseSpecific'];
+}
+
+function app_mgs_snmp_v1_generic_trap_alarm_severity(int $genericTrap): ?string
+{
+    return match ($genericTrap) {
+        2 => 'critical', // linkDown
+        0, 1 => 'warning', // coldStart / warmStart -- unexpected reboot
+        4 => 'warning', // authenticationFailure -- security-relevant
+        default => null, // linkUp, egpNeighborLoss, enterpriseSpecific: log-only
+    };
+}
+
+/**
+ * Decodes an SNMPv1 Trap-PDU's content (already unwrapped from its 0xA4
+ * outer TLV): enterprise(OID), agent-addr(IpAddress), generic-trap(INTEGER),
+ * specific-trap(INTEGER), time-stamp(TimeTicks), variable-bindings(SEQUENCE).
+ * Structurally different from a GetResponse-PDU, so it needs its own parser
+ * rather than reusing app_mgs_snmp_decode_response().
+ */
+function app_mgs_snmp_decode_v1_trap_pdu(string $pduBody): array
+{
+    $enterprise = app_mgs_snmp_ber_read_tlv($pduBody, 0);
+    if ($enterprise === null || $enterprise['tag'] !== 0x06) {
+        return ['ok' => false, 'error' => 'malformed_trap_enterprise'];
+    }
+    $agentAddr = app_mgs_snmp_ber_read_tlv($pduBody, $enterprise['next']);
+    if ($agentAddr === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_agent_addr'];
+    }
+    $genericTrap = app_mgs_snmp_ber_read_tlv($pduBody, $agentAddr['next']);
+    if ($genericTrap === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_generic'];
+    }
+    $specificTrap = app_mgs_snmp_ber_read_tlv($pduBody, $genericTrap['next']);
+    if ($specificTrap === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_specific'];
+    }
+    $timeStamp = app_mgs_snmp_ber_read_tlv($pduBody, $specificTrap['next']);
+    if ($timeStamp === null) {
+        return ['ok' => false, 'error' => 'malformed_trap_timestamp'];
+    }
+    $varbindList = app_mgs_snmp_ber_read_tlv($pduBody, $timeStamp['next']);
+    if ($varbindList === null || $varbindList['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_trap_varbind_list'];
+    }
+
+    $varbinds = [];
+    $offset = 0;
+    $listBody = $varbindList['value'];
+    $listLength = strlen($listBody);
+    while ($offset < $listLength) {
+        $pair = app_mgs_snmp_ber_read_tlv($listBody, $offset);
+        if ($pair === null || $pair['tag'] !== 0x30) {
+            break;
+        }
+        $offset = $pair['next'];
+        $oidTlv = app_mgs_snmp_ber_read_tlv($pair['value'], 0);
+        if ($oidTlv === null || $oidTlv['tag'] !== 0x06) {
+            break;
+        }
+        $valueTlv = app_mgs_snmp_ber_read_tlv($pair['value'], $oidTlv['next']);
+        if ($valueTlv === null) {
+            break;
+        }
+        $varbinds[] = ['oid' => app_mgs_snmp_ber_decode_oid($oidTlv['value']), 'tag' => $valueTlv['tag'], 'raw' => $valueTlv['value']];
+    }
+
+    $agentAddrBytes = (string) $agentAddr['value'];
+    $agentAddrText = strlen($agentAddrBytes) === 4 ? implode('.', array_map('ord', str_split($agentAddrBytes))) : '';
+
+    return [
+        'ok' => true,
+        'enterprise_oid' => app_mgs_snmp_ber_decode_oid($enterprise['value']),
+        'agent_addr' => $agentAddrText,
+        'generic_trap' => app_mgs_snmp_ber_decode_unsigned($genericTrap['value']),
+        'specific_trap' => app_mgs_snmp_ber_decode_unsigned($specificTrap['value']),
+        'uptime_ticks' => app_mgs_snmp_ber_decode_unsigned($timeStamp['value']),
+        'varbinds' => $varbinds,
+    ];
+}
+
+/**
+ * Decodes a full incoming SNMP trap datagram (v1 Trap-PDU tag 0xA4, or
+ * v2c SNMPv2-Trap-PDU/InformRequest tags 0xA7/0xA6 which share
+ * GetResponse-PDU's shape and so reuse app_mgs_snmp_decode_response()).
+ * Never throws -- an unrecognised or malformed datagram from the network
+ * returns ok=false, exactly like the rest of this module's SNMP decoders.
+ */
+function app_mgs_snmp_decode_trap_packet(string $packet): array
+{
+    $outer = app_mgs_snmp_ber_read_tlv($packet, 0);
+    if ($outer === null || $outer['tag'] !== 0x30) {
+        return ['ok' => false, 'error' => 'malformed_packet'];
+    }
+    $body = $outer['value'];
+    $version = app_mgs_snmp_ber_read_tlv($body, 0);
+    if ($version === null) {
+        return ['ok' => false, 'error' => 'malformed_version'];
+    }
+    $community = app_mgs_snmp_ber_read_tlv($body, $version['next']);
+    if ($community === null) {
+        return ['ok' => false, 'error' => 'malformed_community'];
+    }
+    $pdu = app_mgs_snmp_ber_read_tlv($body, $community['next']);
+    if ($pdu === null) {
+        return ['ok' => false, 'error' => 'malformed_pdu'];
+    }
+
+    $versionNumber = app_mgs_snmp_ber_decode_unsigned($version['value']);
+    $communityText = (string) $community['value'];
+
+    if ($pdu['tag'] === 0xA4) {
+        $decoded = app_mgs_snmp_decode_v1_trap_pdu($pdu['value']);
+        if (empty($decoded['ok'])) {
+            return $decoded;
+        }
+
+        return [
+            'ok' => true,
+            'version' => 'v1',
+            'community' => $communityText,
+            'generic_trap' => (int) $decoded['generic_trap'],
+            'specific_trap' => (int) $decoded['specific_trap'],
+            'enterprise_oid' => (string) $decoded['enterprise_oid'],
+            'trap_oid' => (string) $decoded['enterprise_oid'] . '.' . (int) $decoded['specific_trap'],
+            'uptime_ticks' => (int) $decoded['uptime_ticks'],
+            'varbinds' => $decoded['varbinds'],
+        ];
+    }
+
+    if ($pdu['tag'] === 0xA7 || $pdu['tag'] === 0xA6) {
+        $decoded = app_mgs_snmp_decode_response($packet);
+        if (empty($decoded['ok'])) {
+            return $decoded;
+        }
+        $uptimeTicks = null;
+        $trapOid = null;
+        foreach ($decoded['varbinds'] as $varbind) {
+            $oid = (string) ($varbind['oid'] ?? '');
+            if ($oid === '1.3.6.1.2.1.1.3.0') { // sysUpTime.0
+                $uptimeTicks = app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']);
+            } elseif ($oid === '1.3.6.1.6.3.1.1.4.1.0') { // snmpTrapOID.0
+                $trapOid = app_mgs_snmp_decode_value((int) $varbind['tag'], (string) $varbind['raw']);
+            }
+        }
+
+        return [
+            'ok' => true,
+            'version' => 'v2c',
+            'community' => $communityText,
+            'generic_trap' => null,
+            'specific_trap' => null,
+            'enterprise_oid' => null,
+            'trap_oid' => is_string($trapOid) ? $trapOid : null,
+            'uptime_ticks' => is_int($uptimeTicks) ? $uptimeTicks : null,
+            'varbinds' => array_map(
+                static fn (array $vb): array => ['oid' => $vb['oid'], 'tag' => $vb['tag'], 'raw' => $vb['raw']],
+                $decoded['varbinds']
+            ),
+        ];
+    }
+
+    return ['ok' => false, 'error' => 'unsupported_pdu_tag_' . $pdu['tag']];
+}
+
+/**
+ * Stores one already-decoded trap (app_mgs_snmp_decode_trap_packet()'s
+ * output) plus its network origin. Resolves device_key by source IP against
+ * device_learning_profiles (best-effort; a trap from an unknown/unregistered
+ * source is still logged, never dropped -- audit visibility over blind
+ * trust, matching docs/00_VISION.md 19.1's "menyunun gizlədilməsi
+ * təhlükəsizlik deyil" principle applied to network input). Community is
+ * checked against the configured expected trap community but a mismatch
+ * only flags community_valid=0, it does not suppress the row.
+ */
+function app_mgs_record_snmp_trap(PDO $db, array $trap, string $sourceIp, int $sourcePort, array $actor = []): array
+{
+    $hasTable = (int) $db->query(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "snmp_trap_log"'
+    )->fetchColumn() > 0;
+    if (!$hasTable) {
+        return ['ok' => false, 'reason' => 'snmp_trap_log_not_migrated'];
+    }
+
+    $expectedCommunity = trim((string) app_mgs_runtime_setting('snmp_trap_expected_community', ''));
+    if ($expectedCommunity === '') {
+        $expectedCommunity = trim((string) app_mgs_snmp_defaults()['read_community']);
+    }
+    $communityValid = $expectedCommunity !== '' && hash_equals($expectedCommunity, (string) ($trap['community'] ?? ''));
+
+    $deviceKey = null;
+    $deviceRow = $db->prepare('SELECT device_key FROM device_learning_profiles WHERE ip_address = :ip LIMIT 1');
+    $deviceRow->execute(['ip' => $sourceIp]);
+    $foundKey = $deviceRow->fetchColumn();
+    if (is_string($foundKey) && $foundKey !== '') {
+        $deviceKey = $foundKey;
+    }
+
+    $alarmBridged = false;
+    $genericTrap = $trap['generic_trap'] ?? null;
+    if ((string) ($trap['version'] ?? '') === 'v1' && is_int($genericTrap)) {
+        $severity = app_mgs_snmp_v1_generic_trap_alarm_severity($genericTrap);
+        if ($severity !== null) {
+            $label = app_mgs_snmp_v1_generic_trap_labels()[$genericTrap] ?? ('generic_trap_' . $genericTrap);
+            $alarmActor = $actor !== [] ? $actor : ['id' => 0, 'role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'is_active' => 1, 'full_name' => 'SNMP Trap Listener (daemon)'];
+            $alarmResult = app_mgs_record_alarm_event([
+                'alarm_type' => 'SNMP_TRAP_' . strtoupper($label),
+                'severity' => $severity,
+                'source' => 'snmp_trap',
+                'object_type' => 'device',
+                'object_id' => $deviceKey ?? $sourceIp,
+                'title' => 'SNMP trap: ' . $label . ' (' . $sourceIp . ')',
+                'device_name' => $deviceKey ?? $sourceIp,
+                'telegram_bot_key' => 'network',
+            ], false, true, $alarmActor, $db);
+            $alarmBridged = !empty($alarmResult['ok']);
+        }
+    }
+
+    $statement = $db->prepare(
+        'INSERT INTO snmp_trap_log
+            (source_ip, source_port, device_key, snmp_version, community_valid, generic_trap, specific_trap, enterprise_oid, trap_oid, uptime_ticks, varbinds_json, alarm_bridged)
+         VALUES (:source_ip, :source_port, :device_key, :snmp_version, :community_valid, :generic_trap, :specific_trap, :enterprise_oid, :trap_oid, :uptime_ticks, :varbinds_json, :alarm_bridged)'
+    );
+    $statement->execute([
+        'source_ip' => $sourceIp,
+        'source_port' => $sourcePort,
+        'device_key' => $deviceKey,
+        'snmp_version' => (string) ($trap['version'] ?? 'v1'),
+        'community_valid' => $communityValid ? 1 : 0,
+        'generic_trap' => $trap['generic_trap'] ?? null,
+        'specific_trap' => $trap['specific_trap'] ?? null,
+        'enterprise_oid' => $trap['enterprise_oid'] ?? null,
+        'trap_oid' => $trap['trap_oid'] ?? null,
+        'uptime_ticks' => $trap['uptime_ticks'] ?? null,
+        'varbinds_json' => app_db_json_encode($trap['varbinds'] ?? []),
+        'alarm_bridged' => $alarmBridged ? 1 : 0,
+    ]);
+
+    return ['ok' => true, 'id' => (int) $db->lastInsertId(), 'device_key' => $deviceKey, 'community_valid' => $communityValid, 'alarm_bridged' => $alarmBridged];
+}
+
+/**
+ * LLDP-MIB (IEEE 802.1AB, OID root 1.0.8802.1.1.2) lldpRemEntry columns.
+ * The table's real SNMP index is the 3-part {lldpRemTimeMark,
+ * lldpRemLocalPortNum, lldpRemIndex} -- app_mgs_discover_device_neighbors()
+ * groups rows by that raw trailing OID suffix (not by parsing it into
+ * ifIndex) because lldpRemLocalPortNum is only usually, not guaranteed,
+ * equal to the IF-MIB ifIndex used elsewhere in this module; see
+ * docs/39_MGS_NODE_CONSOLIDATION.md for that caveat.
+ */
+function app_mgs_lldp_mib_columns(): array
+{
+    return [
+        'remote_chassis_id' => '1.0.8802.1.1.2.1.4.1.1.5',
+        'remote_port_id' => '1.0.8802.1.1.2.1.4.1.1.7',
+        'remote_port_desc' => '1.0.8802.1.1.2.1.4.1.1.8',
+        'remote_sys_name' => '1.0.8802.1.1.2.1.4.1.1.9',
+    ];
+}
+
+/**
+ * CISCO-CDP-MIB (OID root 1.3.6.1.4.1.9.9.23, Cisco enterprise 9) cdpCacheEntry
+ * columns. Table index is {cdpCacheIfIndex, cdpCacheDeviceIndex} -- unlike
+ * LLDP, cdpCacheIfIndex genuinely is the IF-MIB ifIndex (Cisco's own MIB
+ * documents this), so local_if_index is reliable for CDP rows.
+ */
+function app_mgs_cdp_mib_columns(): array
+{
+    return [
+        'remote_chassis_id' => '1.3.6.1.4.1.9.9.23.1.2.1.1.6',
+        'remote_port_id' => '1.3.6.1.4.1.9.9.23.1.2.1.1.7',
+        'remote_platform' => '1.3.6.1.4.1.9.9.23.1.2.1.1.8',
+    ];
+}
+
+function app_mgs_snmp_oid_index_suffix(string $oid, string $baseOid): ?string
+{
+    $prefix = $baseOid . '.';
+
+    return str_starts_with($oid, $prefix) ? substr($oid, strlen($prefix)) : null;
+}
+
+/**
+ * Best-effort MAC formatting shared by interface (ifPhysAddress) and
+ * neighbor (LLDP chassis/port ID when chassisIdSubtype/portIdSubtype
+ * indicates a MAC address) discovery: a 6-byte OCTET STRING is formatted as
+ * AA:BB:CC:DD:EE:FF, anything else is returned as-is (already a readable
+ * string in most other subtype cases).
+ */
+function app_mgs_format_possible_mac(string $raw): string
+{
+    return strlen($raw) === 6 ? strtoupper(implode(':', str_split(bin2hex($raw), 2))) : $raw;
+}
+
+/**
+ * Discovers (or re-syncs) one device's LLDP and/or CDP neighbor table via a
+ * real SNMP walk and stores it in device_neighbors -- the last Faza 1 gap
+ * docs/39_MGS_NODE_CONSOLIDATION.md calls out. Tries both protocols (a
+ * device can run both, and they are stored as distinct protocol rows keyed
+ * on the same device_key, so neither suppresses the other); a protocol with
+ * an empty remote_chassis_id column simply contributes zero rows rather
+ * than failing the whole call, since plenty of real devices only speak one
+ * of the two.
+ */
+function app_mgs_discover_device_neighbors(array $device, ?PDO $db = null, array $actor = [], int $maxNeighbors = 128): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $deviceKey = (string) ($device['device_key'] ?? '');
+    $ip = trim((string) ($device['ip_address'] ?? ''));
+    if ($deviceKey === '' || $ip === '') {
+        return ['ok' => false, 'reason' => 'missing_device_target'];
+    }
+    $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('probe_device', $authorization);
+    }
+
+    $accessProfile = app_mgs_device_access_profile($device, $db, $actor, 'probe_device');
+    $community = (string) ($accessProfile['read_community'] ?? '');
+    $port = (int) ($accessProfile['port'] ?? 161);
+    if ($community === '') {
+        return ['ok' => false, 'reason' => 'missing_snmp_config'];
+    }
+
+    $upsert = $db->prepare(
+        'INSERT INTO device_neighbors
+            (device_key, protocol, local_index_key, local_if_index, remote_chassis_id, remote_port_id, remote_port_desc, remote_sys_name, remote_platform, last_seen_at)
+         VALUES (:device_key, :protocol, :local_index_key, :local_if_index, :remote_chassis_id, :remote_port_id, :remote_port_desc, :remote_sys_name, :remote_platform, NOW())
+         ON DUPLICATE KEY UPDATE
+            local_if_index = VALUES(local_if_index),
+            remote_chassis_id = VALUES(remote_chassis_id),
+            remote_port_id = VALUES(remote_port_id),
+            remote_port_desc = VALUES(remote_port_desc),
+            remote_sys_name = VALUES(remote_sys_name),
+            remote_platform = VALUES(remote_platform),
+            last_seen_at = NOW()'
+    );
+
+    $stored = 0;
+    $byProtocol = ['lldp' => 0, 'cdp' => 0];
+
+    foreach (['lldp' => app_mgs_lldp_mib_columns(), 'cdp' => app_mgs_cdp_mib_columns()] as $protocol => $columns) {
+        $rowsByIndexKey = [];
+        foreach ($columns as $field => $baseOid) {
+            $walked = app_mgs_snmp_walk_column($ip, $community, $port, $baseOid, 700, $maxNeighbors);
+            foreach ($walked as $oid => $entry) {
+                $indexKey = app_mgs_snmp_oid_index_suffix($oid, $baseOid);
+                if ($indexKey === null) {
+                    continue;
+                }
+                $rowsByIndexKey[$indexKey][$field] = $entry['value'];
+            }
+        }
+
+        foreach ($rowsByIndexKey as $indexKey => $row) {
+            $chassisRaw = (string) ($row['remote_chassis_id'] ?? '');
+            if ($chassisRaw === '') {
+                continue; // no identity for this row -- not a usable neighbor entry
+            }
+            $indexParts = array_map('intval', explode('.', $indexKey));
+            $localIfIndex = $protocol === 'cdp'
+                ? ($indexParts[0] ?? null) // cdpCacheIfIndex: real ifIndex
+                : ($indexParts[count($indexParts) - 2] ?? null); // lldpRemLocalPortNum: usually ifIndex, not guaranteed
+
+            $upsert->execute([
+                'device_key' => $deviceKey,
+                'protocol' => $protocol,
+                'local_index_key' => $indexKey,
+                'local_if_index' => $localIfIndex,
+                'remote_chassis_id' => app_mgs_format_possible_mac($chassisRaw),
+                'remote_port_id' => app_mgs_format_possible_mac((string) ($row['remote_port_id'] ?? '')),
+                'remote_port_desc' => clean_text((string) ($row['remote_port_desc'] ?? '')),
+                'remote_sys_name' => clean_text((string) ($row['remote_sys_name'] ?? '')),
+                'remote_platform' => clean_text((string) ($row['remote_platform'] ?? '')),
+            ]);
+            $stored++;
+            $byProtocol[$protocol]++;
+        }
+    }
+
+    app_mgs_record_operation_action([
+        'action_type' => 'device_neighbor_discovery',
+        'entity_type' => 'device_learning_profiles',
+        'entity_id' => $deviceKey,
+        'status' => 'executed',
+        'actor' => $actor,
+        'summary' => $stored . ' qonşu aşkarlandı/yeniləndi (lldp=' . $byProtocol['lldp'] . ', cdp=' . $byProtocol['cdp'] . ')',
+        'payload' => ['device_key' => $deviceKey, 'neighbor_count' => $stored, 'by_protocol' => $byProtocol],
+    ]);
+
+    return ['ok' => true, 'device_key' => $deviceKey, 'neighbor_count' => $stored, 'by_protocol' => $byProtocol];
+}
+
+/**
+ * Read-only listing for a device's discovered neighbors (UI + smoke). Same
+ * authorization as reading any other device detail.
+ */
+function app_mgs_device_neighbors(string $deviceKey, ?PDO $db = null, array $actor = []): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $deviceKey === '') {
+        return [];
+    }
+    $authorization = app_noc_authorize($actor, 'read_device', ['device_key' => $deviceKey], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
+    $statement = $db->prepare('SELECT * FROM device_neighbors WHERE device_key = :device_key ORDER BY protocol ASC, local_index_key ASC');
+    $statement->execute(['device_key' => $deviceKey]);
+
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/**
+ * Read-only, paginated listing of legacy_mgs_ont_inventory (the Node MGS
+ * import from docs/39_MGS_NODE_CONSOLIDATION.md Faza 2 -- 730 historical
+ * OLT-discovered ONT records with no real customer linkage; see that doc
+ * for why they were never wired into customer_equipment_assignments). Not
+ * a live monitoring source -- purely for admins/NOC to browse what was
+ * imported. Same read_device authorization as any other device detail.
+ */
+function app_mgs_legacy_ont_inventory_rows(PDO $db, array $actor, array $filters = [], int $page = 1, int $perPage = 50): array
+{
+    $authorization = app_noc_authorize($actor, 'read_device', [], $db);
+    if (empty($authorization['ok'])) {
+        return ['ok' => false, 'rows' => [], 'total' => 0, 'page' => 1, 'per_page' => $perPage, 'total_pages' => 1, 'olts' => []];
+    }
+
+    $hasTable = (int) $db->query(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "legacy_mgs_ont_inventory"'
+    )->fetchColumn() > 0;
+    if (!$hasTable) {
+        return ['ok' => false, 'rows' => [], 'total' => 0, 'page' => 1, 'per_page' => $perPage, 'total_pages' => 1, 'olts' => []];
+    }
+
+    $where = [];
+    $params = [];
+    $oltFilter = trim((string) ($filters['olt_device_key'] ?? ''));
+    if ($oltFilter !== '') {
+        $where[] = 'olt_device_key = :olt_device_key';
+        $params['olt_device_key'] = $oltFilter;
+    }
+    $statusFilter = trim((string) ($filters['status'] ?? ''));
+    if ($statusFilter !== '') {
+        $where[] = 'status = :status';
+        $params['status'] = $statusFilter;
+    }
+    $search = trim((string) ($filters['q'] ?? ''));
+    if ($search !== '') {
+        $where[] = '(serial_number LIKE :search OR port_key LIKE :search OR source_ont_id LIKE :search)';
+        $params['search'] = '%' . $search . '%';
+    }
+    $whereSql = $where !== [] ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $countStatement = $db->prepare("SELECT COUNT(*) FROM legacy_mgs_ont_inventory $whereSql");
+    $countStatement->execute($params);
+    $total = (int) $countStatement->fetchColumn();
+
+    $perPage = max(10, min(200, $perPage));
+    $totalPages = max(1, (int) ceil($total / $perPage));
+    $page = max(1, min($totalPages, $page));
+    $offset = ($page - 1) * $perPage;
+
+    $rowsStatement = $db->prepare(
+        "SELECT * FROM legacy_mgs_ont_inventory $whereSql ORDER BY olt_device_key ASC, port_key ASC LIMIT $perPage OFFSET $offset"
+    );
+    $rowsStatement->execute($params);
+
+    $olts = $db->query(
+        'SELECT olt_device_key, COUNT(*) AS c FROM legacy_mgs_ont_inventory GROUP BY olt_device_key ORDER BY olt_device_key ASC'
+    )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    return [
+        'ok' => true,
+        'rows' => $rowsStatement->fetchAll(PDO::FETCH_ASSOC) ?: [],
+        'total' => $total,
+        'page' => $page,
+        'per_page' => $perPage,
+        'total_pages' => $totalPages,
+        'olts' => $olts,
+    ];
+}
+
+function app_mgs_probe_device_services(
+    string $ip,
+    int $timeoutMs = 900,
+    ?array $accessProfile = null,
+    array $actor = [],
+    array $device = [],
+    ?PDO $db = null,
+    string $authorizationAction = 'probe_device'
+): array
+{
+    $target = array_replace(['ip_address' => trim($ip)], $device);
+    $authorization = app_noc_authorize($actor, $authorizationAction, $target, $db);
+    if (empty($authorization['ok'])) {
+        return array_merge(
+            ['reachable' => false, 'method' => 'none', 'services' => []],
+            app_noc_authorization_failure($authorizationAction, $authorization)
+        );
+    }
+    $base = app_mgs_probe_ip($ip, $timeoutMs, $actor, $target, $db, $authorizationAction);
     $sshPort = is_array($accessProfile) ? max(1, (int) ($accessProfile['ssh_port'] ?? 22)) : 22;
-    $ssh = app_mgs_probe_tcp_port($ip, $sshPort, $timeoutMs);
+    $ssh = app_mgs_probe_tcp_port($ip, $sshPort, $timeoutMs, $actor, $target, $db, $authorizationAction);
     $sshAuth = (!empty($ssh['reachable']) && is_array($accessProfile))
         ? app_mgs_probe_ssh_auth(
             $ip,
             (string) ($accessProfile['ssh_username'] ?? ''),
             (string) ($accessProfile['ssh_password'] ?? ''),
             $sshPort,
-            max(2000, $timeoutMs * 2)
+            max(2000, $timeoutMs * 2),
+            $actor,
+            $target,
+            $db,
+            $authorizationAction
         )
         : ['reachable' => false, 'method' => 'ssh_auth', 'error' => 'missing_ssh_credentials'];
     $snmp = app_mgs_probe_snmp(
         $ip,
         is_array($accessProfile) ? (string) ($accessProfile['read_community'] ?? '') : null,
         is_array($accessProfile) ? (int) ($accessProfile['port'] ?? 161) : null,
-        max(1200, $timeoutMs)
+        max(1200, $timeoutMs),
+        $actor,
+        $target,
+        $db,
+        $authorizationAction
     );
-    $snmpPort = !empty($snmp['reachable']) ? ['reachable' => true, 'method' => (string) ($snmp['method'] ?? ''), 'error' => ''] : app_mgs_probe_udp_port_nmap($ip, 161, max(1800, $timeoutMs * 2));
+    $snmpPort = !empty($snmp['reachable'])
+        ? ['reachable' => true, 'method' => (string) ($snmp['method'] ?? ''), 'error' => '']
+        : app_mgs_probe_udp_port_nmap(
+            $ip,
+            161,
+            max(1800, $timeoutMs * 2),
+            $actor,
+            $target,
+            $db,
+            $authorizationAction
+        );
 
     $reachable = !empty($base['reachable']) || !empty($ssh['reachable']) || !empty($snmp['reachable']);
     $method = !empty($snmp['reachable'])
@@ -6768,7 +10650,11 @@ function app_mgs_probe_device_services(string $ip, int $timeoutMs = 900, ?array 
             'snmp_port_error' => (string) ($snmpPort['error'] ?? ''),
             'ssh_username' => is_array($accessProfile) ? (string) ($accessProfile['ssh_username'] ?? '') : '',
             'ssh_port' => $sshPort,
-            'snmp_read_community' => is_array($accessProfile) ? (string) ($accessProfile['read_community'] ?? '') : '',
+            // Never persist or return the decrypted community in probe
+            // telemetry. Callers only need to know whether a credential was
+            // available for the attempted SNMP request.
+            'snmp_read_community_set' => is_array($accessProfile)
+                && (string) ($accessProfile['read_community'] ?? '') !== '',
         ],
     ];
 }
@@ -6783,15 +10669,24 @@ function app_mgs_default_device_profiles(): array
         ['olt-hsgq-kurdexani-21', 'kurdexani 21', '172.16.5.21', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 1, 1, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
         ['olt-hsgq-kurdexani-22', 'kurdexani 22', '172.16.5.22', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 0, 0, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
         ['olt-hsgq-172-16-5-26', 'HSGQ 172.16.5.26', '172.16.5.26', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 1, 1, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
+        ['olt-hsgq-172-16-5-29', 'HSGQ 172.16.5.29', '172.16.5.29', 'olt', 'HSGQ', 'G08L', 'HSGQOltAdapter', 'vlan550', 1, 1, ['ont_list', 'ont_optical', 'pon_statistics', 'sfp_status', 'mac_search']],
         ['switch-cisco-2960-172-16-5-41', 'kurdexaniOfissvitch', '172.16.5.41', 'switch', 'Cisco', '2960', 'CiscoSwitchAdapter', 'vlan550', 1, 1, ['interfaces', 'mac_table', 'vlan_list', 'stp_status', 'port_shutdown']],
     ];
 }
 
-function app_mgs_seed_device_learning_profiles(?PDO $db = null): array
+function app_mgs_seed_device_learning_profiles(
+    ?PDO $db = null,
+    array $actor = [],
+    string $purposeAction = 'seed_device_profiles'
+): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['seeded' => 0, 'profiles' => []];
+    }
+    $authorization = app_noc_authorize($actor, $purposeAction, [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($purposeAction, $authorization) + ['seeded' => 0, 'profiles' => []];
     }
 
     $statement = $db->prepare(
@@ -6896,14 +10791,21 @@ function app_mgs_seed_device_learning_profiles(?PDO $db = null): array
     return ['seeded' => count($profiles), 'profiles' => $profiles];
 }
 
-function app_mgs_refresh_device_reachability(?PDO $db = null, bool $probe = false): array
+function app_mgs_refresh_device_reachability(?PDO $db = null, bool $probe = false, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
+    $authorization = app_noc_authorize($actor, 'probe_network', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('probe_network', $authorization);
+    }
 
-    app_mgs_seed_device_learning_profiles($db);
+    $seed = app_mgs_seed_device_learning_profiles($db, $actor, 'probe_network');
+    if (isset($seed['ok']) && empty($seed['ok'])) {
+        return $seed;
+    }
     $pathReady = app_mgs_management_path_ready();
 
     if (!$pathReady) {
@@ -6915,7 +10817,7 @@ function app_mgs_refresh_device_reachability(?PDO $db = null, bool $probe = fals
              WHERE management_network <> "public"'
         );
 
-        app_mgs_sync_process_registry($db);
+        app_mgs_sync_process_registry($db, $actor);
         return [
             'ok' => true,
             'mode' => 'path_down',
@@ -6971,7 +10873,15 @@ function app_mgs_refresh_device_reachability(?PDO $db = null, bool $probe = fals
             continue;
         }
 
-        $probeResult = app_mgs_probe_device_services((string) ($row['ip_address'] ?? ''), 900, app_mgs_device_access_profile($row, $db));
+        $probeResult = app_mgs_probe_device_services(
+            (string) ($row['ip_address'] ?? ''),
+            900,
+            app_mgs_device_access_profile($row, $db, $actor, 'probe_network'),
+            $actor,
+            $row,
+            $db,
+            'probe_network'
+        );
         $isReachable = !empty($probeResult['reachable']);
         $state = $isReachable ? 'reachable' : 'unreachable_confirmed';
         $status = $isReachable ? 'learned' : 'failed';
@@ -7014,6 +10924,7 @@ function app_mgs_refresh_device_reachability(?PDO $db = null, bool $probe = fals
         'entity_type' => 'device_learning',
         'entity_id' => 'vlan550',
         'status' => 'executed',
+        'actor' => $actor,
         'summary' => 'Device reachability probe: ' . $reachable . '/' . $probed . ' reachable',
         'payload' => ['samples' => array_slice($samples, 0, 20), 'reachable' => $reachable, 'unreachable' => $unreachable],
     ]);
@@ -7028,7 +10939,7 @@ function app_mgs_refresh_device_reachability(?PDO $db = null, bool $probe = fals
     ];
 }
 
-function app_mgs_device_learning_profile_by_key(string $deviceKey, ?PDO $db = null): ?array
+function app_mgs_device_learning_profile_by_key(string $deviceKey, ?PDO $db = null, array $actor = []): ?array
 {
     $deviceKey = trim($deviceKey);
     $db = $db instanceof PDO ? $db : app_db();
@@ -7040,19 +10951,27 @@ function app_mgs_device_learning_profile_by_key(string $deviceKey, ?PDO $db = nu
     $statement->execute(['device_key' => $deviceKey]);
     $row = $statement->fetch();
 
-    return is_array($row) ? $row : null;
+    if (!is_array($row)) {
+        return null;
+    }
+    $authorization = app_noc_authorize($actor, 'read_device', $row, $db);
+    return !empty($authorization['ok']) ? $row : null;
 }
 
-function app_mgs_probe_single_device(string $deviceKey, ?PDO $db = null): array
+function app_mgs_probe_single_device(string $deviceKey, ?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
 
-    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $actor);
     if ($device === null) {
         return ['ok' => false, 'reason' => 'device_not_found'];
+    }
+    $authorization = app_noc_authorize($actor, 'probe_device', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('probe_device', $authorization);
     }
 
     $deviceKey = (string) ($device['device_key'] ?? '');
@@ -7100,6 +11019,7 @@ function app_mgs_probe_single_device(string $deviceKey, ?PDO $db = null): array
             'entity_type' => 'device_learning',
             'entity_id' => $deviceKey,
             'status' => 'skipped',
+            'actor' => $actor,
             'summary' => 'Single device probe skipped: management path down',
             'payload' => ['device_key' => $deviceKey, 'device_name' => $deviceName, 'reason' => 'management_path_down'],
         ]);
@@ -7107,7 +11027,15 @@ function app_mgs_probe_single_device(string $deviceKey, ?PDO $db = null): array
         return ['ok' => true, 'mode' => 'skipped', 'reason' => 'management_path_down', 'device_key' => $deviceKey, 'device_name' => $deviceName];
     }
 
-    $probeResult = app_mgs_probe_device_services((string) ($device['ip_address'] ?? ''), 900, app_mgs_device_access_profile($device, $db));
+    $probeResult = app_mgs_probe_device_services(
+        (string) ($device['ip_address'] ?? ''),
+        900,
+        app_mgs_device_access_profile($device, $db, $actor, 'probe_device'),
+        $actor,
+        $device,
+        $db,
+        'probe_device'
+    );
     $isReachable = !empty($probeResult['reachable']);
     $state = $isReachable ? 'reachable' : 'unreachable_confirmed';
     $status = $isReachable ? 'learned' : 'failed';
@@ -7136,6 +11064,7 @@ function app_mgs_probe_single_device(string $deviceKey, ?PDO $db = null): array
         'entity_type' => 'device_learning',
         'entity_id' => $deviceKey,
         'status' => $isReachable ? 'executed' : 'failed',
+        'actor' => $actor,
         'summary' => 'Single device probe: ' . $deviceName . ' -> ' . $state,
         'payload' => [
             'device_key' => $deviceKey,
@@ -7167,14 +11096,19 @@ function app_mgs_probe_single_device(string $deviceKey, ?PDO $db = null): array
 
 function app_mgs_set_device_monitoring_mode(string $deviceKey, string $mode, ?array $actor = null, ?PDO $db = null): array
 {
+    $actor = is_array($actor) ? $actor : [];
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
 
-    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $actor);
     if (!is_array($device)) {
         return ['ok' => false, 'reason' => 'device_not_found'];
+    }
+    $authorization = app_noc_authorize($actor, 'update_monitoring_mode', $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('update_monitoring_mode', $authorization);
     }
 
     $mode = trim(strtolower($mode));
@@ -7271,16 +11205,19 @@ function app_mgs_set_device_monitoring_mode(string $deviceKey, string $mode, ?ar
     ];
 }
 
-function app_mgs_device_learning_rows(?PDO $db = null): array
+function app_mgs_device_learning_rows(?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return [];
     }
 
-    app_mgs_seed_device_learning_profiles($db);
+    $authorization = app_noc_authorize($actor, 'read_device', [], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
     $rows = $db->query('SELECT * FROM device_learning_profiles ORDER BY FIELD(device_type, "router", "olt", "switch", "server", "unknown"), device_name');
-    return $rows !== false ? ($rows->fetchAll() ?: []) : [];
+    return $rows !== false ? app_noc_filter_objects($rows->fetchAll() ?: [], $actor, $db) : [];
 }
 
 function app_mgs_bridge_status(): array
@@ -7314,30 +11251,109 @@ function app_mgs_render_alarm_message(array $alarm): string
     $severity = ucfirst(strtolower((string) ($alarm['severity'] ?? 'Info')));
     $device = trim((string) ($alarm['device_name'] ?? $alarm['object_id'] ?? '-'));
     $ip = trim((string) ($alarm['device_ip'] ?? ''));
-    $problem = trim((string) ($alarm['human_problem'] ?? $alarm['title'] ?? 'Emeliyyat xeberdarligi'));
-    $recommendation = trim((string) ($alarm['recommendation'] ?? 'Ilk olaraq konteksti, son deyisiklikleri ve asili servisleri yoxla.'));
+    $problem = trim((string) ($alarm['human_problem'] ?? $alarm['title'] ?? 'Əməliyyat xəbərdarlığı'));
+    $recommendation = trim((string) ($alarm['recommendation'] ?? 'Əvvəl hadisənin kontekstini, son dəyişiklikləri və asılı xidmətləri yoxlayın.'));
 
     $lines = [
-        ($severity === 'Critical' ? 'KRITIK' : 'SEBEKE') . ' XEBERDARLIGI',
+        ($severity === 'Critical' ? 'KRİTİK ŞƏBƏKƏ' : 'ŞƏBƏKƏ') . ' XƏBƏRDARLIĞI',
         '',
-        'Seviyye: ' . $severity,
-        'Avadanliq: ' . $device,
+        'Səviyyə: ' . $severity,
+        'Avadanlıq: ' . $device,
     ];
     if ($ip !== '') {
         $lines[] = 'IP: ' . $ip;
     }
     $lines[] = 'Problem: ' . $problem;
     $lines[] = '';
-    $lines[] = 'Tovsiye:';
+    $lines[] = 'Tövsiyə:';
     $lines[] = $recommendation;
+
+    $ticketNo = clean_text((string) ($alarm['ticket_no'] ?? ''));
+    if ($ticketNo !== '') {
+        $lines[] = '';
+        $lines[] = 'Bilet: ' . $ticketNo;
+        $ticket = app_portal_ticket_find($ticketNo);
+        $closeLink = is_array($ticket) ? app_portal_ticket_close_link($ticket) : '';
+        if ($closeLink !== '') {
+            $lines[] = 'Bağla: ' . $closeLink;
+        }
+    }
 
     return implode("\n", $lines);
 }
 
-function app_mgs_record_alarm_event(array $alarm, bool $testMode = true, bool $queueMessage = true): array
+/**
+ * Give operations staff an in-app copy of a real NOC event. The assigned
+ * field employee receives the ticket notification through app_db_insert_ticket;
+ * this copy is for operators and responsible network/management roles.
+ */
+function app_mgs_notify_mobile_alarm_recipients(PDO $db, int $alarmId, array $alarm): void
 {
-    $db = app_db();
-    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+    if ($alarmId <= 0 || !app_db_table_exists($db, 'mobile_manager_alerts')) {
+        return;
+    }
+
+    $recipients = $db->query(
+        "SELECT id FROM portal_accounts
+          WHERE role = 'employee' AND is_active = 1
+            AND (employee_role IN ('operator','night_operator','admin','super_admin','director','engineer','noc','network_engineer','noc_monitor')
+                 OR account_type IN ('operator','manager','admin','engineer','noc'))"
+    );
+    if ($recipients === false) {
+        return;
+    }
+
+    $dedupKey = clean_text((string) ($alarm['dedup_key'] ?? ''));
+    $severity = strtolower(clean_text((string) ($alarm['severity'] ?? 'warning')));
+    $severity = in_array($severity, ['info', 'warning', 'critical', 'emergency'], true) ? $severity : 'warning';
+    $title = mb_substr(clean_text((string) ($alarm['title'] ?? 'Şəbəkə hadisəsi')), 0, 180);
+    $message = mb_substr(clean_text((string) ($alarm['message'] ?? $alarm['human_problem'] ?? '')), 0, 900);
+    $insert = $db->prepare(
+        "INSERT IGNORE INTO mobile_manager_alerts
+         (alert_key, account_id, alert_type, severity, title, message, event_at, metadata_json)
+         VALUES (:alert_key, :account_id, 'network_incident', :severity, :title, :message, NOW(), :metadata_json)"
+    );
+    foreach ($recipients->fetchAll(PDO::FETCH_COLUMN) ?: [] as $accountId) {
+        $insert->execute([
+            'alert_key' => 'network-alarm-' . $alarmId . '-' . (int) $accountId,
+            'account_id' => (int) $accountId,
+            'severity' => $severity,
+            'title' => $title,
+            'message' => $message,
+            'metadata_json' => app_db_json_encode([
+                'alarm_id' => $alarmId,
+                'dedup_key' => $dedupKey,
+                'ticket_no' => (string) ($alarm['ticket_no'] ?? ''),
+                'area' => (string) ($alarm['area'] ?? ''),
+                'device_key' => (string) ($alarm['device_key'] ?? ''),
+            ]),
+        ]);
+    }
+}
+
+function app_mgs_record_alarm_event(
+    array $alarm,
+    bool $testMode = true,
+    bool $queueMessage = true,
+    array $actor = [],
+    ?PDO $db = null
+): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $alarmObject = [
+        'device_key' => (string) ($alarm['device_key'] ?? ''),
+        'device_name' => (string) ($alarm['device_name'] ?? ''),
+        'management_network' => (string) ($alarm['management_network'] ?? ''),
+        'area' => (string) ($alarm['area'] ?? $alarm['location'] ?? ''),
+    ];
+    $authorization = app_noc_authorize($actor, 'record_noc_alarm', array_filter($alarmObject), $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('record_noc_alarm', $authorization);
+    }
+    if (!app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
 
@@ -7382,6 +11398,17 @@ function app_mgs_record_alarm_event(array $alarm, bool $testMode = true, bool $q
         'object_id' => $objectId,
     ]);
 
+    $normalizedSeverity = in_array($severity, ['info', 'warning', 'critical', 'emergency'], true) ? $severity : 'info';
+
+    $beforeAlarm = null;
+    try {
+        $existingAlarm = $db->prepare('SELECT id, status, severity, seen_count FROM mgs_alarm_events WHERE dedup_key = :dedup_key');
+        $existingAlarm->execute(['dedup_key' => $dedupKey]);
+        $beforeAlarm = $existingAlarm->fetch(PDO::FETCH_ASSOC) ?: null;
+    } catch (Throwable) {
+        $beforeAlarm = null;
+    }
+
     $statement = $db->prepare(
         'INSERT INTO mgs_alarm_events (
             dedup_key, alarm_type, severity, source, object_type, object_id, title, message, status, ticket_no,
@@ -7400,7 +11427,7 @@ function app_mgs_record_alarm_event(array $alarm, bool $testMode = true, bool $q
     $ok = $statement->execute([
         'dedup_key' => $dedupKey,
         'alarm_type' => $alarmType,
-        'severity' => in_array($severity, ['info', 'warning', 'critical', 'emergency'], true) ? $severity : 'info',
+        'severity' => $normalizedSeverity,
         'source' => $source,
         'object_type' => $objectType,
         'object_id' => $objectId,
@@ -7412,10 +11439,43 @@ function app_mgs_record_alarm_event(array $alarm, bool $testMode = true, bool $q
         'payload_json' => app_db_json_encode($alarm),
     ]);
 
-    $alarmId = (int) $db->lastInsertId();
+    // $beforeAlarm === null means this dedup_key had no existing row, so the
+    // statement above was a genuine INSERT and lastInsertId() is reliable;
+    // ON DUPLICATE KEY UPDATE does not otherwise populate it (MySQL/MariaDB
+    // only does that when the UPDATE clause itself calls LAST_INSERT_ID()).
+    $alarmId = $beforeAlarm !== null ? (int) $beforeAlarm['id'] : (int) $db->lastInsertId();
     if ($queueMessage) {
         $notificationEvent['metadata']['alarm_id'] = $alarmId;
         app_notification_route_event($notificationEvent, $testMode, true);
+    }
+    if ($ok && !$testMode) {
+        app_mgs_notify_mobile_alarm_recipients($db, $alarmId, $alarm + ['ticket_no' => (string) ($alarm['ticket_no'] ?? '')]);
+    }
+
+    // Best-effort append-only history (docs/39_MGS_NODE_CONSOLIDATION.md Faza 1):
+    // mgs_alarm_events only ever holds current state; this keeps every
+    // create/re-occurrence transition so an alarm's timeline can be
+    // reconstructed. Swallowed if the migration hasn't run yet, matching
+    // app_ai_team_record_agenda_run()'s best-effort-telemetry pattern.
+    if ($ok && $alarmId > 0) {
+        try {
+            $db->prepare(
+                'INSERT INTO mgs_alarm_state_events
+                    (alarm_event_id, dedup_key, from_status, to_status, from_severity, to_severity, seen_count, test_mode)
+                 VALUES (:alarm_event_id, :dedup_key, :from_status, :to_status, :from_severity, :to_severity, :seen_count, :test_mode)'
+            )->execute([
+                'alarm_event_id' => $alarmId,
+                'dedup_key' => $dedupKey,
+                'from_status' => $beforeAlarm['status'] ?? null,
+                'to_status' => $status,
+                'from_severity' => $beforeAlarm['severity'] ?? null,
+                'to_severity' => $normalizedSeverity,
+                'seen_count' => $beforeAlarm !== null ? ((int) $beforeAlarm['seen_count'] + 1) : 1,
+                'test_mode' => $testMode ? 1 : 0,
+            ]);
+        } catch (Throwable) {
+            // Migration not applied yet or table unavailable -- alarm recording itself must not fail.
+        }
     }
 
     app_mgs_record_operation_action([
@@ -7423,6 +11483,7 @@ function app_mgs_record_alarm_event(array $alarm, bool $testMode = true, bool $q
         'entity_type' => 'alarm',
         'entity_id' => $dedupKey,
         'status' => $testMode ? 'dry_run' : 'executed',
+        'actor' => $actor,
         'summary' => $title,
         'payload' => ['alarm_type' => $alarmType, 'severity' => $severity, 'test_mode' => $testMode],
     ]);
@@ -7458,25 +11519,89 @@ function app_mgs_olt_rule_thresholds(array $options = []): array
     };
 
     return [
-        'min_pon_issue_count' => max(1, (int) $setting('olt_mass_pon_min_affected', '9')),
-        'ont_rx_min_dbm' => (float) $setting('olt_ont_rx_min_dbm', '-27'),
-        'olt_rx_min_dbm' => (float) $setting('olt_olt_rx_min_dbm', '-27'),
+        // A shared PON incident is more useful than five separate field
+        // visits.  The values remain runtime-configurable for future tuning.
+        'min_pon_issue_count' => max(1, (int) $setting('olt_mass_pon_min_affected', '5')),
+        'ont_rx_min_dbm' => (float) $setting('olt_ont_rx_min_dbm', '-26'),
+        'olt_rx_min_dbm' => (float) $setting('olt_olt_rx_min_dbm', '-26'),
         'ont_tx_min_dbm' => (float) $setting('olt_ont_tx_min_dbm', '-1'),
         'ont_tx_max_dbm' => (float) $setting('olt_ont_tx_max_dbm', '6'),
         'olt_tx_min_dbm' => (float) $setting('olt_olt_tx_min_dbm', '1'),
         'olt_tx_max_dbm' => (float) $setting('olt_olt_tx_max_dbm', '8'),
-        'temperature_max_c' => (float) $setting('olt_ont_temperature_max_c', '68'),
+        'temperature_max_c' => (float) $setting('olt_ont_temperature_max_c', '51'),
+        'optical_fresh_minutes' => max(1, (int) $setting('olt_optical_fresh_minutes', '20')),
     ];
 }
 
-function app_mgs_monitored_olt_devices(?PDO $db = null): array
+/**
+ * Optical values are useful only when they are a recent live snapshot.  A
+ * stale value must never create, or keep open, a field ticket.
+ */
+function app_mgs_ont_optical_snapshot_is_fresh(array $ont, int $maxAgeMinutes): bool
+{
+    $stamp = trim(app_mgs_search_profile_field($ont, [
+        'optical_synced_at', 'optical_updated_at', 'telemetry_at', 'last_seen_at',
+    ], ''));
+    if ($stamp === '') {
+        return false;
+    }
+    $timestamp = strtotime($stamp);
+    return $timestamp !== false && $timestamp >= (time() - max(60, $maxAgeMinutes * 60));
+}
+
+/** Resolve a device's operational area without inventing a field location. */
+function app_mgs_network_device_area(array $device): string
+{
+    $resolve = static function (string $value): string {
+        $direct = app_portal_resolve_area_from_text($value);
+        if ($direct !== '') {
+            return $direct;
+        }
+        $haystack = app_mgs_device_name_fingerprint($value);
+        foreach (app_service_areas() as $area) {
+            $needle = app_mgs_device_name_fingerprint((string) $area);
+            if ($needle !== '' && str_contains($haystack, $needle)) {
+                return (string) $area;
+            }
+        }
+        return '';
+    };
+    $explicit = clean_text((string) ($device['area'] ?? $device['location'] ?? ''));
+    if ($explicit !== '') {
+        $resolved = $resolve($explicit);
+        if ($resolved !== '') {
+            return $resolved;
+        }
+    }
+
+    $key = preg_replace('/[^a-z0-9_]/', '_', strtolower((string) ($device['device_key'] ?? '')));
+    if (is_string($key) && $key !== '') {
+        $configured = clean_text((string) app_mgs_runtime_setting('network_device_area_' . $key, ''));
+        $resolved = $resolve($configured);
+        if ($resolved !== '') {
+            return $resolved;
+        }
+    }
+
+    $text = implode(' ', [
+        (string) ($device['device_name'] ?? ''),
+        (string) ($device['device_key'] ?? ''),
+        (string) ($device['management_network'] ?? ''),
+    ]);
+    return $resolve($text) ?: 'Şəbəkə';
+}
+
+function app_mgs_monitored_olt_devices(?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return [];
     }
 
-    app_mgs_seed_device_learning_profiles($db);
+    $authorization = app_noc_authorize($actor, 'read_device', [], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
     $statement = $db->query(
         'SELECT *
            FROM device_learning_profiles
@@ -7485,17 +11610,22 @@ function app_mgs_monitored_olt_devices(?PDO $db = null): array
           ORDER BY device_name, id'
     );
 
-    return $statement !== false ? array_values(array_filter($statement->fetchAll(PDO::FETCH_ASSOC) ?: [], 'is_array')) : [];
+    return $statement !== false
+        ? app_noc_filter_objects($statement->fetchAll(PDO::FETCH_ASSOC) ?: [], $actor, $db)
+        : [];
 }
 
-function app_mgs_monitored_network_devices(?PDO $db = null): array
+function app_mgs_monitored_network_devices(?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return [];
     }
 
-    app_mgs_seed_device_learning_profiles($db);
+    $authorization = app_noc_authorize($actor, 'read_device', [], $db);
+    if (empty($authorization['ok'])) {
+        return [];
+    }
     $statement = $db->query(
         'SELECT *
            FROM device_learning_profiles
@@ -7503,7 +11633,9 @@ function app_mgs_monitored_network_devices(?PDO $db = null): array
           ORDER BY FIELD(device_type, "router", "olt", "switch", "server", "unknown"), device_name, id'
     );
 
-    return $statement !== false ? array_values(array_filter($statement->fetchAll(PDO::FETCH_ASSOC) ?: [], 'is_array')) : [];
+    return $statement !== false
+        ? app_noc_filter_objects($statement->fetchAll(PDO::FETCH_ASSOC) ?: [], $actor, $db)
+        : [];
 }
 
 function app_mgs_olt_device_index(array $devices): array
@@ -7554,6 +11686,10 @@ function app_mgs_resolve_olt_device_from_text(string $oltName, array $deviceInde
 function app_mgs_ont_signal_findings(array $ont, array $thresholds): array
 {
     $findings = [];
+    $ontStatus = mb_strtolower(trim(app_mgs_search_profile_field($ont, ['status', 'state', 'online_status'], '')));
+    if (in_array($ontStatus, ['offline', 'down', 'los', 'dying-gasp', 'inactive'], true)) {
+        $findings[] = 'ONT bağlantısı yoxdur (' . $ontStatus . ')';
+    }
     $checks = [
         'ont_rx' => ['label' => 'ONT RX', 'mode' => 'min', 'limit' => (float) $thresholds['ont_rx_min_dbm']],
         'olt_rx' => ['label' => 'OLT RX', 'mode' => 'min', 'limit' => (float) $thresholds['olt_rx_min_dbm']],
@@ -7627,11 +11763,12 @@ function app_mgs_collect_customer_ont_rows(PDO $db): array
             ]];
         }
 
-        foreach ($profiles as $ont) {
+        foreach ($profiles as $profileIndex => $ont) {
             if (!is_array($ont)) {
                 continue;
             }
             $ont['account_id'] = (int) ($account['id'] ?? 0);
+            $ont['_profile_index'] = (int) $profileIndex;
             $ont['subscriber_code'] = (string) ($account['subscriber_code'] ?? '');
             $ont['customer_name'] = (string) ($account['full_name'] ?? '');
             $ont['phone'] = (string) ($account['phone'] ?? '');
@@ -7642,6 +11779,71 @@ function app_mgs_collect_customer_ont_rows(PDO $db): array
     }
 
     return $onts;
+}
+
+/**
+ * Persist a live-fetched (or failed-attempt) optical snapshot back into the
+ * customer's own ont_profiles entry, matched by profile index first, then by
+ * serial, then by (pon+ont_id). Only the keys present in $fields are merged;
+ * everything else already stored on that profile entry is preserved.
+ */
+function app_mgs_apply_ont_live_sync(
+    PDO $db,
+    int $accountId,
+    ?int $profileIndex,
+    string $matchSerial,
+    string $matchPon,
+    string $matchOntId,
+    array $fields
+): bool {
+    if ($accountId <= 0) {
+        return false;
+    }
+
+    $statement = $db->prepare('SELECT id, payload_json FROM portal_accounts WHERE id = :id AND role = "customer" LIMIT 1');
+    $statement->execute(['id' => $accountId]);
+    $account = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($account)) {
+        return false;
+    }
+
+    $payload = app_db_json_decode((string) ($account['payload_json'] ?? ''), []);
+    $profiles = is_array($payload['ont_profiles'] ?? null) ? $payload['ont_profiles'] : [];
+    $targetIndex = null;
+
+    if ($profileIndex !== null && isset($profiles[$profileIndex]) && is_array($profiles[$profileIndex])) {
+        $targetIndex = $profileIndex;
+    }
+    if ($targetIndex === null) {
+        foreach ($profiles as $index => $profile) {
+            if (!is_array($profile)) {
+                continue;
+            }
+            $profileSerial = trim(app_mgs_search_profile_field($profile, ['serial', 'sn'], ''));
+            if ($matchSerial !== '' && $profileSerial !== '' && strcasecmp($profileSerial, $matchSerial) === 0) {
+                $targetIndex = $index;
+                break;
+            }
+            $profilePon = trim(app_mgs_search_profile_field($profile, ['pon', 'pon_port'], ''));
+            $profileOntId = trim(app_mgs_search_profile_field($profile, ['ont_id', 'ont'], ''));
+            if ($targetIndex === null && $matchPon !== '' && $matchOntId !== '' && $profilePon === $matchPon && $profileOntId === $matchOntId) {
+                $targetIndex = $index;
+            }
+        }
+    }
+    if ($targetIndex === null) {
+        return false;
+    }
+
+    $profiles[$targetIndex] = array_merge((array) $profiles[$targetIndex], $fields);
+    $payload['ont_profiles'] = array_values($profiles);
+
+    $update = $db->prepare('UPDATE portal_accounts SET payload_json = :payload WHERE id = :id');
+
+    return $update->execute([
+        'payload' => app_db_json_encode($payload),
+        'id' => $accountId,
+    ]);
 }
 
 function app_mgs_network_open_ticket_for_dedup(string $dedupKey, PDO $db): ?array
@@ -7674,8 +11876,7 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
         }
     }
 
-    $area = clean_text((string) ($payload['area'] ?? 'Sebeke'));
-    $technician = app_portal_assign_technician($area);
+    $area = clean_text((string) ($payload['area'] ?? 'Şəbəkə'));
     $ticketNo = app_db_next_ticket_no();
     $message = mb_substr(clean_text((string) ($payload['message'] ?? '')), 0, 160);
     if ($message === '') {
@@ -7684,21 +11885,24 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
 
     $ok = app_db_insert_ticket([
         'ticket_no' => $ticketNo,
-        'customer_account_id' => null,
-        'subscriber_code' => '',
+        'customer_account_id' => (int) ($payload['customer_account_id'] ?? 0) ?: null,
+        'subscriber_code' => clean_text((string) ($payload['subscriber_code'] ?? '')),
         'contract_no' => '',
         'customer_name' => clean_text((string) ($payload['customer_name'] ?? 'NOC avtomatik')),
-        'phone' => '',
+        'phone' => clean_text((string) ($payload['phone'] ?? '')),
         'address' => clean_text((string) ($payload['address'] ?? '')),
         'area' => $area,
-        'subject' => clean_text((string) ($payload['subject'] ?? 'Texniki destek')),
+        'subject' => clean_text((string) ($payload['subject'] ?? 'Texniki dəstək')),
         'message' => $message,
         'status' => 'Aciqdir',
         'opened_at' => app_db_now(),
         'updated_at' => app_db_now(),
         'resolved_at' => null,
-        'assigned_technician_account_id' => (int) ($technician['id'] ?? 0) ?: null,
-        'assigned_technician_name' => (string) ($technician['name'] ?? 'Teyin edilmeyib'),
+        // Leave assignment to app_db_insert_ticket().  That single rule
+        // enforces active duty status and fair workload rotation for tickets
+        // created by CRM, mobile and NOC alike.
+        'assigned_technician_account_id' => null,
+        'assigned_technician_name' => '',
         'resolution_reason' => '',
         'resolution_note' => '',
         'handled_by' => '',
@@ -7716,11 +11920,238 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
     ];
 }
 
-function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null): array
+/**
+ * NOC qayda mühərriki (DEVICE_OFFLINE / PON_MASS_OPTICAL_DEGRADATION) tərəfindən yaradılmış AÇIQ
+ * biletlər arasında, bu dövrdə ARTIQ aktiv siqnal siyahısında olmayanları (yəni problem özü aradan
+ * qalxıb — siqnal/temperatur normaya qayıdıb, ya da cihaz yenidən görünüb) tapıb avtomatik bağlayır.
+ *
+ * TƏHLÜKƏSİZLİK: yalnız BU mühərrikin özünün yaratdığı biletlərə toxunur (created_by_role="system"
+ * AND created_by_name="NOC rule engine" AND dedup_key "device-offline:"/"pon-mass-optical:" ilə
+ * başlayır) — texnikin əl ilə açdığı/idarə etdiyi HEÇ BİR biletə toxunmur. dedup_key oxuna
+ * bilmirsə (metadata korlanıbsa) həmin bilet ehtiyat xatirinə keçilir, bağlanmır.
+ */
+function app_mgs_auto_close_resolved_olt_tickets(array $activeDedupKeys, PDO $db, array $actor = [], bool $testMode = false, array $skipPrefixes = []): array
+{
+    $prefixes = ['device-offline:', 'pon-mass-optical:', 'ont-optical:', 'core-bottleneck:'];
+    $likeClauses = [];
+    $params = [];
+    foreach ($prefixes as $i => $prefix) {
+        $likeClauses[] = "metadata_json LIKE :prefix{$i}";
+        $params["prefix{$i}"] = '%"dedup_key":"' . $prefix . '%';
+    }
+
+    $sql = 'SELECT id, ticket_no, metadata_json
+              FROM portal_tickets
+             WHERE status NOT IN ("closed", "resolved", "Baglandi")
+               AND created_by_role = "system"
+               AND created_by_name = "NOC rule engine"
+               AND (' . implode(' OR ', $likeClauses) . ')';
+    $statement = $db->prepare($sql);
+    $statement->execute($params);
+    $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $activeSet = array_flip($activeDedupKeys);
+    $closed = 0;
+    $results = [];
+
+    foreach ($rows as $row) {
+        $metadata = app_db_json_decode((string) ($row['metadata_json'] ?? ''), []);
+        $dedupKey = is_array($metadata) ? (string) ($metadata['dedup_key'] ?? '') : '';
+        if ($dedupKey === '' || isset($activeSet[$dedupKey])) {
+            continue;
+        }
+        foreach ($skipPrefixes as $prefix) {
+            if ($prefix !== '' && str_starts_with($dedupKey, (string) $prefix)) {
+                continue 2;
+            }
+        }
+
+        if ($testMode) {
+            $results[] = ['ticket_no' => (string) ($row['ticket_no'] ?? ''), 'dedup_key' => $dedupKey, 'mode' => 'would_close'];
+            continue;
+        }
+
+        $update = $db->prepare(
+            'UPDATE portal_tickets
+                SET status = "Baglandi",
+                    resolved_at = :resolved_at,
+                    updated_at = :updated_at,
+                    resolution_reason = :reason,
+                    resolution_note = :note,
+                    handled_by = :handled_by
+              WHERE id = :id
+                AND status NOT IN ("closed", "resolved", "Baglandi")'
+        );
+        $update->execute([
+            'resolved_at' => app_db_now(),
+            'updated_at' => app_db_now(),
+            'reason' => 'Avtomatik hell olundu',
+            'note' => 'NOC qayda muherriki: siqnal/temperatur deyerleri normaya qayitdi, problem artiq askarlanmir.',
+            'handled_by' => 'NOC rule engine (auto-close)',
+            'id' => (int) ($row['id'] ?? 0),
+        ]);
+        if ($update->rowCount() > 0) {
+            $closed++;
+            $results[] = ['ticket_no' => (string) ($row['ticket_no'] ?? ''), 'dedup_key' => $dedupKey, 'mode' => 'closed'];
+        }
+    }
+
+    if (!$testMode && $results !== []) {
+        app_mgs_record_operation_action([
+            'action_type' => 'olt_ticket_auto_close',
+            'entity_type' => 'network',
+            'entity_id' => 'olt',
+            'status' => 'executed',
+            'actor' => $actor,
+            'summary' => 'OLT auto-close: ' . $closed . ' bilet avtomatik baglandi (problem aradan qalxdi)',
+            'payload' => ['results' => $results],
+        ]);
+    }
+
+    return ['ok' => true, 'closed' => $closed, 'candidates' => count($rows), 'results' => $results];
+}
+
+/**
+ * Anbarda minimum say hüddundan aşağı düşən (və ya tamamilə bitən) məhsulları tapır, anbar
+ * botuna xəbərdarlıq göndərir. Dedup açarı miqdarın özünü daşıyır — miqdar dəyişmədikcə eyni
+ * xəbərdarlıq TƏKRAR göndərilmir (yalnız seen_count/last_seen_at yenilənir), miqdar dəyişəndə
+ * (azalıb ya artıb) YENİ dedup_key yaranır və yeni bildiriş gedir.
+ */
+function app_mgs_check_low_stock_items(?PDO $db = null, array $actor = [], bool $testMode = true, bool $queueMessages = true): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+
+    $rows = $db->query(
+        "SELECT sku, item_name, category, unit, quantity_on_hand, minimum_quantity
+           FROM inventory_stock_items
+          WHERE status = 'active'
+            AND quantity_on_hand <= minimum_quantity
+          ORDER BY quantity_on_hand ASC"
+    )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $alerts = 0;
+    $results = [];
+    foreach ($rows as $row) {
+        $sku = (string) ($row['sku'] ?? '');
+        if ($sku === '') {
+            continue;
+        }
+        $qty = (float) ($row['quantity_on_hand'] ?? 0);
+        $min = (float) ($row['minimum_quantity'] ?? 0);
+        $unit = (string) ($row['unit'] ?? '');
+        $name = (string) ($row['item_name'] ?? $sku);
+        $depleted = $qty <= 0;
+        $dedupKey = 'low-stock:' . $sku . ':' . ($depleted ? 'depleted' : 'low') . ':' . (string) $qty;
+
+        $alarm = [
+            'dedup_key' => $dedupKey,
+            'alarm_type' => $depleted ? 'STOCK_DEPLETED' : 'STOCK_LOW',
+            'severity' => $depleted ? 'critical' : 'warning',
+            'object_type' => 'inventory_item',
+            'object_id' => $sku,
+            'title' => ($depleted ? 'Anbarda bitib: ' : 'Anbarda azalıb: ') . $name,
+            'message' => $name . ' (' . $sku . '): ' . $qty . ' ' . $unit . ' qalıb'
+                . ($min > 0 ? ' (minimum: ' . $min . ' ' . $unit . ')' : '') . '.'
+                . ($depleted ? ' STOK TAMAMILƏ BİTİB!' : ' Minimum həddə çatıb, sifariş vaxtıdır.'),
+            'source' => 'inventory_stock_alert',
+            'telegram_bot_key' => 'warehouse',
+        ];
+        $result = app_mgs_record_alarm_event($alarm, $testMode, $queueMessages, $actor, $db);
+        $alerts += !empty($result['ok']) ? 1 : 0;
+        $results[] = ['sku' => $sku, 'item_name' => $name, 'qty' => $qty, 'minimum' => $min, 'depleted' => $depleted, 'ok' => !empty($result['ok'])];
+    }
+
+    return ['ok' => true, 'checked' => count($rows), 'alerts' => $alerts, 'results' => $results];
+}
+
+/**
+ * Gündəlik/həftəlik/aylıq gəlir-xərc hesabatını maliyyə botuna göndərir. Dövr HƏMİŞƏ
+ * TAMAMLANMIŞ günlərə görə hesablanır (bu günü ehtiva etmir ki, gün bitmədən yarımçıq rəqəm
+ * göndərilməsin). Dedup açarı dövr+bitmə tarixini daşıyır — eyni dövr üçün eyni gündə TƏKRAR
+ * göndərilmir (cron gündə bir neçə dəfə səhvən işə düşsə belə).
+ */
+function app_mgs_finance_period_report(string $period, ?PDO $db = null, array $actor = [], bool $testMode = true, bool $queueMessages = true): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+
+    $period = in_array($period, ['daily', 'weekly', 'monthly'], true) ? $period : 'daily';
+    $today = new DateTimeImmutable('today');
+    if ($period === 'weekly') {
+        $from = $today->modify('-7 days');
+        $to = $today->modify('-1 day');
+        $label = 'Həftəlik (son 7 gün, ' . $from->format('d.m') . '-' . $to->format('d.m.Y') . ')';
+    } elseif ($period === 'monthly') {
+        $lastMonth = $today->modify('first day of last month');
+        $from = $lastMonth;
+        $to = $today->modify('last day of last month');
+        $label = 'Aylıq (' . $lastMonth->format('m.Y') . ')';
+    } else {
+        $yesterday = $today->modify('-1 day');
+        $from = $yesterday;
+        $to = $yesterday;
+        $label = 'Gündəlik (' . $yesterday->format('d.m.Y') . ')';
+    }
+
+    $sums = $db->prepare(
+        "SELECT entry_type, COALESCE(SUM(amount),0) AS total
+           FROM finance_entries
+          WHERE status = 'posted'
+            AND transaction_date BETWEEN :date_from AND :date_to
+          GROUP BY entry_type"
+    );
+    $sums->execute(['date_from' => $from->format('Y-m-d'), 'date_to' => $to->format('Y-m-d')]);
+    $totals = ['income' => 0.0, 'expense' => 0.0];
+    foreach ($sums->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $type = (string) ($row['entry_type'] ?? '');
+        if (isset($totals[$type])) {
+            $totals[$type] = (float) ($row['total'] ?? 0);
+        }
+    }
+    $net = $totals['income'] - $totals['expense'];
+
+    $dedupKey = 'finance-report:' . $period . ':' . $to->format('Y-m-d');
+    $alarm = [
+        'dedup_key' => $dedupKey,
+        'alarm_type' => 'FINANCE_PERIOD_REPORT',
+        'severity' => 'info',
+        'object_type' => 'finance_report',
+        'object_id' => $period,
+        'title' => $label . ' maliyyə hesabatı',
+        'message' => $label . " maliyyə hesabatı:\n"
+            . 'Gəlir: ' . number_format($totals['income'], 2) . " AZN\n"
+            . 'Xərc: ' . number_format($totals['expense'], 2) . " AZN\n"
+            . 'Xalis: ' . number_format($net, 2) . ' AZN',
+        'source' => 'finance_period_report',
+        'telegram_bot_key' => 'finance',
+    ];
+    $result = app_mgs_record_alarm_event($alarm, $testMode, $queueMessages, $actor, $db);
+
+    return [
+        'ok' => !empty($result['ok']),
+        'period' => $period,
+        'from' => $from->format('Y-m-d'),
+        'to' => $to->format('Y-m-d'),
+        'income' => $totals['income'],
+        'expense' => $totals['expense'],
+        'net' => $net,
+    ];
+}
+
+function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, array $actor = []): array
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return ['ok' => false, 'reason' => 'db_unavailable'];
+    }
+    $authorization = app_noc_authorize($actor, 'run_olt_rules', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('run_olt_rules', $authorization);
     }
 
     $createTickets = (bool) ($options['create_tickets'] ?? true);
@@ -7734,6 +12165,7 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
             'entity_type' => 'network',
             'entity_id' => 'olt',
             'status' => 'skipped',
+            'actor' => $actor,
             'summary' => 'OLT ticket rule scan skipped: management path down',
             'payload' => ['reason' => 'management_path_down'],
         ]);
@@ -7741,7 +12173,7 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
     }
 
     $thresholds = app_mgs_olt_rule_thresholds($options);
-    $allDevices = app_mgs_monitored_network_devices($db);
+    $allDevices = app_mgs_monitored_network_devices($db, $actor);
     $oltDevices = array_values(array_filter(
         $allDevices,
         static fn (array $device): bool => (string) ($device['device_type'] ?? '') === 'olt'
@@ -7768,14 +12200,15 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
             'device_name' => (string) ($device['device_name'] ?? $deviceKey),
             'device_ip' => (string) ($device['ip_address'] ?? ''),
             'device_type' => (string) ($device['device_type'] ?? 'unknown'),
-            'area' => 'Sebeke',
-            'title' => (string) ($device['device_name'] ?? $deviceKey) . ' offline',
-            'human_problem' => 'Monitorinq aktivdir, amma cihaz cavab vermir.',
-            'recommendation' => 'Uplink, enerji, VLAN 550 management yolu ve SNMP/SSH cavabini yoxla.',
-            'message' => strtoupper((string) ($device['device_type'] ?? 'device')) . ' ' . (string) ($device['device_name'] ?? $deviceKey) . ' offline gorunur. IP: ' . (string) ($device['ip_address'] ?? ''),
+            'area' => app_mgs_network_device_area($device),
+            'title' => (string) ($device['device_name'] ?? $deviceKey) . ' ilə əlaqə kəsilib',
+            'human_problem' => 'Monitorinq aktivdir, amma cihaz cavab vermir. Bu cihazdan asılı xidmətlər təsirlənə bilər.',
+            'recommendation' => 'Enerji və uplink-i, sonra VLAN 550 idarəetmə yolunu və SNMP/SSH cavabını yoxlayın.',
+            'message' => strtoupper((string) ($device['device_type'] ?? 'device')) . ' ' . (string) ($device['device_name'] ?? $deviceKey) . ' ilə əlaqə kəsilib. IP: ' . (string) ($device['ip_address'] ?? ''),
         ];
     }
 
+    $staleOpticalRows = 0;
     foreach (app_mgs_collect_customer_ont_rows($db) as $ont) {
         if (!is_array($ont)) {
             continue;
@@ -7786,6 +12219,14 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
             continue;
         }
 
+        // Do not turn an old imported profile into a fresh incident.  Test
+        // fixtures may opt in with allow_unfresh_optical so the rule engine's
+        // behaviour itself remains testable without a live OLT.
+        if (empty($options['allow_unfresh_optical'])
+            && !app_mgs_ont_optical_snapshot_is_fresh($ont, (int) $thresholds['optical_fresh_minutes'])) {
+            $staleOpticalRows++;
+            continue;
+        }
         $ontsChecked++;
         $device = app_mgs_resolve_olt_device_from_text($oltName, $deviceIndex);
         $deviceKey = is_array($device) ? (string) ($device['device_key'] ?? '') : app_mgs_device_name_fingerprint($oltName);
@@ -7804,19 +12245,31 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
         }
 
         $groups[$groupKey]['issues'][] = [
+            'account_id' => (int) ($ont['account_id'] ?? 0),
             'subscriber_code' => (string) ($ont['subscriber_code'] ?? ''),
             'customer_name' => (string) ($ont['customer_name'] ?? ''),
+            'phone' => (string) ($ont['phone'] ?? ''),
+            'address' => (string) ($ont['address'] ?? ''),
+            'area' => (string) ($ont['area'] ?? ''),
             'ont_id' => app_mgs_search_profile_field($ont, ['ont_id', 'ont'], '-'),
             'serial' => app_mgs_search_profile_field($ont, ['serial', 'sn'], '-'),
+            'ont_rx' => app_mgs_search_profile_field($ont, ['ont_rx', 'rx_power', 'rx'], ''),
+            'olt_rx' => app_mgs_search_profile_field($ont, ['olt_rx', 'olt_rx_power'], ''),
+            'ont_tx' => app_mgs_search_profile_field($ont, ['ont_tx', 'tx_power', 'tx'], ''),
+            'olt_tx' => app_mgs_search_profile_field($ont, ['olt_tx', 'olt_tx_power'], ''),
+            'temperature' => app_mgs_search_profile_field($ont, ['temperature', 'temp'], ''),
+            'optical_synced_at' => app_mgs_search_profile_field($ont, ['optical_synced_at', 'optical_updated_at', 'telemetry_at', 'last_seen_at'], ''),
             'findings' => $findings,
         ];
     }
 
+    $massGroups = [];
     foreach ($groups as $group) {
         $issueCount = count((array) ($group['issues'] ?? []));
         if ($issueCount < (int) $thresholds['min_pon_issue_count']) {
             continue;
         }
+        $massGroups[(string) ($group['device_key'] ?? '') . '|' . app_mgs_device_name_fingerprint((string) ($group['pon'] ?? ''))] = true;
         $dedupKey = 'pon-mass-optical:' . (string) ($group['device_key'] ?? '') . ':' . app_mgs_device_name_fingerprint((string) ($group['pon'] ?? ''));
         $samples = array_slice((array) ($group['issues'] ?? []), 0, 5);
         $alerts[] = [
@@ -7828,15 +12281,128 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
             'device_key' => (string) ($group['device_key'] ?? ''),
             'device_name' => (string) ($group['device_name'] ?? ''),
             'device_ip' => (string) ($group['device_ip'] ?? ''),
-            'area' => 'Sebeke',
-            'title' => 'PON sebeke problemi: ' . (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? ''),
-            'human_problem' => $issueCount . ' ONT eyni PON uzerinde optical/temperatur threshold-u kecib.',
-            'recommendation' => 'Tek-tek musteri bileti acma. PON splitter, feeder/drop kabel, OLT port optic, kabinet enerji/temperatur ve patchleri yoxla.',
-            'message' => (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ': ' . $issueCount . ' ONT threshold kecib.',
+            'area' => (string) (($samples[0]['area'] ?? '') ?: app_mgs_network_device_area([
+                'device_key' => (string) ($group['device_key'] ?? ''),
+                'device_name' => (string) ($group['device_name'] ?? ''),
+            ])),
+            'title' => 'Kütləvi PON problemi: ' . (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? ''),
+            'human_problem' => $issueCount . ' abunəçinin ONT-si eyni PON üzərində oflayndır və ya optik/temperatur həddini keçib.',
+            'recommendation' => 'Ayrı-ayrı müştəri bileti açmayın. PON portunu, splitteri, feeder/drop kabelini, kabinet enerjisini və optik patchləri vahid hadisə kimi yoxlayın.',
+            'message' => (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ': ' . $issueCount . ' abunəçi. ' . implode(', ', array_map(static function (array $issue): string {
+                $serial = (string) ($issue['serial'] ?? $issue['subscriber_code'] ?? '-');
+                $rx = (string) (($issue['ont_rx'] ?? '') ?: ($issue['olt_rx'] ?? ''));
+                return $serial . ($rx !== '' ? ' (' . $rx . ' dBm)' : '');
+            }, $samples)),
             'samples' => $samples,
             'issue_count' => $issueCount,
             'thresholds' => $thresholds,
         ];
+    }
+
+    // Below the mass-incident threshold each affected customer receives one
+    // focused ticket. Once a PON is a mass incident, only the combined PON
+    // ticket is produced; this prevents duplicate field work and alert noise.
+    foreach ($groups as $groupKey => $group) {
+        if (isset($massGroups[$groupKey])) {
+            continue;
+        }
+        foreach ((array) ($group['issues'] ?? []) as $issue) {
+            if (!is_array($issue)) {
+                continue;
+            }
+            $serial = clean_text((string) ($issue['serial'] ?? ''));
+            $subscriber = clean_text((string) ($issue['subscriber_code'] ?? ''));
+            $identity = $serial !== '' && $serial !== '-' ? $serial : ($subscriber !== '' ? $subscriber : (string) ($issue['ont_id'] ?? 'ont'));
+            $measurement = array_filter([
+                'ONT RX' => $issue['ont_rx'] ?? '', 'OLT RX' => $issue['olt_rx'] ?? '',
+                'ONT TX' => $issue['ont_tx'] ?? '', 'OLT TX' => $issue['olt_tx'] ?? '',
+                'Temp' => $issue['temperature'] ?? '',
+            ], static fn ($value): bool => trim((string) $value) !== '');
+            $measurementText = [];
+            foreach ($measurement as $label => $value) {
+                $measurementText[] = $label . ': ' . $value;
+            }
+            $alerts[] = [
+                'dedup_key' => 'ont-optical:' . (string) ($group['device_key'] ?? '') . ':' . app_mgs_device_name_fingerprint((string) ($group['pon'] ?? '')) . ':' . app_mgs_device_name_fingerprint($identity),
+                'alarm_type' => 'ONT_OPTICAL_DEGRADATION',
+                'severity' => 'warning',
+                'object_type' => 'ont',
+                'object_id' => (string) ($group['device_key'] ?? '') . '/' . (string) ($group['pon'] ?? '') . '/' . $identity,
+                'device_key' => (string) ($group['device_key'] ?? ''),
+                'device_name' => (string) ($group['device_name'] ?? ''),
+                'device_ip' => (string) ($group['device_ip'] ?? ''),
+                'pon' => (string) ($group['pon'] ?? ''),
+                'area' => (string) (($issue['area'] ?? '') ?: 'Şəbəkə'),
+                'customer_account_id' => (int) ($issue['account_id'] ?? 0),
+                'subscriber_code' => $subscriber,
+                'customer_name' => (string) ($issue['customer_name'] ?? 'ONT avtomatik'),
+                'phone' => (string) ($issue['phone'] ?? ''),
+                'address' => (string) ($issue['address'] ?? ''),
+                'serial' => $serial,
+                'findings' => (array) ($issue['findings'] ?? []),
+                'title' => 'ONT optik problem: ' . $identity,
+                'human_problem' => implode('; ', (array) ($issue['findings'] ?? [])),
+                'recommendation' => 'ONT, konnektor, drop kabel və optik səviyyələri yerində yoxlayın.',
+                'message' => trim((string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ' · SN: ' . $identity . '. ' . implode('; ', (array) ($issue['findings'] ?? [])) . (empty($measurementText) ? '' : ' · ' . implode(', ', $measurementText))),
+                'measurements' => $measurement,
+                'optical_synced_at' => (string) ($issue['optical_synced_at'] ?? ''),
+            ];
+        }
+    }
+
+    // Core/router dar boğazı yalnız ən azı üç son nümunənin orta yükü
+    // interfeys tutumunun 85%-ni keçəndə hadisəyə çevrilir. Tək sıçrayış ticket açmır.
+    try {
+        $trafficReady = (int) $db->query(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME IN ("device_interfaces", "device_interface_traffic_samples")'
+        )->fetchColumn() === 2;
+        if ($trafficReady) {
+            $trafficRows = $db->query(
+                'SELECT s.device_key, s.if_index, i.if_descr, i.if_speed_bps,
+                        d.device_name, d.ip_address, d.device_type,
+                        COUNT(*) AS sample_count,
+                        ROUND(AVG(GREATEST(COALESCE(s.in_bps,0), COALESCE(s.out_bps,0)) / i.if_speed_bps * 100), 1) AS avg_utilization,
+                        ROUND(MAX(GREATEST(COALESCE(s.in_bps,0), COALESCE(s.out_bps,0)) / i.if_speed_bps * 100), 1) AS peak_utilization
+                   FROM device_interface_traffic_samples s
+                   JOIN device_interfaces i ON i.device_key = s.device_key AND i.if_index = s.if_index
+                   JOIN device_learning_profiles d ON d.device_key = s.device_key
+                  WHERE s.sampled_at >= (NOW() - INTERVAL 20 MINUTE)
+                    AND i.if_speed_bps > 0
+                    AND d.device_type = "router"
+                  GROUP BY s.device_key, s.if_index, i.if_descr, i.if_speed_bps,
+                           d.device_name, d.ip_address, d.device_type
+                 HAVING COUNT(*) >= 3 AND avg_utilization >= 85'
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($trafficRows as $traffic) {
+                $deviceKey = (string) $traffic['device_key'];
+                $ifIndex = (int) $traffic['if_index'];
+                $avg = (float) $traffic['avg_utilization'];
+                $peak = (float) $traffic['peak_utilization'];
+                $alerts[] = [
+                    'dedup_key' => 'core-bottleneck:' . $deviceKey . ':' . $ifIndex,
+                    'alarm_type' => 'CORE_INTERFACE_BOTTLENECK',
+                    'severity' => $avg >= 95 ? 'critical' : 'warning',
+                    'object_type' => 'interface',
+                    'object_id' => $deviceKey . '/' . $ifIndex,
+                    'device_key' => $deviceKey,
+                    'device_name' => (string) ($traffic['device_name'] ?: $deviceKey),
+                    'device_ip' => (string) ($traffic['ip_address'] ?? ''),
+                    'interface_name' => (string) ($traffic['if_descr'] ?: 'ifIndex ' . $ifIndex),
+                    'area' => 'Şəbəkə',
+                    'title' => (string) ($traffic['device_name'] ?: $deviceKey) . ' üzərində dar boğaz',
+                    'human_problem' => 'Core interfeysinin son 20 dəqiqəlik orta yükü ' . $avg . '%, pik yükü ' . $peak . '% olub.',
+                    'recommendation' => 'Trafik istiqamətini, top talker-ləri və uplink tutumunu yoxlayın; yük davamlıdırsa balanslama və ya tutum artımı planlayın.',
+                    'message' => (string) ($traffic['device_name'] ?: $deviceKey) . ' / ' . (string) ($traffic['if_descr'] ?: $ifIndex) . ': orta ' . $avg . '%, pik ' . $peak . '%.',
+                    'avg_utilization' => $avg,
+                    'peak_utilization' => $peak,
+                    'sample_count' => (int) $traffic['sample_count'],
+                ];
+            }
+        }
+    } catch (Throwable) {
+        // Traffic migration or telemetry may not be available yet; OLT rules continue safely.
     }
 
     $createdTickets = 0;
@@ -7849,8 +12415,11 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
         if ($createTickets) {
             $ticket = app_mgs_network_create_ticket([
                 'dedup_key' => (string) ($alert['dedup_key'] ?? ''),
-                'subject' => 'Texniki destek',
-                'customer_name' => 'NOC avtomatik',
+                'subject' => 'Şəbəkə hadisəsi',
+                'customer_account_id' => (int) ($alert['customer_account_id'] ?? 0),
+                'subscriber_code' => (string) ($alert['subscriber_code'] ?? ''),
+                'customer_name' => (string) ($alert['customer_name'] ?? 'NOC avtomatik'),
+                'phone' => (string) ($alert['phone'] ?? ''),
                 'area' => (string) ($alert['area'] ?? 'Sebeke'),
                 'address' => (string) ($alert['device_name'] ?? ''),
                 'message' => (string) ($alert['message'] ?? $alert['title'] ?? ''),
@@ -7867,7 +12436,7 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
             'source' => 'olt_ticket_rule_engine',
             'ticket_no' => $ticketNo,
             'telegram_bot_key' => 'network',
-        ], $testMode, $queueMessages);
+        ], $testMode, $queueMessages, $actor, $db);
         $alarmsRecorded += !empty($alarmResult['ok']) ? 1 : 0;
         $results[] = [
             'dedup_key' => (string) ($alert['dedup_key'] ?? ''),
@@ -7878,12 +12447,27 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
         ];
     }
 
+    // Bu dövrdə artıq aktiv olmayan (siqnal/temperatur normaya qayıdan, ya da cihaz yenidən görünən)
+    // əvvəlki qayda-yaratdığı biletləri avtomatik bağla — YALNIZ bu mühərrikin öz biletlərinə toxunur.
+    // Missing or stale optical telemetry is unknown, not a recovered line.
+    // Never auto-close optical tickets while any imported ONT snapshot in the
+    // scan is stale; device and core alarms retain their normal lifecycle.
+    $skipAutoClosePrefixes = $staleOpticalRows > 0 ? ['ont-optical:', 'pon-mass-optical:'] : [];
+    $autoClose = app_mgs_auto_close_resolved_olt_tickets(
+        array_column($alerts, 'dedup_key'),
+        $db,
+        $actor,
+        $testMode,
+        $skipAutoClosePrefixes
+    );
+
     app_mgs_record_operation_action([
         'action_type' => 'olt_ticket_rule_scan',
         'entity_type' => 'network',
         'entity_id' => 'olt',
         'status' => 'executed',
-        'summary' => 'OLT ticket rule scan: ' . count($alerts) . ' alerts, ' . $createdTickets . ' tickets',
+        'actor' => $actor,
+        'summary' => 'OLT ticket rule scan: ' . count($alerts) . ' alerts, ' . $createdTickets . ' tickets, ' . (int) ($autoClose['closed'] ?? 0) . ' auto-closed',
         'payload' => [
             'devices_scanned' => count($allDevices),
             'olt_devices_scanned' => count($oltDevices),
@@ -7891,8 +12475,12 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
             'alerts' => count($alerts),
             'tickets_created' => $createdTickets,
             'tickets_duplicate' => $duplicateTickets,
+            'tickets_auto_closed' => (int) ($autoClose['closed'] ?? 0),
+            'stale_optical_rows' => $staleOpticalRows,
+            'auto_close_skipped_prefixes' => $skipAutoClosePrefixes,
             'thresholds' => $thresholds,
             'results' => $results,
+            'auto_close_results' => $autoClose['results'] ?? [],
         ],
     ]);
 
@@ -7905,9 +12493,13 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null):
         'alerts' => count($alerts),
         'tickets_created' => $createdTickets,
         'tickets_duplicate' => $duplicateTickets,
+        'tickets_auto_closed' => (int) ($autoClose['closed'] ?? 0),
         'alarms_recorded' => $alarmsRecorded,
+        'stale_optical_rows' => $staleOpticalRows,
+        'auto_close_skipped_prefixes' => $skipAutoClosePrefixes,
         'groups' => array_values($groups),
         'results' => $results,
+        'auto_close_results' => $autoClose['results'] ?? [],
     ];
 }
 
@@ -8228,7 +12820,7 @@ function app_mgs_inventory_active_assignment_exists(PDO $db, int $assetId): bool
     return (int) $statement->fetchColumn() > 0;
 }
 
-function app_mgs_inventory_install_asset(PDO $db, int $assetId, string $customerCode, string $technicianCode, string $ticketNo, string $ownershipType = 'company'): int
+function app_mgs_inventory_install_asset(PDO $db, int $assetId, string $customerCode, string $technicianCode, string $ticketNo, string $ownershipType = 'company', bool $recordMovement = true): int
 {
     if ($ownershipType !== 'customer_owned' && app_mgs_inventory_active_assignment_exists($db, $assetId)) {
         throw new RuntimeException('duplicate_active_assignment');
@@ -8262,7 +12854,7 @@ function app_mgs_inventory_install_asset(PDO $db, int $assetId, string $customer
     ]);
     $assignmentId = (int) $db->lastInsertId();
 
-    if ($ownershipType !== 'customer_owned') {
+    if ($ownershipType !== 'customer_owned' && $recordMovement) {
         app_mgs_inventory_record_lifecycle_movement($db, [
             'movement_no' => 'INSTALL-ASSET-' . $assetId . '-' . $assignmentId,
             'movement_type' => 'customer_install',
@@ -8720,8 +13312,19 @@ function app_mgs_rebuild_employee_work_snapshots(?PDO $db = null): array
     return ['ok' => true, 'updated' => $updated];
 }
 
-function app_mgs_backup_payload_for_device(array $device, string $backupType = 'profile_snapshot'): array
+function app_mgs_backup_payload_for_device(
+    array $device,
+    string $backupType = 'profile_snapshot',
+    array $actor = [],
+    ?PDO $db = null,
+    string $purposeAction = 'preview_device_backup'
+): array
 {
+    $db = $db instanceof PDO ? $db : app_db();
+    $authorization = app_noc_authorize($actor, $purposeAction, $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($purposeAction, $authorization);
+    }
     $backupType = in_array($backupType, ['running_config', 'startup_config', 'inventory_snapshot', 'profile_snapshot', 'learned_profile', 'cli_discovery_snapshot', 'test'], true)
         ? $backupType
         : 'profile_snapshot';
@@ -8735,15 +13338,18 @@ function app_mgs_backup_payload_for_device(array $device, string $backupType = '
     }
 
     if ($backupType === 'cli_discovery_snapshot') {
-        if (strtoupper((string) ($device['vendor'] ?? '')) !== 'HSGQ') {
+        $vendorKey = strtoupper(trim((string) ($device['vendor'] ?? '')));
+        $handler = app_mgs_cli_discovery_handler_registry()[$vendorKey] ?? null;
+        if ($handler === null) {
             return [
                 'ok' => false,
                 'reason' => 'cli_discovery_not_supported',
                 'backup_type' => $backupType,
+                'supported_vendors' => app_mgs_cli_discovery_supported_vendors(),
             ];
         }
 
-        $accessProfile = app_mgs_device_access_profile($device);
+        $accessProfile = app_mgs_device_access_profile($device, $db, $actor, $purposeAction);
         $sshUsername = trim((string) ($accessProfile['ssh_username'] ?? ''));
         $sshPassword = (string) ($accessProfile['ssh_password'] ?? '');
         if ($sshUsername === '' || $sshPassword === '') {
@@ -8754,22 +13360,28 @@ function app_mgs_backup_payload_for_device(array $device, string $backupType = '
             ];
         }
 
-        $discovery = app_mgs_hsgq_cli_discovery_probe(
+        $probeFn = $handler['probe'];
+        $discovery = $probeFn(
             (string) ($device['ip_address'] ?? ''),
             $sshUsername,
             $sshPassword,
             (int) ($accessProfile['ssh_port'] ?? 22),
-            4500
+            4500,
+            $actor,
+            $device,
+            $db,
+            $purposeAction
         );
         if (empty($discovery['ok'])) {
             return [
                 'ok' => false,
-                'reason' => (string) ($discovery['error'] ?? 'hsgq_cli_discovery_failed'),
+                'reason' => (string) ($discovery['error'] ?? ($vendorKey . '_cli_discovery_failed')),
                 'backup_type' => $backupType,
             ];
         }
 
-        $learnedCommandMap = app_mgs_hsgq_derived_command_map_from_discovery($discovery);
+        $deriveFn = $handler['derive'];
+        $learnedCommandMap = $deriveFn($discovery);
 
         $payload = [
             'backup_type' => $backupType,
@@ -8788,10 +13400,17 @@ function app_mgs_backup_payload_for_device(array $device, string $backupType = '
                 'keywords' => app_mgs_json_decode_array($discovery['keywords'] ?? []),
                 'sample_ont_id' => (string) ($discovery['sample_ont_id'] ?? ''),
                 'welcome' => (string) ($discovery['welcome'] ?? ''),
+                // The 5 fields above are HSGQ's original discovery shape,
+                // kept as-is so nothing already reading them breaks. Other
+                // vendors' probes (e.g. Cisco's outputs/hostname/
+                // is_cisco_ios/privileged_mode) don't fit that shape, so the
+                // full raw probe result is captured here too rather than
+                // silently dropped for every vendor added after HSGQ.
+                'raw' => $discovery,
             ],
             'derived_command_map' => $learnedCommandMap,
             'metadata' => [
-                'source' => 'live_hsgq_cli_discovery',
+                'source' => (string) $handler['source_label'],
                 'real_device_command_executed' => true,
                 'generated_at' => date(DATE_ATOM),
                 'ssh_username' => $sshUsername,
@@ -8871,12 +13490,20 @@ function app_mgs_device_backup_text(array $row): ?string
     return is_string($decoded) ? $decoded : null;
 }
 
-function app_mgs_latest_device_backup(string $deviceKey, string $backupType, ?PDO $db = null): ?array
+function app_mgs_latest_device_backup(string $deviceKey, string $backupType, ?PDO $db = null, array $actor = []): ?array
 {
     $deviceKey = trim($deviceKey);
     $backupType = trim($backupType);
     $db = $db instanceof PDO ? $db : app_db();
     if ($deviceKey === '' || $backupType === '' || !$db instanceof PDO || !app_mgs_ensure_schema($db)) {
+        return null;
+    }
+    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $actor);
+    if (!is_array($device)) {
+        return null;
+    }
+    $authorization = app_noc_authorize($actor, 'read_device_sensitive', $device, $db);
+    if (empty($authorization['ok'])) {
         return null;
     }
 
@@ -8897,9 +13524,9 @@ function app_mgs_latest_device_backup(string $deviceKey, string $backupType, ?PD
     return is_array($row) ? $row : null;
 }
 
-function app_mgs_latest_cli_discovery_summary(array $device, ?PDO $db = null): ?array
+function app_mgs_latest_cli_discovery_summary(array $device, ?PDO $db = null, array $actor = []): ?array
 {
-    $backup = app_mgs_latest_device_backup((string) ($device['device_key'] ?? ''), 'cli_discovery_snapshot', $db);
+    $backup = app_mgs_latest_device_backup((string) ($device['device_key'] ?? ''), 'cli_discovery_snapshot', $db, $actor);
     if (!is_array($backup)) {
         return null;
     }
@@ -8939,14 +13566,26 @@ function app_mgs_latest_cli_discovery_summary(array $device, ?PDO $db = null): ?
     ];
 }
 
-function app_mgs_store_device_backup(array $device, string $backupType = 'profile_snapshot', bool $apply = false): array
+function app_mgs_store_device_backup(
+    array $device,
+    string $backupType = 'profile_snapshot',
+    bool $apply = false,
+    array $actor = [],
+    ?PDO $db = null
+): array
 {
-    $db = app_db();
+    $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
 
-    $payload = app_mgs_backup_payload_for_device($device, $backupType);
+    $authorizationAction = $apply ? 'apply_device_backup' : 'preview_device_backup';
+    $authorization = app_noc_authorize($actor, $authorizationAction, $device, $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
+
+    $payload = app_mgs_backup_payload_for_device($device, $backupType, $actor, $db, $authorizationAction);
     $deviceKey = (string) ($device['device_key'] ?? '');
     if ($deviceKey === '') {
         return ['ok' => false, 'reason' => 'missing_device_key'];
@@ -8958,6 +13597,7 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
             'entity_type' => 'device',
             'entity_id' => $deviceKey,
             'status' => 'skipped',
+            'actor' => $actor,
             'summary' => 'Backup skipped: ' . (string) ($payload['reason'] ?? 'not_ready'),
             'payload' => ['device_key' => $deviceKey, 'backup_type' => $backupType],
         ]);
@@ -8975,6 +13615,7 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
             'entity_type' => 'device',
             'entity_id' => $deviceKey,
             'status' => 'dry_run',
+            'actor' => $actor,
             'summary' => 'Backup dry-run: ' . $deviceKey . ' ' . $backupType,
             'payload' => ['device_key' => $deviceKey, 'backup_type' => $backupType, 'hash' => $hash, 'size_bytes' => $sizeBytes],
         ]);
@@ -8995,7 +13636,7 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
         if ($backupType === 'cli_discovery_snapshot') {
             $learnedCommandMap = app_mgs_json_decode_array($payload['metadata']['learned_command_map'] ?? []);
             if ($learnedCommandMap !== []) {
-                app_mgs_sync_device_command_map($deviceKey, $learnedCommandMap, $db);
+                app_mgs_sync_device_command_map($deviceKey, $learnedCommandMap, $actor, $db);
             }
         }
         $update = $db->prepare('UPDATE device_config_backups SET last_checked_at = NOW() WHERE id = :id');
@@ -9005,6 +13646,7 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
             'entity_type' => 'device',
             'entity_id' => $deviceKey,
             'status' => 'skipped',
+            'actor' => $actor,
             'summary' => 'Backup unchanged: ' . $deviceKey . ' ' . $backupType,
             'payload' => ['device_key' => $deviceKey, 'backup_type' => $backupType, 'hash' => $hash],
         ]);
@@ -9041,7 +13683,7 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
     if ($backupType === 'cli_discovery_snapshot') {
         $learnedCommandMap = app_mgs_json_decode_array($payload['metadata']['learned_command_map'] ?? []);
         if ($learnedCommandMap !== []) {
-            app_mgs_sync_device_command_map($deviceKey, $learnedCommandMap, $db);
+            app_mgs_sync_device_command_map($deviceKey, $learnedCommandMap, $actor, $db);
         }
     }
 
@@ -9050,6 +13692,7 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
         'entity_type' => 'device',
         'entity_id' => $deviceKey,
         'status' => 'executed',
+        'actor' => $actor,
         'summary' => 'Backup stored: ' . $deviceKey . ' ' . $backupType,
         'payload' => ['device_key' => $deviceKey, 'backup_type' => $backupType, 'hash' => $hash, 'diff_summary' => $diffSummary],
     ]);
@@ -9057,14 +13700,24 @@ function app_mgs_store_device_backup(array $device, string $backupType = 'profil
     return ['ok' => true, 'mode' => 'stored', 'device_key' => $deviceKey, 'hash' => $hash, 'diff_summary' => $diffSummary];
 }
 
-function app_mgs_run_backup_worker(?PDO $db = null, bool $apply = false, int $limit = 5, string $backupType = 'profile_snapshot'): array
+function app_mgs_run_backup_worker(
+    ?PDO $db = null,
+    bool $apply = false,
+    int $limit = 5,
+    string $backupType = 'profile_snapshot',
+    array $actor = []
+): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['ok' => false, 'reason' => 'db_unavailable'];
     }
+    $authorizationAction = $apply ? 'apply_device_backup' : 'preview_device_backup';
+    $authorization = app_noc_authorize($actor, $authorizationAction, [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure($authorizationAction, $authorization);
+    }
 
-    app_mgs_seed_device_learning_profiles($db);
     $limit = max(1, min($limit, 50));
     $rows = $db->query(
         'SELECT *
@@ -9073,11 +13726,12 @@ function app_mgs_run_backup_worker(?PDO $db = null, bool $apply = false, int $li
          ORDER BY COALESCE(last_probe_at, created_at), id
          LIMIT ' . $limit
     )->fetchAll() ?: [];
+    $rows = app_noc_filter_objects($rows, $actor, $db);
 
     $results = [];
     foreach ($rows as $row) {
         if (is_array($row)) {
-            $results[] = app_mgs_store_device_backup($row, $backupType, $apply);
+            $results[] = app_mgs_store_device_backup($row, $backupType, $apply, $actor, $db);
         }
     }
 
@@ -9099,6 +13753,7 @@ function app_mgs_run_backup_worker(?PDO $db = null, bool $apply = false, int $li
         'entity_type' => 'backup',
         'entity_id' => $backupType,
         'status' => $apply ? 'executed' : 'dry_run',
+        'actor' => $actor,
         'summary' => 'Backup worker ' . ($apply ? 'apply' : 'dry-run') . ': ' . count($results) . ' devices',
         'payload' => ['backup_type' => $backupType, 'stored' => $stored, 'duplicates' => $duplicates, 'dry_run' => $dryRun, 'skipped' => $skipped, 'retention_deleted' => $retentionDeleted],
     ]);
@@ -9117,17 +13772,23 @@ function app_mgs_run_backup_worker(?PDO $db = null, bool $apply = false, int $li
     ];
 }
 
-function app_mgs_summary(?PDO $db = null, bool $syncRegistries = true): array
+function app_mgs_summary(?PDO $db = null, bool $syncRegistries = true, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return ['db' => false];
     }
+    $authorization = app_noc_authorize($actor, 'read_device', [], $db);
+    if (empty($authorization['ok'])) {
+        return ['db' => true, 'authorized' => false, 'reason' => (string) ($authorization['reason'] ?? 'noc_authorization_required')];
+    }
 
     if ($syncRegistries) {
         app_mgs_sync_telegram_bot_registry($db);
-        app_mgs_seed_device_learning_profiles($db);
-        app_mgs_sync_process_registry($db);
+        if (!empty(app_noc_authorize($actor, 'seed_device_profiles', [], $db)['ok'])) {
+            app_mgs_seed_device_learning_profiles($db, $actor);
+        }
+        app_mgs_sync_process_registry($db, $actor);
     }
 
     $scalar = static function (string $sql) use ($db): int {
@@ -9193,6 +13854,26 @@ function app_mgs_recent_rows(string $table, int $limit = 20): array
     return $statement !== false ? ($statement->fetchAll() ?: []) : [];
 }
 
+function app_mgs_noc_recent_rows(string $table, int $limit, array $actor = []): array
+{
+    $allowedTables = [
+        'mgs_alarm_events',
+        'mgs_operation_actions',
+        'mgs_process_registry',
+        'mgs_dedup_registry',
+        'device_config_backups',
+    ];
+    if (!in_array($table, $allowedTables, true)) {
+        return [];
+    }
+    $authorization = app_noc_authorize($actor, 'read_noc_logs', [], app_db());
+    if (empty($authorization['ok'])) {
+        return [];
+    }
+
+    return app_mgs_recent_rows($table, $limit);
+}
+
 function app_mgs_json_decode_array(mixed $value): array
 {
     if (is_array($value)) {
@@ -9223,7 +13904,7 @@ function app_mgs_bridge_modules(): array
     ];
 }
 
-function app_mgs_copilot_context(?PDO $db = null): array
+function app_mgs_copilot_context(?PDO $db = null, array $actor = []): array
 {
     $db = $db instanceof PDO ? $db : app_db();
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
@@ -9234,8 +13915,15 @@ function app_mgs_copilot_context(?PDO $db = null): array
             'next_safe_actions' => ['Start MySQL/XAMPP and rerun tools/production-readiness-check.php.'],
         ];
     }
+    $authorization = app_noc_authorize($actor, 'read_noc_logs', [], $db);
+    if (empty($authorization['ok'])) {
+        return app_noc_authorization_failure('read_noc_logs', $authorization) + [
+            'generated_at' => date(DATE_ATOM),
+            'next_safe_actions' => [],
+        ];
+    }
 
-    $summary = app_mgs_summary($db, false);
+    $summary = app_mgs_summary($db, false, $actor);
     $bridge = app_mgs_bridge_status();
     $managementPathReady = app_mgs_management_path_ready();
 
@@ -9252,7 +13940,7 @@ function app_mgs_copilot_context(?PDO $db = null): array
             'dedup_policy' => (string) ($row['dedup_policy'] ?? ''),
             'notes' => (string) ($row['notes'] ?? ''),
         ];
-    }, app_mgs_recent_rows('mgs_process_registry', 100));
+    }, app_mgs_noc_recent_rows('mgs_process_registry', 100, $actor));
 
     $devices = array_map(static function (array $row): array {
         return [
@@ -9279,7 +13967,7 @@ function app_mgs_copilot_context(?PDO $db = null): array
             'last_probe_method' => $row['last_probe_method'] ?? null,
             'service_probe' => app_mgs_json_decode_array($row['service_probe_json'] ?? null),
         ];
-    }, app_mgs_device_learning_rows($db));
+    }, app_mgs_device_learning_rows($db, $actor));
 
     $bots = array_map(static function (array $row): array {
         return [
@@ -9302,7 +13990,7 @@ function app_mgs_copilot_context(?PDO $db = null): array
             'first_seen_at' => $row['first_seen_at'] ?? null,
             'last_seen_at' => $row['last_seen_at'] ?? null,
         ];
-    }, app_mgs_recent_rows('mgs_dedup_registry', 50));
+    }, app_mgs_noc_recent_rows('mgs_dedup_registry', 50, $actor));
 
     $backups = array_map(static function (array $row): array {
         return [
@@ -9316,7 +14004,7 @@ function app_mgs_copilot_context(?PDO $db = null): array
             'diff_summary' => (string) ($row['diff_summary'] ?? ''),
             'last_checked_at' => $row['last_checked_at'] ?? null,
         ];
-    }, app_mgs_recent_rows('device_config_backups', 25));
+    }, app_mgs_noc_recent_rows('device_config_backups', 25, $actor));
 
     $safeActions = [
         'Run php tools/billing-ui-smoke.php after UI changes.',
@@ -9367,7 +14055,7 @@ function app_mgs_copilot_context(?PDO $db = null): array
                 'summary' => (string) ($row['summary'] ?? ''),
                 'created_at' => $row['created_at'] ?? null,
             ];
-        }, app_mgs_recent_rows('mgs_operation_actions', 25)),
+        }, app_mgs_noc_recent_rows('mgs_operation_actions', 25, $actor)),
         'validation_commands' => [
             'D:\\xampp\\php\\php.exe D:\\xampp\\htdocs\\superopticnet\\tools\\billing-ui-smoke.php',
             'D:\\xampp\\php\\php.exe D:\\xampp\\htdocs\\superopticnet\\tools\\test-mgs-integration.php',
@@ -9376,4 +14064,72 @@ function app_mgs_copilot_context(?PDO $db = null): array
         ],
         'next_safe_actions' => $safeActions,
     ];
+}
+
+
+function app_mgs_ont_identity_key(string $value): string
+{
+    return strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', $value));
+}
+
+function app_mgs_ont_profile_matches(array $profile, array $ont): bool
+{
+    $serialA = app_mgs_ont_identity_key((string) ($profile['serial'] ?? $profile['sn'] ?? ''));
+    $serialB = app_mgs_ont_identity_key((string) ($ont['serial'] ?? ''));
+    if ($serialA !== '' && $serialB !== '' && $serialA === $serialB) {
+        return true;
+    }
+    $macA = app_mgs_ont_identity_key((string) ($profile['mac'] ?? ''));
+    $macB = app_mgs_ont_identity_key((string) ($ont['mac'] ?? ''));
+    if ($macA !== '' && $macB !== '' && $macA === $macB) {
+        return true;
+    }
+    $locationB = trim((string) ($ont['olt'] ?? '')) . '|' . trim((string) ($ont['pon'] ?? '')) . '|' . trim((string) ($ont['ont_id'] ?? ''));
+    $locationA = trim((string) ($profile['olt'] ?? '')) . '|' . trim((string) ($profile['pon'] ?? '')) . '|' . trim((string) ($profile['ont_id'] ?? ''));
+
+    return $locationB !== '||' && $locationA === $locationB && trim((string) ($ont['olt'] ?? '')) !== '';
+}
+
+/** Persist the last live optical readings on the customer's stored ONT profile. */
+function app_mgs_store_live_ont_snapshot(int $accountId, array $candidate, array $liveOnt, ?PDO $db = null): bool
+{
+    $db = $db instanceof PDO ? $db : app_db();
+    if (!$db instanceof PDO || $accountId <= 0 || $liveOnt === []) {
+        return false;
+    }
+    $statement = $db->prepare('SELECT * FROM portal_accounts WHERE id = :id LIMIT 1');
+    $statement->execute(['id' => $accountId]);
+    $account = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($account)) {
+        return false;
+    }
+    $payload = app_db_account_payload($account);
+    $profiles = is_array($payload['ont_profiles'] ?? null) ? array_values(array_filter($payload['ont_profiles'], 'is_array')) : [];
+    $fields = ['temperature', 'ont_rx', 'ont_tx', 'olt_rx', 'olt_tx', 'voltage', 'bias_current', 'status'];
+    $live = [];
+    foreach ($fields as $field) {
+        $value = trim((string) ($liveOnt[$field] ?? ''));
+        if ($value !== '' && $value !== '-') {
+            $live[$field] = $value;
+        }
+    }
+    if ($live === []) {
+        return false;
+    }
+    $live['last_live_at'] = date('Y-m-d H:i:s');
+    $touched = false;
+    foreach ($profiles as $index => $profile) {
+        if (app_mgs_ont_profile_matches($profile, $candidate)) {
+            $profiles[$index] = array_merge($profile, $live);
+            $touched = true;
+            break;
+        }
+    }
+    if (!$touched) {
+        return false;
+    }
+    $payload['ont_profiles'] = $profiles;
+    $update = $db->prepare('UPDATE portal_accounts SET payload_json = :payload WHERE id = :id');
+
+    return $update->execute(['payload' => app_db_json_encode($payload), 'id' => $accountId]);
 }

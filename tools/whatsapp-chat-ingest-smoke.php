@@ -49,7 +49,11 @@ try {
     if (!array_filter($messages, static fn (array $row): bool => (string) ($row['whatsapp_message_id'] ?? '') === $messageId)) {
         $errors[] = 'chat_message_missing';
     }
-    $chats = whatsapp_monitor_chat_rows($db, $actor);
+    $chats = whatsapp_monitor_chat_rows($db, $actor, $numberId);
+    if (array_filter($chats, static fn (array $row): bool => (int) ($row['number_id'] ?? 0) !== $numberId)) {
+        $errors[] = 'chat_number_scope_leaked';
+    }
+    $chatNumberGroups = whatsapp_monitor_chat_number_groups($db, $actor);
     $matchedChats = array_values(array_filter(
         $chats,
         static fn (array $row): bool => (int) ($row['number_id'] ?? 0) === $numberId
@@ -68,6 +72,7 @@ try {
         }
     }
     $context = [
+        'chat_number_groups' => $chatNumberGroups,
         'chat_rows' => $chats,
         'selected_number_id' => $numberId,
         'selected_chat_id' => $chatId,
@@ -78,7 +83,7 @@ try {
     ob_start();
     require dirname(__DIR__) . '/views/whatsapp-monitor/chats.php';
     $html = (string) ob_get_clean();
-    foreach (['WhatsApp çat monitoru', 'data-wa-chat-thread', 'data-number-id="' . $numberId . '"', 'Smoke incoming message'] as $marker) {
+    foreach (['WhatsApp çat monitoru', 'data-wa-chat-thread', 'data-selected-number-id="' . $numberId . '"', 'wa-number-switch', 'data-number-id="' . $numberId . '"', 'Smoke incoming message'] as $marker) {
         if (!str_contains($html, $marker)) {
             $errors[] = 'chat_render_missing:' . $marker;
         }

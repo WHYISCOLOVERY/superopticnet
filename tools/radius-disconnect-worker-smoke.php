@@ -80,8 +80,8 @@ try {
     }
 
     $payload = is_array($first['payload'] ?? null) ? $first['payload'] : [];
-    if ((string) ($payload['target'] ?? '') === '') {
-        fwrite(STDERR, "worker_missing_target\n");
+    if ((string) ($payload['target'] ?? '') !== '10.99.99.1:3799') {
+        fwrite(STDERR, "worker_wrong_session_target\n");
         exit(9);
     }
 

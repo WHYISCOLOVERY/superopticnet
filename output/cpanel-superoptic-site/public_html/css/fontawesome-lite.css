@@ -1,0 +1,59 @@
+.fa-solid,
+.fa-regular,
+.fa-brands {
+    display: inline-flex;
+    width: 1em;
+    min-width: 1em;
+    height: 1em;
+    align-items: center;
+    justify-content: center;
+    vertical-align: -0.12em;
+}
+
+.fa-solid::before,
+.fa-regular::before,
+.fa-brands::before {
+    content: "";
+    width: 0.72em;
+    height: 0.72em;
+    border-radius: 0.22em;
+    background: currentColor;
+    opacity: 0.85;
+}
+
+.fa-circle-check::before,
+.fa-circle-exclamation::before,
+.fa-signal::before,
+.fa-satellite-dish::before,
+.fa-gauge-high::before {
+    border-radius: 999px;
+}
+
+.fa-arrow-trend-up::before,
+.fa-chart-line::before,
+.fa-network-wired::before,
+.fa-diagram-project::before {
+    width: 0.9em;
+    height: 0.18em;
+    border-radius: 999px;
+    transform: rotate(-32deg);
+}
+
+.fa-user-plus::before,
+.fa-users::before,
+.fa-user-check::before,
+.fa-user-xmark::before,
+.fa-id-card-clip::before {
+    width: 0.78em;
+    height: 0.78em;
+    border-radius: 50% 50% 0.3em 0.3em;
+}
+
+.fa-wallet::before,
+.fa-receipt::before,
+.fa-ticket::before,
+.fa-message::before,
+.fa-boxes-stacked::before {
+    width: 0.86em;
+    height: 0.62em;
+}

@@ -64,6 +64,34 @@ $dynamicRowsPageNumber = max(1, min($dynamicRowsTotalPages, (int) ($_GET['rows_p
 $recentTicketsPageNumber = max(1, min($recentTicketsTotalPages, (int) ($_GET['tickets_page'] ?? 1)));
 $dynamicRowsPage = array_slice($dynamicRowsAll, ($dynamicRowsPageNumber - 1) * $tablePageSize, $tablePageSize);
 $recentTicketsPage = array_slice($recentTicketsAll, ($recentTicketsPageNumber - 1) * $tablePageSize, $tablePageSize);
+$legacyKnowledge = [];
+$db = app_db();
+if ($db instanceof PDO) {
+    try {
+        $legacyKnowledge = $db->query(
+            'SELECT problem_title, ticket_count, linked_customer_count, unlinked_ticket_count,
+                    resolved_ticket_count, cause_examples_json, solution_examples_json,
+                    first_seen_at, last_seen_at
+             FROM legacy_ticket_knowledge_base
+             ORDER BY ticket_count DESC, problem_title
+             LIMIT 20'
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($legacyKnowledge as &$knowledgeRow) {
+            $knowledgeRow['cause_examples'] = app_db_json_decode(
+                (string) ($knowledgeRow['cause_examples_json'] ?? ''),
+                []
+            );
+            $knowledgeRow['solution_examples'] = app_db_json_decode(
+                (string) ($knowledgeRow['solution_examples_json'] ?? ''),
+                []
+            );
+        }
+        unset($knowledgeRow);
+    } catch (Throwable $exception) {
+        app_runtime_error_reference('problem_statistics_legacy_knowledge', $exception);
+        $legacyKnowledge = [];
+    }
+}
 
 function problem_stats_bar_width(int $count, int $max): string
 {
@@ -193,6 +221,15 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
         .stats-pagination .is-disabled{pointer-events:none;opacity:.45}
         .status-pill{display:inline-flex;align-items:center;border-radius:999px;padding:8px 12px;background:#e8f5f0;color:#09663f;font-weight:900}
         .status-pill.is-open{background:#fff0e7;color:#9a4217}
+        .legacy-knowledge-list{display:grid;gap:12px}
+        .legacy-knowledge-row{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(0,1.4fr) minmax(0,1.4fr);gap:18px;padding:18px 0;border-bottom:1px solid #e7edf3}
+        .legacy-knowledge-row:last-child{border-bottom:0}
+        .legacy-knowledge-title{display:grid;align-content:start;gap:8px}
+        .legacy-knowledge-title strong{font-size:17px;color:#10243f}
+        .legacy-knowledge-metrics{display:flex;flex-wrap:wrap;gap:6px}
+        .legacy-knowledge-example{display:grid;align-content:start;gap:6px;min-width:0}
+        .legacy-knowledge-example span{font-weight:900;color:#10243f}
+        .legacy-knowledge-example p{margin:0;color:#617391;line-height:1.45;overflow-wrap:anywhere}
         @media (max-width: 1100px){
             .stats-filters,.stats-section-grid,.stats-visual-board{grid-template-columns:1fr}
             .stats-reason-row{grid-template-columns:1fr}
@@ -207,6 +244,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             .stats-ring-core{inset:40px}
             .stats-histogram{gap:4px}
             .stats-progress-item{grid-template-columns:1fr}
+            .legacy-knowledge-row{grid-template-columns:1fr}
             .stats-pagination{align-items:stretch;flex-direction:column}
             .stats-pagination-actions{justify-content:space-between}
         }
@@ -239,7 +277,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             </div>
         </section>
 
-        <section class="portal-grid portal-grid-4 portal-reveal">
+        <section class="portal-grid portal-grid-4 portal-reveal" data-auto-filter-results="problem-kpis" data-auto-filter-form="problem-statistics-filter">
             <article class="portal-metric-card">
                 <span>Aciq</span>
                 <strong><?= e((string) $stats['open_count']); ?></strong>
@@ -267,7 +305,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
                 <h2>Filtr</h2>
                 <small>Tarix araligini ve qruplashdirmani secin.</small>
             </div>
-            <form class="stats-filters" method="get">
+            <form class="stats-filters" method="get" id="problem-statistics-filter" data-auto-filter data-auto-filter-targets="problem-kpis,problem-visuals,problem-breakdown,problem-dynamics,problem-tickets">
                 <?php if ($lang !== 'az'): ?>
                     <input type="hidden" name="lang" value="<?= e($lang); ?>">
                 <?php endif; ?>
@@ -291,10 +329,61 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
                     <button type="submit" class="portal-primary-btn">Goster</button>
                     <a class="portal-ghost-btn portal-inline-link" href="problem-statistics.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sifirla</a>
                 </div>
+                <small data-auto-filter-status role="status" aria-live="polite"></small>
             </form>
         </section>
 
-        <section class="stats-visual-board portal-reveal" aria-label="Problem statistikasi vizual paneli">
+        <section class="portal-card portal-reveal" id="legacy-ticket-knowledge">
+            <div class="portal-card-head">
+                <div>
+                    <h2>Köhnə ticket bilik bazası</h2>
+                    <small>Müştəri məlumatları maskalanıb; səbəb və görülən iş nümunələri tarixi ticketlərdən götürülür.</small>
+                </div>
+                <span class="portal-pill"><?= e((string) count($legacyKnowledge)); ?> problem qrupu</span>
+            </div>
+            <?php if ($legacyKnowledge === []): ?>
+                <div class="portal-alert">
+                    <i class="fa-solid fa-database"></i>
+                    <span>Tarixi analiz hazır deyil. Köhnə ticket importu və bilik bazası yenilənəndən sonra nəticələr burada görünəcək.</span>
+                </div>
+            <?php else: ?>
+                <div class="legacy-knowledge-list">
+                    <?php foreach ($legacyKnowledge as $knowledge): ?>
+                        <?php
+                        $cause = is_array($knowledge['cause_examples'][0] ?? null)
+                            ? (string) ($knowledge['cause_examples'][0]['text'] ?? '')
+                            : '';
+                        $solution = is_array($knowledge['solution_examples'][0] ?? null)
+                            ? (string) ($knowledge['solution_examples'][0]['text'] ?? '')
+                            : '';
+                        ?>
+                        <article class="legacy-knowledge-row">
+                            <div class="legacy-knowledge-title">
+                                <strong><?= e((string) ($knowledge['problem_title'] ?? 'Kateqoriyasız problem')); ?></strong>
+                                <div class="legacy-knowledge-metrics">
+                                    <span class="portal-pill"><?= e((string) ($knowledge['ticket_count'] ?? 0)); ?> ticket</span>
+                                    <span class="portal-pill"><?= e((string) ($knowledge['linked_customer_count'] ?? 0)); ?> müştəri</span>
+                                    <?php if ((int) ($knowledge['unlinked_ticket_count'] ?? 0) > 0): ?>
+                                        <span class="portal-pill"><?= e((string) $knowledge['unlinked_ticket_count']); ?> əlaqəsiz</span>
+                                    <?php endif; ?>
+                                </div>
+                                <small><?= e((string) ($knowledge['first_seen_at'] ?? '-')); ?> - <?= e((string) ($knowledge['last_seen_at'] ?? '-')); ?></small>
+                            </div>
+                            <div class="legacy-knowledge-example">
+                                <span>Problem qeydi</span>
+                                <p><?= e($cause !== '' ? $cause : 'Qeyd nümunəsi yoxdur.'); ?></p>
+                            </div>
+                            <div class="legacy-knowledge-example">
+                                <span>Görülən iş / həll</span>
+                                <p><?= e($solution !== '' ? $solution : 'Həll qeydi yoxdur.'); ?></p>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </section>
+
+        <section class="stats-visual-board portal-reveal" aria-label="Problem statistikasi vizual paneli" data-auto-filter-results="problem-visuals" data-auto-filter-form="problem-statistics-filter">
             <article class="stats-visual-card">
                 <h3>Umumi veziyyet</h3>
                 <small>Aciq ve hell olunan biletlerin nisbati.</small>
@@ -372,7 +461,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             </article>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="problem-breakdown" data-auto-filter-form="problem-statistics-filter">
             <div class="portal-card-head">
                 <h2>Problem sebebleri</h2>
                 <small>Her sebeb uzre cem, aciq, hell olunan ve orta hell vaxti.</small>
@@ -395,7 +484,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             <?php endif; ?>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="problem-dynamics" data-auto-filter-form="problem-statistics-filter">
             <div class="portal-card-head">
                 <h2>Dinamika cedveli</h2>
                 <small>Tarix ve problem sebebi uzre aciq/hell olunan bilet sayi.</small>
@@ -433,7 +522,7 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
             <?php problem_stats_pagination('rows_page', $dynamicRowsPageNumber, $dynamicRowsTotalPages, $dynamicRowsTotal, $tablePageSize); ?>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="problem-tickets" data-auto-filter-form="problem-statistics-filter">
             <div class="portal-card-head">
                 <h2>Son biletler</h2>
                 <small>Her sehifede maksimum 50 bilet gosterilir. Emekdas qeyd icinde deyil, ayrica sutunda gosterilir.</small>
@@ -499,5 +588,6 @@ function problem_stats_pagination(string $pageParam, int $currentPage, int $tota
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

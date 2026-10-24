@@ -19,6 +19,46 @@ function update_package_smoke_fail(string $message, int $code = 1): never
     exit($code);
 }
 
+function update_package_smoke_create_archive(string $packageRoot, string $archivePath): bool
+{
+    if (class_exists(ZipArchive::class)) {
+        $zip = new ZipArchive();
+        if ($zip->open($archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            return false;
+        }
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($packageRoot, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::LEAVES_ONLY
+        );
+        foreach ($iterator as $file) {
+            if (!$file instanceof SplFileInfo || !$file->isFile()) {
+                continue;
+            }
+            $relativePath = str_replace('\\', '/', substr($file->getPathname(), strlen($packageRoot) + 1));
+            if (!$zip->addFile($file->getPathname(), $relativePath)) {
+                $zip->close();
+                @unlink($archivePath);
+                return false;
+            }
+        }
+
+        return $zip->close() && is_file($archivePath);
+    }
+
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return false;
+    }
+
+    $ps = "\$ErrorActionPreference = 'Stop'; " .
+        'Compress-Archive -Path ' . escapeshellarg($packageRoot . DIRECTORY_SEPARATOR . '*') .
+        ' -DestinationPath ' . escapeshellarg($archivePath) . ' -CompressionLevel Optimal -Force;';
+    $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ' . escapeshellarg($ps);
+    exec($cmd, $out, $zipCode);
+
+    return $zipCode === 0 && is_file($archivePath);
+}
+
 $db = app_db();
 if (!$db instanceof PDO) {
     update_package_smoke_fail('Database unavailable', 2);
@@ -49,12 +89,7 @@ file_put_contents($packageRoot . DIRECTORY_SEPARATOR . 'manifest.json', json_enc
     'notes' => 'synthetic test package',
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
-$ps = "\$ErrorActionPreference = 'Stop'; " .
-    'Compress-Archive -Path ' . escapeshellarg($packageRoot . DIRECTORY_SEPARATOR . '*') .
-    ' -DestinationPath ' . escapeshellarg($archivePath) . ' -CompressionLevel Optimal -Force;';
-$cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ' . escapeshellarg($ps);
-exec($cmd, $out, $zipCode);
-if ($zipCode !== 0 || !is_file($archivePath)) {
+if (!update_package_smoke_create_archive($packageRoot, $archivePath)) {
     update_package_smoke_fail('Synthetic update package could not be created', 4);
 }
 

@@ -16,6 +16,7 @@
     }, {});
 
     let controller = null;
+    let filterTimer = null;
 
     const sectionFromUrl = (url, override = '') => {
         if (override && sectionExists(override)) return override;
@@ -64,7 +65,8 @@
             const content = module.querySelector('[data-ai-content]');
             if (content) content.innerHTML = await response.text();
             updateShell(targetSection);
-            if (push) history.pushState({ai: true}, '', target);
+            if (push === 'replace') history.replaceState({ai: true}, '', target);
+            else if (push) history.pushState({ai: true}, '', target);
         } catch (error) {
             if (error.name !== 'AbortError') {
                 const status = module.querySelector('[data-ai-status]');
@@ -82,7 +84,32 @@
         const url = new URL(form.action || window.location.href, window.location.href);
         new FormData(form).forEach((value, key) => url.searchParams.set(key, value));
         url.searchParams.delete('page');
-        load(url);
+        const historyMode = form.dataset.filterHistory === 'replace' ? 'replace' : true;
+        delete form.dataset.filterHistory;
+        load(url, historyMode);
+    });
+
+    const scheduleFilter = (field, delay) => {
+        const form = field.closest('[data-ai-filter]');
+        if (!form || field.disabled) return;
+        window.clearTimeout(filterTimer);
+        filterTimer = window.setTimeout(() => {
+            if (!form.isConnected) return;
+            form.dataset.filterHistory = 'replace';
+            form.requestSubmit();
+        }, delay);
+    };
+
+    module.addEventListener('input', event => {
+        const field = event.target.closest('[data-ai-filter] input, [data-ai-filter] textarea');
+        if (!field || ['hidden', 'submit', 'button', 'reset'].includes(field.type)) return;
+        scheduleFilter(field, field.type === 'search' || field.type === 'text' ? 320 : 180);
+    });
+
+    module.addEventListener('change', event => {
+        const field = event.target.closest('[data-ai-filter] select, [data-ai-filter] input, [data-ai-filter] textarea');
+        if (!field || ['hidden', 'submit', 'button', 'reset'].includes(field.type)) return;
+        scheduleFilter(field, 0);
     });
 
     module.addEventListener('click', event => {

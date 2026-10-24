@@ -243,6 +243,9 @@ try {
         [$pageSource, "billing_require_employee(false, 'whatsapp_monitor')"],
         [$moduleSource, 'data-whatsapp-monitor-module'],
         [$moduleSource, 'Canlı monitor'],
+        [$moduleSource, "app_portal_can_access_module(\$user, 'messaging')"],
+        [$moduleSource, 'href="message-center.php'],
+        [$moduleSource, '<span>Mesaj Mərkəzi</span>'],
         [(string) file_get_contents(dirname(__DIR__) . '/views/whatsapp-monitor/pairing.php'), 'QR ilə WhatsApp bağlantısı'],
         [(string) file_get_contents(dirname(__DIR__) . '/api/whatsapp-monitor/pairing-update.php'), 'whatsapp_monitor_worker_update_pairing'],
     ] as [$source, $marker]) {

@@ -1,105 +1,41 @@
-# Backend contract
+# Backend contract - Cross-module defect duzelisi round
 
-Status: `READY_FOR_FRONTEND`
+Bu sened evvelki WhatsApp-only backend kontraktini legv etmir; o hele qüvvədədir (asagida qorunur) ve bu round ucun umumi invariantlar elave olunur.
 
-## Sehife contract-i
+## Ümumi invariantlar (butun modullar, bu round)
 
-`GET /whatsapp-monitor.php?view=chats&number_id={id}&chat_id={id}`
+- Auth/session, CSRF, rol/permission ve object-scope yoxlamalari servis qatinda qalir; UI-da gizletmek permission yoxlamasinin evezi deyil.
+- Append-only audit jurnali davam edir; her write action audit qeydi yaradir.
+- Payment/RADIUS idempotency: movcud state machine ve compensation davranisi deyismir; retry duplicate yaratmamalidir.
+- Schema deyisikliyi yalniz elave (additive), versiyali ve rollback-li migration ile.
+- Movcud service/API-ler tekrarlanmir; duzelis movcud qati genisləndirir.
+- Production write/deploy, real mesaj gonderisi ve canli device/router emeliyyati bu roundda tetiklenmir.
 
-- Employee session ve `whatsapp_monitor` modul icazesi teleb olunur.
-- `can_view_all` rollari butun sirket nomrelerini gore biler.
-- Diger emekdas yalniz oz `employee_id` scope-undaki nomre ve mesajlari gore biler.
-- Secilmis cat hem `number_id`, hem `chat_id` ile identifikasiya olunur.
+## WhatsApp chat monitor kontrakti (evvelki rounddan, hele qüvvədədir)
 
-View context:
+`views/whatsapp-monitor/chats.php` ucun:
 
-- `chat_rows`: cat xulasesi; her setirde `number_id`, `chat_id`, `contact_name`, `company_number`, `employee_name`, `last_message`, `last_message_at`, `last_message_id`, `message_count`.
-- `selected_number_id`: secilmis sirket nomresinin DB ID-si.
-- `selected_chat_id`: WhatsApp chat ID-si.
-- `selected_chat`: secilmis xulase setri.
-- `chat_selection_explicit`: URL-de istifadeci secimi varsa `true`; mobil geri kecid bunu istifade edir.
-- `chat_messages`: son 300 mesaj, kohne -> yeni ardicilliqda.
-- `can_manage`: yalniz super admin.
-- `can_view_all`: admin ve monitorinq rollari.
+- `chat_number_groups`: `number_id`, `company_number`, `employee_name`, `chat_count`, `message_count`, `last_message_at`, `qr_status`.
+- `selected_number_id`: aktiv sirket WhatsApp nomresinin ID-si.
+- `chat_rows`: yalniz `selected_number_id` ucun chatlar.
+- `selected_chat_id`, `selected_chat`, `chat_messages`: secilmis nomre daxilindeki thread.
 
-## Real-time mesaj endpoint-i
+`api/whatsapp-monitor/chat-list.php` `number_id` teleb edir. `number_id` olmadan `422 number_scope_required` qaytarir.
 
-`GET /api/whatsapp-monitor/chat-messages.php?number_id={id}&chat_id={id}&after_id={id}`
+Frontend hook-lari: `data-wa-chat-monitor`, `data-selected-number-id`, `data-wa-chat-thread`, `data-wa-chat-list`, `data-wa-chat-search-item`, `data-screen-wall`, `data-screen-wall-fullscreen`.
 
-- Employee session ve modul icazesi teleb olunur.
-- `number_id` musbet tam eded, `chat_id` bos olmayan metn olmalidir.
-- `after_id=0` son 300 mesaji xronoloji qaytarir.
-- `after_id>0` yalniz yeni mesajlari artan ID ardicilligi ile qaytarir.
+`api/provider/whatsapp-status.php` yalniz admin ucun read-only JSON endpointdir. Provider token browser-e verilmir. Cavab: `connected`, `reachable`, `status`, `provider_number`, `last_qr_at`, `last_error`; `qr` yalniz `data:image/` URI kimi. Stream iframe yalniz backend `canShowStream` serti dogru olduqda render edilir.
 
-Ugurlu cavab:
+## Bu round ucun elave qayda
 
-```json
-{
-  "ok": true,
-  "number_id": 12,
-  "chat_id": "994501234567@c.us",
-  "last_message_id": 9001,
-  "rows": []
-}
-```
+Claude bu roundda backend/API/DB/permission kodunu birbasa deyise bilir, amma:
 
-Validation xetasi `422`, icaze xetasi movcud session/permission qati ile `403` qaytarir.
+- yuxaridaki umumi invariantlari ve WhatsApp kontraktini pozmur;
+- production writes/deploy/external send/live device action tetikleyen yeni yol elave etmir;
+- her deyisiklik ucun fokuslu smoke/regression testi elave edir ve ishe salir;
+- natamam/yoxlanilmamis sahede real data yoxdursa mock/demo fallback yaratmaq evezine acıq bos/error veziyyeti saxlayir;
+- Codex-in implementasiyadan sonrakı review-u production go-live-dan evvel mecburidir; bu sened tek basina go-live tesdiqi sayilmir.
 
-## Real-time cat siyahisi endpoint-i
+## Tehlukesizlik
 
-`GET /api/whatsapp-monitor/chat-list.php`
-
-- Employee session ve modul icazesi teleb olunur.
-- Eyni rol scope-u ile `chat_rows` massivini qaytarir.
-- Sehifeni reload etmeden yeni cat, son mesaj metni, tarix ve say yenilenmesi ucundur.
-
-## QR status endpoint-i
-
-`GET /api/whatsapp-monitor/pairing-status.php?session_key={key}`
-
-- Employee session teleb olunur.
-- Admin/monitor rollari butun scope-u, emekdas yalniz oz nomresinin sessiyasini gore bilir.
-- Cavab `status`, `status_label`, `qr_image_data_uri`, `worker_id`, `failure_reason` verir.
-
-## Worker endpoint-leri
-
-- `GET /api/whatsapp-monitor/pairing-queue.php`
-- `POST /api/whatsapp-monitor/pairing-update.php`
-- `POST /api/whatsapp-monitor/message-ingest.php`
-
-Worker token `X-WhatsApp-Monitor-Token` header-i ile gonderilir. Claude bu endpoint-leri ve worker contract-ini deyismemelidir.
-
-## Deyisdirilmemeli biznes qaydalari
-
-- QR sessiyasini yalniz super admin yarada ve legv ede biler.
-- Nomre aktiv ve monitoring policy tesdiqli olmalidir.
-- Connected statusu kohne `qr_ready/scanned` update-i ile geri salina bilmez.
-- Worker ingest deduplication `whatsapp_message_id` ile qorunur.
-- Sehife mesaj gondermir; yalniz monitorinq edir.
-- CSRF-li POST emeliyyatlari ve audit log qorunur.
-
-## Umumi JSON formati
-
-Yeni AJAX endpoint yaradilarse standart format:
-
-```json
-{
-  "ok": true,
-  "data": {},
-  "message": ""
-}
-```
-
-Xeta formati:
-
-```json
-{
-  "ok": false,
-  "message": "Istifadeci ucun aydin xeta mesaji",
-  "errors": {
-    "field": "Sahe uzre xeta"
-  }
-}
-```
-
-Movcud endpoint ferqli contract istifade edirse, uygunlasdirma geriye uyumlulugu pozmamalidir.
+`docs/32_UNIFIED_UX_AUDIT.md` bolme 4-de qeyd olunan tesdiqlenmis problemler (payment/RADIUS idempotency, Finance GET side-effect, NOC credential/permission, plaintext sirr riski) bu roundun prioritet siyahisinin bir hissesidir; hell olunmadan uygun go-live blocker kimi qalir.

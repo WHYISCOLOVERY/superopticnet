@@ -116,6 +116,17 @@ function system_health_windows_scheduled_task(string $taskName): ?array
         return null;
     }
 
+    // Spawning powershell.exe costs several seconds per call; scheduled-task
+    // state changes rarely, so cache the result per task for 5 minutes. (On the
+    // Linux production server this whole function is skipped above.)
+    $cacheFile = sys_get_temp_dir() . '/soc_sched_' . md5($taskName) . '.json';
+    if (is_file($cacheFile) && (time() - (int) filemtime($cacheFile)) < 300) {
+        $cached = json_decode((string) @file_get_contents($cacheFile), true);
+        if (is_array($cached)) {
+            return $cached;
+        }
+    }
+
     $safeName = str_replace("'", "''", $taskName);
     $script = "\$ProgressPreference = 'SilentlyContinue';"
         . "\$name = '$safeName';"
@@ -131,11 +142,13 @@ function system_health_windows_scheduled_task(string $taskName): ?array
     $encoded = base64_encode((string) iconv('UTF-8', 'UTF-16LE', $script));
     $output = shell_exec('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' . $encoded . ' 2>NUL');
     if (!is_string($output) || trim($output) === '') {
-        return ['exists' => false, 'taskName' => $taskName, 'error' => 'No PowerShell output'];
+        $result = ['exists' => false, 'taskName' => $taskName, 'error' => 'No PowerShell output'];
+    } else {
+        $decoded = json_decode($output, true);
+        $result = is_array($decoded) ? $decoded : ['exists' => false, 'taskName' => $taskName, 'error' => trim($output)];
     }
-
-    $decoded = json_decode($output, true);
-    return is_array($decoded) ? $decoded : ['exists' => false, 'taskName' => $taskName, 'error' => trim($output)];
+    @file_put_contents($cacheFile, json_encode($result));
+    return $result;
 }
 
 $checks = [];
@@ -182,7 +195,7 @@ system_health_add(
 );
 
 $dbUser = app_config('db_user');
-$dbPassStatus = system_health_secret_status(app_config('db_pass'));
+$dbPassStatus = system_health_secret_status(app_environment_secret('DB_PASS'));
 $dbProdOk = $dbUser !== '' && $dbPassStatus['ok'];
 system_health_add(
     $checks,
@@ -238,20 +251,18 @@ foreach ($requiredTables as $table) {
     system_health_add($checks, 'Tables', $table, 'critical', (bool) $result['ok'], (string) $result['message']);
 }
 
-$radiusSecretStatus = system_health_secret_status(app_config('radius_shared_secret'), ['secret', 'menim_gizli_acarim123', 'testing123']);
+$radiusSecretStatus = system_health_secret_status(app_communication_environment_secret('RADIUS_SHARED_SECRET'), ['secret', 'menim_gizli_acarim123', 'testing123']);
 $radiusCoreNasStatus = system_health_secret_status(app_config('radius_core_nas_ip'));
-$telegramTokenStatus = system_health_secret_status(app_config('telegram_token'));
+$telegramTokenStatus = system_health_secret_status(app_communication_environment_secret('TELEGRAM_TOKEN'));
 $telegramChatStatus = system_health_secret_status(app_config('telegram_chat_id'));
-$smsEndpointStatus = system_health_secret_status(app_config('sms_provider_endpoint'));
-$smsTokenStatus = system_health_secret_status(app_config('sms_provider_token'));
-$smsDriver = strtolower(trim(app_config('sms_provider_driver', 'json')));
-$smsUserStatus = system_health_secret_status(app_config('sms_provider_user'));
-$smsPasswordStatus = system_health_secret_status(app_config('sms_provider_password'));
-$smsCredentialsOk = $smsDriver === 'poctgoyercini_xml'
-    ? ($smsUserStatus['ok'] && $smsPasswordStatus['ok'])
-    : $smsTokenStatus['ok'];
+$smsProviderStatus = app_communication_provider_config('sms', '994000000000');
+$smsEndpointStatus = system_health_secret_status((string) ($smsProviderStatus['endpoint'] ?? ''));
+$smsDriver = strtolower(trim((string) ($smsProviderStatus['driver'] ?? 'poctgoyercini_json')));
+$smsUserStatus = system_health_secret_status(app_communication_environment_secret('SMS_PROVIDER_PUBLIC_KEY'));
+$smsPasswordStatus = system_health_secret_status(app_communication_environment_secret('SMS_PROVIDER_PRIVATE_KEY'));
+$smsCredentialsOk = $smsUserStatus['ok'] && $smsPasswordStatus['ok'];
 $whatsappEndpointStatus = system_health_secret_status(app_config('whatsapp_provider_endpoint'));
-$whatsappTokenStatus = system_health_secret_status(app_config('whatsapp_provider_token'));
+$whatsappTokenStatus = system_health_secret_status(app_communication_environment_secret('WHATSAPP_PROVIDER_TOKEN'));
 $whatsappEnabled = in_array(strtolower((string) app_setting('whatsapp_provider_enabled', '0')), ['1', 'true', 'yes', 'on'], true);
 $whatsappBridgeStatus = $whatsappEnabled ? app_communication_whatsapp_bridge_status() : [
     'reachable' => false,
@@ -259,7 +270,8 @@ $whatsappBridgeStatus = $whatsappEnabled ? app_communication_whatsapp_bridge_sta
     'status' => 'disabled',
     'reason' => 'provider_disabled',
 ];
-$ticketSecretStatus = system_health_secret_status(app_config('portal_ticket_close_secret', app_config('olt_sso_shared_secret')));
+$ticketSecret = app_communication_environment_secret('PORTAL_TICKET_CLOSE_SECRET');
+$ticketSecretStatus = system_health_secret_status($ticketSecret);
 $billingMode = app_config('billing_mode', 'mock');
 $mygovEnabled = in_array(strtolower((string) app_setting('mygov_enabled', '0')), ['1', 'true', 'yes', 'on'], true);
 
@@ -475,6 +487,7 @@ $hiddenGateCount = max(0, count($liveCutoverGates) - count($visibleCutoverGates)
                 <p>Bu sehife CLI readiness mentiqini admin UI-da gosterir. Secret, token ve parollar maskalanir; yalniz configured/missing statusu gorunur.</p>
                 <div class="mgs-command-actions">
                     <a class="portal-primary-btn portal-inline-link" href="status.php" target="_blank" rel="noopener">Public status</a>
+                    <a class="portal-ghost-btn portal-inline-link" href="system-settings.php">Olke ve saat ayarlari</a>
                     <a class="portal-ghost-btn portal-inline-link" href="message-center.php<?= e($suffix); ?>">Message center</a>
                     <a class="portal-ghost-btn portal-inline-link" href="radius-nas.php<?= e($suffix); ?>">RADIUS NAS</a>
                     <?php if ($showFullAudit): ?>
@@ -649,5 +662,6 @@ $hiddenGateCount = max(0, count($liveCutoverGates) - count($visibleCutoverGates)
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

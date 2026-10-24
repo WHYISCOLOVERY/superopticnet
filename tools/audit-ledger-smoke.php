@@ -8,7 +8,7 @@ if (!is_file($library)) {
 }
 
 require dirname(__DIR__) . '/config.php';
-require $library;
+require_once $library;
 
 $errors = [];
 $librarySource = (string) file_get_contents($library);
@@ -201,15 +201,26 @@ if (!$db instanceof PDO) {
         }
         $ledgerIdMetadata = $metadata['security_audit_ledger.id'] ?? [];
         $eventHashMetadata = $metadata['security_audit_ledger.event_hash'] ?? [];
-        $expect(($ledgerIdMetadata['COLUMN_TYPE'] ?? '') === 'bigint(20) unsigned', 'ledger_id_column_type_invalid');
+        $ledgerIdType = (string) preg_replace(
+            '/\b(bigint|int|tinyint|smallint|mediumint)\(\d+\)/',
+            '$1',
+            strtolower((string) ($ledgerIdMetadata['COLUMN_TYPE'] ?? ''))
+        );
+        $expect($ledgerIdType === 'bigint unsigned', 'ledger_id_column_type_invalid');
         $expect(($ledgerIdMetadata['IS_NULLABLE'] ?? '') === 'NO', 'ledger_id_nullability_invalid');
         $expect(str_contains((string) ($ledgerIdMetadata['EXTRA'] ?? ''), 'auto_increment'), 'ledger_id_auto_increment_missing');
         $expect(($eventHashMetadata['COLUMN_TYPE'] ?? '') === 'char(64)', 'event_hash_length_invalid');
         $expect(($eventHashMetadata['IS_NULLABLE'] ?? '') === 'NO', 'event_hash_nullability_invalid');
-        $expect(($metadata['security_audit_ledger.sensitivity']['COLUMN_DEFAULT'] ?? '') === "'normal'", 'ledger_sensitivity_default_invalid');
+        $expect(
+            trim((string) ($metadata['security_audit_ledger.sensitivity']['COLUMN_DEFAULT'] ?? ''), "'") === 'normal',
+            'ledger_sensitivity_default_invalid'
+        );
         $expect((string) ($metadata['security_audit_ledger.is_visible']['COLUMN_DEFAULT'] ?? '') === '1', 'ledger_visibility_default_invalid');
         $expect(($metadata['mgs_operation_actions.module_key']['IS_NULLABLE'] ?? '') === 'NO', 'operation_module_nullability_invalid');
-        $expect(($metadata['mgs_operation_actions.module_key']['COLUMN_DEFAULT'] ?? null) === "''", 'operation_module_default_invalid');
+        $expect(
+            trim((string) ($metadata['mgs_operation_actions.module_key']['COLUMN_DEFAULT'] ?? ''), "'") === '',
+            'operation_module_default_invalid'
+        );
         $expect(($metadata['security_audit_chain_state.current_hash']['COLUMN_TYPE'] ?? '') === 'char(64)', 'chain_hash_length_invalid');
 
         $eventHashIndex = $db->query(
@@ -252,7 +263,7 @@ if (!$db instanceof PDO) {
                 AND tc.CONSTRAINT_TYPE = 'CHECK'"
         )->fetchColumn();
         $expect(
-            strtolower(str_replace(['`', ' '], '', $chainCheck)) === 'id=1',
+            strtolower(str_replace(['`', ' ', '(', ')'], '', $chainCheck)) === 'id=1',
             'chain_state_check_clause_invalid'
         );
 
@@ -296,7 +307,7 @@ if (!$db instanceof PDO) {
             "CREATE TRIGGER security_audit_ledger_bu BEFORE UPDATE ON security_audit_ledger
              FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'drifted audit trigger'"
         );
-        $expect(app_audit_ensure_schema($db), 'trigger_drift_repair_schema_failed');
+        $expect(app_audit_ensure_schema($db, true), 'trigger_drift_repair_schema_failed');
         $repairedAction = (string) $db->query(
             "SELECT ACTION_STATEMENT FROM INFORMATION_SCHEMA.TRIGGERS
               WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = 'security_audit_ledger_bu'"

@@ -12,7 +12,7 @@ if (PHP_SAPI !== 'cli') {
 
 function provider_test_usage(): void
 {
-    echo "Usage: php tools/test-communication-provider.php --channel=telegram|sms|whatsapp|app [--bot=network|customer|finance|warehouse|backup|diagnostics|superpilot] [--destination=...] [--message=...] [--apply]\n";
+    echo "Usage: php tools/test-communication-provider.php --channel=telegram|sms|whatsapp|app [--bot=network|customer|finance|warehouse|backup|diagnostics|superpilot] [--subscriber=2320025] [--destination=...] [--message=...] [--apply]\n";
     echo "\n";
     echo "Default mode is dry-run. Telegram defaults to --bot=superpilot so generic customer/NOC groups are not mixed.\n";
     echo "With --apply it sends one TEST MESAJI without creating DB messages, tickets or alarms.\n";
@@ -54,6 +54,7 @@ $apply = in_array('--apply', $argv, true);
 $channel = strtolower(trim(provider_test_option($argv, 'channel', 'telegram')));
 $botKey = clean_text(provider_test_option($argv, 'bot', 'superpilot')) ?: 'superpilot';
 $destination = trim(provider_test_option($argv, 'destination', ''));
+$subscriberCode = clean_text(provider_test_option($argv, 'subscriber', ''));
 $message = trim(provider_test_option($argv, 'message', ''));
 
 if (!in_array($channel, ['telegram', 'sms', 'whatsapp', 'app'], true)) {
@@ -67,6 +68,23 @@ if ($channel === 'telegram' && !isset($telegramBots[$botKey])) {
     fwrite(STDERR, "Invalid Telegram bot profile: {$botKey}\n");
     provider_test_usage();
     exit(2);
+}
+
+$db = app_db();
+if (in_array($channel, ['sms', 'whatsapp'], true) && $subscriberCode !== '') {
+    $account = app_db_account_by_subscriber_code($subscriberCode);
+    $destination = is_array($account) ? trim((string) ($account['phone'] ?? '')) : '';
+    if ($destination === '') {
+        fwrite(STDERR, "Subscriber or subscriber phone was not found.\n");
+        exit(3);
+    }
+}
+if ($apply && in_array($channel, ['sms', 'whatsapp'], true)) {
+    $allowedSubscriber = trim((string) (getenv('SMS_LIVE_TEST_SUBSCRIBER_CODE') ?: '2320025'));
+    if ($subscriberCode === '' || !hash_equals($allowedSubscriber, $subscriberCode)) {
+        fwrite(STDERR, "Real SMS/WhatsApp test is restricted to the configured test subscriber.\n");
+        exit(3);
+    }
 }
 
 if ($message === '') {
@@ -88,6 +106,7 @@ $result = [
     'mode' => $apply ? 'apply' : 'dry-run',
     'channel' => $channel,
     'bot_key' => $channel === 'telegram' ? $botKey : '',
+    'subscriber_code' => $subscriberCode,
     'configured' => (bool) ($provider['configured'] ?? false),
     'delivery' => $channel === 'telegram' ? 'telegram_bot' : (string) ($provider['delivery'] ?? 'unsupported'),
     'destination_masked' => provider_test_mask((string) ($provider['destination'] ?? '')),
@@ -120,6 +139,12 @@ if (!$apply) {
     exit(0);
 }
 
+if ($channel !== 'app' && !app_communication_external_delivery_enabled()) {
+    $result['reason'] = 'external_delivery_paused';
+    echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+    exit(3);
+}
+
 if ($channel === 'telegram') {
     $telegramResponse = http_post_json((string) ($provider['endpoint'] ?? ''), [
         'chat_id' => (string) ($provider['destination'] ?? ''),
@@ -140,7 +165,50 @@ if ($channel === 'telegram') {
 $result['sent'] = !empty($sendResult['ok']);
 $result['provider_message_id'] = $sendResult['provider_message_id'] ?? null;
 $result['reason'] = (string) ($sendResult['reason'] ?? '');
-$result['response_summary'] = is_array($sendResult['response'] ?? null) ? $sendResult['response'] : null;
+$providerResponse = is_array($sendResult['response'] ?? null) ? $sendResult['response'] : [];
+$result['response_summary'] = [
+    'ok' => !empty($sendResult['ok']),
+    'provider_status' => (string) ($sendResult['provider_status'] ?? ''),
+    'provider_status_final' => (bool) ($sendResult['provider_status_final'] ?? false),
+    'provider_http_status' => (int) ($providerResponse['http_status'] ?? 0),
+];
+
+if ($apply && $db instanceof PDO && function_exists('app_audit_record')) {
+    $ownsAuditTransaction = !$db->inTransaction();
+    try {
+        if ($ownsAuditTransaction) {
+            $db->beginTransaction();
+        }
+        app_audit_record($db, [
+            'module_key' => 'messaging',
+            'operation_class' => 'provider_test',
+            'action_type' => 'communication_provider_live_test',
+            'entity_type' => 'communication_provider',
+            'entity_id' => $channel . ':' . ($subscriberCode !== '' ? $subscriberCode : $botKey),
+            'status' => $result['sent'] ? 'executed' : 'failed',
+            'actor_account_id' => null,
+            'actor_name' => 'Provider test CLI',
+            'summary' => 'Bounded live communication provider test',
+            'reason' => $result['reason'],
+            'after' => [
+                'channel' => $channel,
+                'bot_key' => $channel === 'telegram' ? $botKey : '',
+                'subscriber_code' => $subscriberCode,
+                'destination_masked' => $result['destination_masked'],
+                'provider_message_id' => $result['provider_message_id'],
+            ],
+            'sensitivity' => 'critical',
+        ]);
+        if ($ownsAuditTransaction && $db->inTransaction()) {
+            $db->commit();
+        }
+    } catch (Throwable $exception) {
+        if ($ownsAuditTransaction && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        app_runtime_error_reference('provider_test_audit', $exception);
+    }
+}
 
 $json = json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 echo ($json !== false ? $json : '{"mode":"apply","sent":false,"reason":"json_encode_failed"}') . PHP_EOL;

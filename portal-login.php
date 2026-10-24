@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/config.php';
+require_once __DIR__ . '/portal-security-lib.php';
 
 app_enforce_https((bool) app_setting('portal_force_https', true));
 app_session_boot();
@@ -9,7 +10,10 @@ $lang = app_lang();
 $status = $_GET['status'] ?? '';
 
 if (app_portal_current_user() !== null) {
-    header('Location: portal.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''));
+    $returnTo = (string) ($_SESSION['portal_login_return_to'] ?? '');
+    unset($_SESSION['portal_login_return_to']);
+    $returnTo = preg_match('/^technician-close\.php\?token=[A-Za-z0-9._%~-]+$/D', $returnTo) === 1 ? $returnTo : '';
+    header('Location: ' . ($returnTo !== '' ? $returnTo : ('portal.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''))));
     exit;
 }
 
@@ -21,6 +25,7 @@ $requestedRole = ($_POST['portal_role'] ?? $_GET['role'] ?? ($staffLoginEndpoint
 $selectedRole = $staffLoginEndpoint ? 'employee' : (($staffLoginEnabled && $requestedRole === 'employee') ? 'employee' : 'customer');
 $loginPath = $staffLoginEndpoint ? 'staff-login.php' : 'portal-login.php';
 $loginAction = $loginPath . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : '');
+$humanVerificationScope = $staffLoginEndpoint ? 'staff-login' : 'customer-login';
 $publicSiteUrl = app_config('public_site_url', 'index.php' . ($lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -42,6 +47,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ],
         ]);
         header('Location: ' . $loginPath . '?status=csrf_failed&role=' . rawurlencode($selectedRole) . '&lang=' . rawurlencode($lang));
+        exit;
+    }
+
+    $humanRateScope = 'portal-human-verification-ip:' . $clientIp;
+    $humanVerification = app_rate_limit_is_blocked($humanRateScope, 10, 600)
+        ? ['ok' => false, 'mode' => app_portal_human_verification_mode(), 'reason' => 'rate_limited']
+        : app_portal_human_verify($humanVerificationScope, $_POST);
+    if (empty($humanVerification['ok'])) {
+        app_rate_limit_hit($humanRateScope, 600);
+        app_record_security_event([
+            'event' => 'portal_login_human_verification_failed',
+            'status' => 'warning',
+            'role' => $selectedRole,
+            'login' => $login,
+            'meta' => [
+                'ip' => $clientIp,
+                'user_agent' => $userAgent,
+                'verification_mode' => (string) ($humanVerification['mode'] ?? ''),
+                'reason' => (string) ($humanVerification['reason'] ?? ''),
+            ],
+        ]);
+        header('Location: ' . $loginPath . '?status=captcha_failed&role=' . rawurlencode($selectedRole) . '&lang=' . rawurlencode($lang));
         exit;
     }
 
@@ -97,7 +124,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ],
         ]);
         app_portal_sign_in($user);
-        header('Location: ' . app_portal_login_destination($user) . ($lang !== 'az' ? (str_contains(app_portal_login_destination($user), '?') ? '&' : '?') . 'lang=' . rawurlencode($lang) : ''));
+        $returnTo = (string) ($_SESSION['portal_login_return_to'] ?? '');
+        unset($_SESSION['portal_login_return_to']);
+        $returnTo = preg_match('/^technician-close\.php\?token=[A-Za-z0-9._%~-]+$/D', $returnTo) === 1 ? $returnTo : '';
+        $destination = $returnTo !== '' ? $returnTo : app_portal_login_destination($user);
+        header('Location: ' . $destination . ($lang !== 'az' ? (str_contains($destination, '?') ? '&' : '?') . 'lang=' . rawurlencode($lang) : ''));
         exit;
     }
 
@@ -120,22 +151,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $texts = [
     'az' => [
-        'title' => 'MÃ¼ÅŸtÉ™ri vÉ™ É™mÉ™kdaÅŸ giriÅŸi',
-        'heading' => 'Super Optik portalÄ±na daxil olun',
-        'text' => 'MÃ¼ÅŸtÉ™ri hesabÄ± ilÉ™ Ã¶dÉ™niÅŸ, paket vÉ™ mÃ¼raciÉ™t mÉ™lumatlarÄ±nÄ± gÃ¶rÃ¼n. ÆmÉ™kdaÅŸ hesabÄ± ilÉ™ billing vÉ™ OLT keÃ§idlÉ™rinÉ™ rolunuza uyÄŸun daxil olun.',
-        'benefits' => ['Ã–dÉ™niÅŸ vÉ™ paket gÃ¶rÃ¼nÃ¼ÅŸÃ¼', 'DÉ™stÉ™k mÃ¼raciÉ™tlÉ™ri vÉ™ profil yenilÉ™mÉ™si', 'ÆmÉ™kdaÅŸ Ã¼Ã§Ã¼n rol É™saslÄ± billing vÉ™ OLT keÃ§idlÉ™ri'],
-        'roles' => ['MÃ¼ÅŸtÉ™ri', 'ÆmÉ™kdaÅŸ'],
+        'title' => 'Müştəri və əməkdaş girişi',
+        'heading' => 'Super Optik portalına daxil olun',
+        'text' => 'Müştəri hesabı ilə ödəniş, paket və müraciət məlumatlarını görün. Əməkdaş hesabı ilə billing və OLT keçidlərinə rolunuza uyğun daxil olun.',
+        'benefits' => ['Ödəniş və paket görünüşü', 'Dəstək müraciətləri və profil yeniləməsi', 'Əməkdaş üçün rol əsaslı billing və OLT keçidləri'],
+        'roles' => ['Müştəri', 'Əməkdaş'],
         'customer_label' => 'Abonent kodu',
-        'customer_placeholder' => 'MÉ™sÉ™lÉ™n: SO-100245',
-        'employee_label' => 'Ä°stifadÉ™Ã§i adÄ±',
-        'employee_placeholder' => 'MÉ™sÉ™lÉ™n: support.agent',
-        'password' => 'ÅifrÉ™',
-        'password_placeholder' => 'ÅifrÉ™nizi daxil edin',
+        'customer_placeholder' => 'Məsələn: SO-100245',
+        'employee_label' => 'İstifadəçi adı',
+        'employee_placeholder' => 'Məsələn: support.agent',
+        'password' => 'Şifrə',
+        'password_placeholder' => 'Şifrənizi daxil edin',
         'submit' => 'Daxil ol',
-        'back' => 'Sayta qayÄ±t',
-        'meta' => 'Portal giriÅŸindÉ™ rolunuza uyÄŸun sÉ™hifÉ™ aÃ§Ä±lÄ±r.',
-        'customer_hint' => 'Abonent kodu ilÉ™ ÅŸÉ™xsi panelÉ™ daxil olub Ã¶dÉ™niÅŸ vÉ™ mÃ¼raciÉ™tlÉ™ri gÃ¶rÉ™ bilÉ™rsiniz.',
-        'employee_hint' => 'ÆmÉ™kdaÅŸ giriÅŸi support, satÄ±ÅŸ vÉ™ NOC hesablarÄ± Ã¼Ã§Ã¼ndÃ¼r; aÃ§Ä±lan keÃ§idlÉ™r rolunuza gÃ¶rÉ™ dÉ™yiÅŸir.',
+        'back' => 'Sayta qayıt',
+        'meta' => 'Portal girişində rolunuza uyğun səhifə açılır.',
+        'customer_hint' => 'Abonent kodu ilə şəxsi panelə daxil olub ödəniş və müraciətləri görə bilərsiniz.',
+        'employee_hint' => 'Əməkdaş girişi support, satış və NOC hesabları üçündür; açılan keçidlər rolunuza görə dəyişir.',
     ],
     'en' => [
         'title' => 'Customer and employee access',
@@ -156,22 +187,22 @@ $texts = [
         'employee_hint' => 'Employee access is for support, sales and NOC accounts; available links change by role.',
     ],
     'ru' => [
-        'title' => 'Ğ’Ñ…Ğ¾Ğ´ Ğ´Ğ»Ñ ĞºĞ»Ğ¸ĞµĞ½Ñ‚Ğ¾Ğ² Ğ¸ ÑĞ¾Ñ‚Ñ€ÑƒĞ´Ğ½Ğ¸ĞºĞ¾Ğ²',
-        'heading' => 'Ğ’Ğ¾Ğ¹Ğ´Ğ¸Ñ‚Ğµ Ğ² Ğ¿Ğ¾Ñ€Ñ‚Ğ°Ğ» Super Optik',
-        'text' => 'Ğ§ĞµÑ€ĞµĞ· ĞºĞ»Ğ¸ĞµĞ½Ñ‚ÑĞºĞ¸Ğ¹ Ğ°ĞºĞºĞ°ÑƒĞ½Ñ‚ Ğ²Ñ‹ ÑƒĞ²Ğ¸Ğ´Ğ¸Ñ‚Ğµ Ğ¾Ğ¿Ğ»Ğ°Ñ‚Ñ‹, Ğ¿Ğ°ĞºĞµÑ‚ Ğ¸ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ. Ğ§ĞµÑ€ĞµĞ· ÑƒÑ‡ĞµÑ‚Ğ½ÑƒÑ Ğ·Ğ°Ğ¿Ğ¸ÑÑŒ ÑĞ¾Ñ‚Ñ€ÑƒĞ´Ğ½Ğ¸ĞºĞ° Ğ¾Ñ‚ĞºÑ€Ğ¾ÑÑ‚ÑÑ billing Ğ¸ OLT Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´Ñ‹ Ğ¿Ğ¾ Ğ²Ğ°ÑˆĞµĞ¹ Ñ€Ğ¾Ğ»Ğ¸.',
-        'benefits' => ['ĞĞ¿Ğ»Ğ°Ñ‚Ñ‹ Ğ¸ Ğ¸Ğ½Ñ„Ğ¾Ñ€Ğ¼Ğ°Ñ†Ğ¸Ñ Ğ¿Ğ¾ Ğ¿Ğ°ĞºĞµÑ‚Ñƒ', 'ĞĞ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸Ñ Ğ² Ğ¿Ğ¾Ğ´Ğ´ĞµÑ€Ğ¶ĞºÑƒ Ğ¸ Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ»ĞµĞ½Ğ¸Ğµ Ğ¿Ñ€Ğ¾Ñ„Ğ¸Ğ»Ñ', 'Ğ Ğ¾Ğ»ĞµĞ²Ñ‹Ğµ billing Ğ¸ OLT Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´Ñ‹ Ğ´Ğ»Ñ ÑĞ¾Ñ‚Ñ€ÑƒĞ´Ğ½Ğ¸ĞºĞ¾Ğ²'],
-        'roles' => ['ĞšĞ»Ğ¸ĞµĞ½Ñ‚', 'Ğ¡Ğ¾Ñ‚Ñ€ÑƒĞ´Ğ½Ğ¸Ğº'],
-        'customer_label' => 'ĞšĞ¾Ğ´ Ğ°Ğ±Ğ¾Ğ½ĞµĞ½Ñ‚Ğ°',
-        'customer_placeholder' => 'ĞĞ°Ğ¿Ñ€Ğ¸Ğ¼ĞµÑ€: SO-100245',
-        'employee_label' => 'Ğ˜Ğ¼Ñ Ğ¿Ğ¾Ğ»ÑŒĞ·Ğ¾Ğ²Ğ°Ñ‚ĞµĞ»Ñ',
-        'employee_placeholder' => 'ĞĞ°Ğ¿Ñ€Ğ¸Ğ¼ĞµÑ€: support.agent',
-        'password' => 'ĞŸĞ°Ñ€Ğ¾Ğ»ÑŒ',
-        'password_placeholder' => 'Ğ’Ğ²ĞµĞ´Ğ¸Ñ‚Ğµ Ğ¿Ğ°Ñ€Ğ¾Ğ»ÑŒ',
-        'submit' => 'Ğ’Ğ¾Ğ¹Ñ‚Ğ¸',
-        'back' => 'Ğ’ĞµÑ€Ğ½ÑƒÑ‚ÑŒÑÑ Ğ½Ğ° ÑĞ°Ğ¹Ñ‚',
-        'meta' => 'ĞŸĞ¾Ñ€Ñ‚Ğ°Ğ» Ğ¾Ñ‚ĞºÑ€Ñ‹Ğ²Ğ°ĞµÑ‚ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñƒ Ğ² ÑĞ¾Ğ¾Ñ‚Ğ²ĞµÑ‚ÑÑ‚Ğ²Ğ¸Ğ¸ Ñ Ğ²Ğ°ÑˆĞµĞ¹ Ñ€Ğ¾Ğ»ÑŒÑ.',
-        'customer_hint' => 'ĞŸĞ¾ ĞºĞ¾Ğ´Ñƒ Ğ°Ğ±Ğ¾Ğ½ĞµĞ½Ñ‚Ğ° Ğ²Ñ‹ Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ¸Ñ‚Ğµ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿ Ğº Ğ¾Ğ¿Ğ»Ğ°Ñ‚Ğ°Ğ¼ Ğ¸ Ğ¾Ğ±Ñ€Ğ°Ñ‰ĞµĞ½Ğ¸ÑĞ¼.',
-        'employee_hint' => 'Ğ’Ñ…Ğ¾Ğ´ Ğ´Ğ»Ñ ÑĞ¾Ñ‚Ñ€ÑƒĞ´Ğ½Ğ¸ĞºĞ¾Ğ² Ğ¿Ñ€ĞµĞ´Ğ½Ğ°Ğ·Ğ½Ğ°Ñ‡ĞµĞ½ Ğ´Ğ»Ñ support, sales Ğ¸ NOC; Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ñ‹Ğµ Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´Ñ‹ Ğ·Ğ°Ğ²Ğ¸ÑÑÑ‚ Ğ¾Ñ‚ Ñ€Ğ¾Ğ»Ğ¸.',
+        'title' => 'Вход для клиентов и сотрудников',
+        'heading' => 'Войдите в портал Super Optik',
+        'text' => 'Через клиентский аккаунт вы увидите оплаты, пакет и обращения. Через учетную запись сотрудника откроются billing и OLT переходы по вашей роли.',
+        'benefits' => ['Оплаты и информация по пакету', 'Обращения в поддержку и обновление профиля', 'Ролевые billing и OLT переходы для сотрудников'],
+        'roles' => ['Клиент', 'Сотрудник'],
+        'customer_label' => 'Код абонента',
+        'customer_placeholder' => 'Например: SO-100245',
+        'employee_label' => 'Имя пользователя',
+        'employee_placeholder' => 'Например: support.agent',
+        'password' => 'Пароль',
+        'password_placeholder' => 'Введите пароль',
+        'submit' => 'Войти',
+        'back' => 'Вернуться на сайт',
+        'meta' => 'Портал открывает страницу в соответствии с вашей ролью.',
+        'customer_hint' => 'По коду абонента вы получите доступ к оплатам и обращениям.',
+        'employee_hint' => 'Вход для сотрудников предназначен для support, sales и NOC; доступные переходы зависят от роли.',
     ],
 ];
 
@@ -209,16 +240,16 @@ $mygovConfig = app_sso_provider_config('mygov');
 $mygovReady = app_sso_provider_ready('mygov');
 $flashMap = [
     'az' => [
-        'portal_login_failed' => ['type' => 'error', 'message' => 'GiriÅŸ mÉ™lumatlarÄ± tÉ™sdiqlÉ™nmÉ™di. ZÉ™hmÉ™t olmasa yenidÉ™n yoxlayÄ±n.'],
-        'portal_rate_limited' => ['type' => 'error', 'message' => 'Ã‡ox sayda uÄŸursuz cÉ™hd oldu. 5 dÉ™qiqÉ™ sonra yenidÉ™n yoxlayÄ±n.'],
-        'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlamasÄ± uÄŸursuz oldu. SÉ™hifÉ™ni yenilÉ™yib yenidÉ™n cÉ™hd edin.'],
-        'auth_required' => ['type' => 'error', 'message' => 'Davam etmÉ™k Ã¼Ã§Ã¼n portala daxil olun.'],
-        'logged_out' => ['type' => 'success', 'message' => 'Portal sessiyasÄ± baÄŸlandÄ±.'],
-        'mygov_not_configured' => ['type' => 'error', 'message' => 'MyGov ID giriÅŸi hazÄ±rlÄ±q rejimindÉ™dir. API mÉ™lumatlarÄ± qoÅŸulmadan aktiv edilmÉ™yÉ™cÉ™k.'],
-        'mygov_state_invalid' => ['type' => 'error', 'message' => 'MyGov sessiyasÄ± etibarsÄ±zdÄ±r vÉ™ ya vaxtÄ± bitib. YenidÉ™n cÉ™hd edin.'],
-        'mygov_identity_not_linked' => ['type' => 'error', 'message' => 'Bu MyGov ID ilÉ™ baÄŸlÄ± portal hesabÄ± tapÄ±lmadÄ±. Admin identity mapping yaratmalÄ±dÄ±r.'],
-        'mygov_callback_pending' => ['type' => 'error', 'message' => 'MyGov callback modulu hazÄ±rdÄ±r, amma real token/userinfo adapteri hÉ™lÉ™ qoÅŸulmayÄ±b.'],
-        'mygov_failed' => ['type' => 'error', 'message' => 'MyGov giriÅŸ state-i yaradÄ±lmadÄ±. DB vÉ™ konfiqurasiyanÄ± yoxlayÄ±n.'],
+        'portal_login_failed' => ['type' => 'error', 'message' => 'Giriş məlumatları təsdiqlənmədi. Zəhmət olmasa yenidən yoxlayın.'],
+        'portal_rate_limited' => ['type' => 'error', 'message' => 'Çox sayda uğursuz cəhd oldu. 5 dəqiqə sonra yenidən yoxlayın.'],
+        'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlaması uğursuz oldu. Səhifəni yeniləyib yenidən cəhd edin.'],
+        'auth_required' => ['type' => 'error', 'message' => 'Davam etmək üçün portala daxil olun.'],
+        'logged_out' => ['type' => 'success', 'message' => 'Portal sessiyası bağlandı.'],
+        'mygov_not_configured' => ['type' => 'error', 'message' => 'MyGov ID girişi hazırlıq rejimindədir. API məlumatları qoşulmadan aktiv edilməyəcək.'],
+        'mygov_state_invalid' => ['type' => 'error', 'message' => 'MyGov sessiyası etibarsızdır və ya vaxtı bitib. Yenidən cəhd edin.'],
+        'mygov_identity_not_linked' => ['type' => 'error', 'message' => 'Bu MyGov ID ilə bağlı portal hesabı tapılmadı. Admin identity mapping yaratmalıdır.'],
+        'mygov_callback_pending' => ['type' => 'error', 'message' => 'MyGov callback modulu hazırdır, amma real token/userinfo adapteri hələ qoşulmayıb.'],
+        'mygov_failed' => ['type' => 'error', 'message' => 'MyGov giriş state-i yaradılmadı. DB və konfiqurasiyanı yoxlayın.'],
     ],
     'en' => [
         'portal_login_failed' => ['type' => 'error', 'message' => 'Login details could not be verified. Please check them and try again.'],
@@ -233,11 +264,11 @@ $flashMap = [
         'mygov_failed' => ['type' => 'error', 'message' => 'Could not create MyGov login state. Check DB and configuration.'],
     ],
     'ru' => [
-        'portal_login_failed' => ['type' => 'error', 'message' => 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ Ğ¿Ğ¾Ğ´Ñ‚Ğ²ĞµÑ€Ğ´Ğ¸Ñ‚ÑŒ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ Ğ´Ğ»Ñ Ğ²Ñ…Ğ¾Ğ´Ğ°. ĞŸÑ€Ğ¾Ğ²ĞµÑ€ÑŒÑ‚Ğµ Ğ¸Ñ… Ğ¸ Ğ¿Ğ¾Ğ¿Ñ€Ğ¾Ğ±ÑƒĞ¹Ñ‚Ğµ ÑĞ½Ğ¾Ğ²Ğ°.'],
-        'portal_rate_limited' => ['type' => 'error', 'message' => 'Ğ¡Ğ»Ğ¸ÑˆĞºĞ¾Ğ¼ Ğ¼Ğ½Ğ¾Ğ³Ğ¾ Ğ½ĞµÑƒĞ´Ğ°Ñ‡Ğ½Ñ‹Ñ… Ğ¿Ğ¾Ğ¿Ñ‹Ñ‚Ğ¾Ğº. ĞŸĞ¾Ğ´Ğ¾Ğ¶Ğ´Ğ¸Ñ‚Ğµ 5 Ğ¼Ğ¸Ğ½ÑƒÑ‚ Ğ¸ Ğ¿Ğ¾Ğ¿Ñ€Ğ¾Ğ±ÑƒĞ¹Ñ‚Ğµ ÑĞ½Ğ¾Ğ²Ğ°.'],
-        'csrf_failed' => ['type' => 'error', 'message' => 'ĞŸÑ€Ğ¾Ğ²ĞµÑ€ĞºĞ° ÑĞµÑÑĞ¸Ğ¸ Ğ½Ğµ Ğ¿Ñ€Ğ¾ÑˆĞ»Ğ°. ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚Ğµ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñƒ Ğ¸ Ğ¿Ğ¾Ğ²Ñ‚Ğ¾Ñ€Ğ¸Ñ‚Ğµ Ğ¿Ğ¾Ğ¿Ñ‹Ñ‚ĞºÑƒ.'],
-        'auth_required' => ['type' => 'error', 'message' => 'Ğ§Ñ‚Ğ¾Ğ±Ñ‹ Ğ¿Ñ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ, Ğ²Ğ¾Ğ¹Ğ´Ğ¸Ñ‚Ğµ Ğ² Ğ¿Ğ¾Ñ€Ñ‚Ğ°Ğ».'],
-        'logged_out' => ['type' => 'success', 'message' => 'Ğ¡ĞµÑÑĞ¸Ñ Ğ¿Ğ¾Ñ€Ñ‚Ğ°Ğ»Ğ° Ğ·Ğ°Ğ²ĞµÑ€ÑˆĞµĞ½Ğ°.'],
+        'portal_login_failed' => ['type' => 'error', 'message' => 'Не удалось подтвердить данные для входа. Проверьте их и попробуйте снова.'],
+        'portal_rate_limited' => ['type' => 'error', 'message' => 'Слишком много неудачных попыток. Подождите 5 минут и попробуйте снова.'],
+        'csrf_failed' => ['type' => 'error', 'message' => 'Проверка сессии не прошла. Обновите страницу и повторите попытку.'],
+        'auth_required' => ['type' => 'error', 'message' => 'Чтобы продолжить, войдите в портал.'],
+        'logged_out' => ['type' => 'success', 'message' => 'Сессия портала завершена.'],
     ],
 ];
 
@@ -245,6 +276,8 @@ $flashMap['az'] = [
     'portal_login_failed' => ['type' => 'error', 'message' => 'Giris melumatlari tesdiqlenmedi. Zehmet olmasa yeniden yoxlayin.'],
     'portal_rate_limited' => ['type' => 'error', 'message' => 'Cox sayda ugursuz cehd oldu. 5 deqiqe sonra yeniden yoxlayin.'],
     'csrf_failed' => ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu. Sehifeni yenileyib yeniden cehd edin.'],
+    'captcha_failed' => ['type' => 'error', 'message' => 'Men robot deyilem yoxlamasi tamamlanmadi. Yeniden cehd edin.'],
+    'customer_password_reset_success' => ['type' => 'success', 'message' => 'Sifreniz yenilendi. Yeni sifrenizle daxil ola bilersiniz.'],
     'auth_required' => ['type' => 'error', 'message' => 'Davam etmek ucun portala daxil olun.'],
     'logged_out' => ['type' => 'success', 'message' => 'Portal sessiyasi baglandi.'],
     'mygov_not_configured' => ['type' => 'error', 'message' => 'MyGov ID girisi hazirliq rejimindedir. API melumatlari qosulmadan aktiv edilmeyecek.'],
@@ -260,6 +293,7 @@ if (isset($flashMap[$lang][$status])) {
 if ($lang === 'ru' && isset($flashMap['az'][$status])) {
     $flash = $flashMap['az'][$status];
 }
+$humanChallenge = app_portal_human_challenge($humanVerificationScope);
 ?>
 <!DOCTYPE html>
 <html lang="<?= e($lang); ?>">
@@ -269,8 +303,19 @@ if ($lang === 'ru' && isset($flashMap['az'][$status])) {
     <title>Super Optik Portal Login</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/portal-auth-brand.css')); ?>">
 </head>
 <body class="portal-auth-body">
+    <header class="portal-auth-topbar" aria-label="Portal naviqasiyasi">
+        <a href="<?= e($publicSiteUrl); ?>" class="portal-auth-topbar-brand">
+            <img src="images/favicon.png" alt="">
+            <span>Super Optik</span><b>Portal</b>
+        </a>
+        <a class="portal-auth-topbar-site" href="<?= e($publicSiteUrl); ?>">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+            <?= e($copy['back']); ?>
+        </a>
+    </header>
     <main class="portal-auth-shell">
         <section class="portal-auth-copy portal-reveal">
             <a href="<?= e($publicSiteUrl); ?>" class="portal-brand">
@@ -321,6 +366,7 @@ if ($lang === 'ru' && isset($flashMap['az'][$status])) {
                         name="login"
                         placeholder="<?= e($selectedRole === 'employee' ? $copy['employee_placeholder'] : $copy['customer_placeholder']); ?>"
                         required
+                        autocomplete="username"
                         data-role-login-input
                         <?php if ($showRoleSwitch): ?>
                             data-customer-label="<?= e($copy['customer_label']); ?>"
@@ -333,11 +379,19 @@ if ($lang === 'ru' && isset($flashMap['az'][$status])) {
 
                 <div class="portal-form-row">
                     <label for="portalPassword"><?= e($copy['password']); ?></label>
-                    <input id="portalPassword" type="password" name="password" placeholder="<?= e($copy['password_placeholder']); ?>" required>
+                    <input id="portalPassword" type="password" name="password" placeholder="<?= e($copy['password_placeholder']); ?>" required autocomplete="current-password">
                 </div>
+
+                <?php app_portal_render_human_challenge($humanChallenge); ?>
 
                 <button type="submit" class="portal-submit-btn"><?= e($copy['submit']); ?></button>
             </form>
+
+            <?php if (!$staffLoginEndpoint): ?>
+                <a class="portal-password-recovery-link" href="customer-password-recovery.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                    Şifrəni unutmusunuz? WhatsApp kodu ilə yeniləyin
+                </a>
+            <?php endif; ?>
 
             <?php if ($mygovReady): ?>
                 <div class="portal-sso-divider"><span>ve ya</span></div>
@@ -362,5 +416,8 @@ if ($lang === 'ru' && isset($flashMap['az'][$status])) {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php if (($humanChallenge['mode'] ?? '') === 'google'): ?>
+        <script src="https://www.google.com/recaptcha/api.js?hl=az" async defer></script>
+    <?php endif; ?>
 </body>
 </html>

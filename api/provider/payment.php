@@ -6,16 +6,23 @@ require dirname(__DIR__, 2) . '/provider-api-lib.php';
 app_send_security_headers();
 
 $rawBody = (string) file_get_contents('php://input');
-$auth = app_provider_authenticate($rawBody);
+$auth = app_provider_authenticate($rawBody, '', 'payment:write');
 $payload = app_provider_read_json_body($rawBody);
 
-$provider = clean_text((string) ($payload['provider'] ?? $auth['provider'] ?? 'provider'));
+$provider = (string) ($auth['provider'] ?? '');
+$requestedProvider = app_provider_normalize_name((string) ($payload['provider'] ?? $provider));
+if ($requestedProvider !== '' && $requestedProvider !== $provider) {
+    app_provider_json_response(['success' => false, 'code' => 'provider_credential_mismatch'], 403);
+}
 $terminalId = clean_text((string) ($payload['terminal_id'] ?? $payload['terminal'] ?? ''));
 $customerCode = clean_login_identifier((string) ($payload['customer_code'] ?? $payload['subscriber_code'] ?? $payload['abonent_kodu'] ?? $payload['code'] ?? ''));
 $transactionId = clean_text((string) ($payload['transaction_id'] ?? $payload['transaction'] ?? $payload['receipt_no'] ?? ''));
 $amount = app_billing_parse_money_amount($payload['amount'] ?? $payload['payment_amount'] ?? $payload['mebleg'] ?? 0);
 $paidAt = trim((string) ($payload['paid_at'] ?? $payload['created_at'] ?? $payload['date'] ?? ''));
 $days = max(0, min(366, (int) ($payload['days'] ?? 0)));
+$headers = app_provider_request_headers();
+$idempotencyKey = app_provider_request_idempotency_key($headers, $payload);
+$correlationId = app_request_correlation_id();
 
 if ($provider === '' || $provider === 'provider') {
     $provider = 'terminal';
@@ -53,7 +60,9 @@ $applied = app_billing_apply_customer_payment(
     $days,
     $transactionId,
     $externalId,
-    $createdAt
+    $createdAt,
+    $idempotencyKey,
+    $correlationId
 );
 
 if (!$applied) {
@@ -65,11 +74,13 @@ if (!$applied) {
 }
 
 $updated = app_provider_customer_by_code((string) ($account['subscriber_code'] ?? $customerCode)) ?? $account;
+$operation = app_provider_payment_operation_by_external_id($externalId);
 app_provider_json_response([
     'success' => true,
     'duplicate' => $duplicate,
     'external_id' => $externalId,
     'transaction_id' => $transactionId,
     'amount' => number_format($amount, 2, '.', ''),
+    'payment_state' => (string) ($operation['state'] ?? 'payment_recorded'),
     'customer' => app_provider_customer_summary($updated),
 ]);

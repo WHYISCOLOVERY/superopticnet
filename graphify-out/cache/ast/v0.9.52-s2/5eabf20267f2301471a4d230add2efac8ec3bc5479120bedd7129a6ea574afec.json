@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_tools_stage1_rollback_readiness_php", "label": "stage1-rollback-readiness.php", "file_type": "code", "source_file": "tools/stage1-rollback-readiness.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

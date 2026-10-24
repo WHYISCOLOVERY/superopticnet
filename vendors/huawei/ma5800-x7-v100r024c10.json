@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "vendor": "Huawei",
+  "family": "MA5800-X7",
+  "release": "V100R024C10",
+  "hardware_validated": false,
+  "sources": [
+    {
+      "id": "ma5800_release",
+      "publisher": "Huawei",
+      "title": "MA5800 V100R024C10 Command Reference 01",
+      "url": "https://support.huawei.com/enterprise/de/access-network/smartax-ma5800-pid-21484577",
+      "status": "official_product_reference"
+    },
+    {
+      "id": "optical_power",
+      "publisher": "Huawei",
+      "title": "Querying the Optical Power Using the CLI",
+      "url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_access/en/content/access/15_odn_fault_location/coper_6015.html",
+      "status": "official_command_evidence"
+    },
+    {
+      "id": "olt_fault",
+      "publisher": "Huawei",
+      "title": "OLT Fault",
+      "url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_access/en/content/access/19_gpononu_failure_to_auto_discover/trouble_510602.html",
+      "status": "official_command_evidence"
+    },
+    {
+      "id": "alarm_handling",
+      "publisher": "Huawei",
+      "title": "Alarming Handling",
+      "url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_access/en/content/access/16_gpononu_failure_to_go_online/trouble_515102.html",
+      "status": "official_command_evidence"
+    },
+    {
+      "id": "snmp_view",
+      "publisher": "Huawei",
+      "title": "SNMP MIB view and ACL troubleshooting",
+      "url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_ce/en/content/ce/05_edesk_dc_snmp_cannot_get_infromation_from_NMS/edesk_dc_snmp_cannot_get_infromation_from_NMS_edesk002.html",
+      "status": "official_snmp_guidance"
+    }
+  ],
+  "cli": [
+    { "key": "version", "risk": "read_only", "status": "active_mock_allowlist", "command_family": "display version", "context": "user_view_exact", "source_ids": ["ma5800_release"], "executable": true },
+    { "key": "boards_frame_zero", "risk": "read_only", "status": "active_mock_allowlist", "command_family": "display board 0", "context": "user_view_frame_zero", "source_ids": ["ma5800_release", "olt_fault"], "executable": true },
+    { "key": "active_alarms", "risk": "read_only", "status": "active_mock_allowlist", "command_family": "display alarm active", "context": "user_view", "source_ids": ["ma5800_release", "alarm_handling"], "executable": true },
+    { "key": "port_info", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display port info", "context": "pon_interface_release_and_board_specific", "source_ids": ["olt_fault"], "executable": false },
+    { "key": "port_state", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display port state", "context": "pon_interface_release_and_board_specific", "source_ids": ["optical_power", "olt_fault"], "executable": false },
+    { "key": "ont_autofind", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display ont autofind", "context": "pon_interface_release_and_board_specific", "source_ids": ["ma5800_release"], "executable": false },
+    { "key": "ont_info", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display ont info", "context": "frame_slot_port_and_ont_id_validator_required", "source_ids": ["alarm_handling"], "executable": false },
+    { "key": "ont_optical_info", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display ont optical-info", "context": "frame_slot_port_and_ont_id_validator_required", "source_ids": ["optical_power"], "executable": false },
+    { "key": "ont_alarm_state", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display ont alarm-state", "context": "frame_slot_port_and_ont_id_validator_required", "source_ids": ["alarm_handling"], "executable": false },
+    { "key": "port_active_alarms", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display alarm active alarmparameter frameid/slotid/portid", "context": "exact_frame_slot_port_validator_required", "source_ids": ["alarm_handling"], "executable": false },
+    { "key": "snmp_mib_view", "risk": "read_only", "status": "source_confirmed_syntax_unverified", "command_family": "display snmp-agent mib-view", "context": "snmp_preflight_only", "source_ids": ["snmp_view"], "executable": false }
+  ],
+  "snmp": [
+    { "key": "sys_descr", "oid": "1.3.6.1.2.1.1.1.0", "operation": "get", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "SNMPv2-MIB" },
+    { "key": "sys_object_id", "oid": "1.3.6.1.2.1.1.2.0", "operation": "get", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "SNMPv2-MIB" },
+    { "key": "sys_uptime", "oid": "1.3.6.1.2.1.1.3.0", "operation": "get", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "SNMPv2-MIB" },
+    { "key": "sys_name", "oid": "1.3.6.1.2.1.1.5.0", "operation": "get", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "SNMPv2-MIB" },
+    { "key": "if_descr", "oid": "1.3.6.1.2.1.2.2.1.2", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "IF-MIB" },
+    { "key": "if_admin_status", "oid": "1.3.6.1.2.1.2.2.1.7", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "IF-MIB" },
+    { "key": "if_oper_status", "oid": "1.3.6.1.2.1.2.2.1.8", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "IF-MIB" },
+    { "key": "if_name", "oid": "1.3.6.1.2.1.31.1.1.1.1", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "IF-MIB" },
+    { "key": "ent_physical_descr", "oid": "1.3.6.1.2.1.47.1.1.1.1.2", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "ENTITY-MIB" },
+    { "key": "ent_physical_name", "oid": "1.3.6.1.2.1.47.1.1.1.1.7", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "ENTITY-MIB" },
+    { "key": "ent_physical_serial", "oid": "1.3.6.1.2.1.47.1.1.1.1.11", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "ENTITY-MIB" },
+    { "key": "ent_physical_model", "oid": "1.3.6.1.2.1.47.1.1.1.1.13", "operation": "walk", "access": "read_only", "status": "standards_verified_device_support_pending", "mib": "ENTITY-MIB" }
+  ],
+  "private_mib_policy": {
+    "status": "blocked_until_matching_release_mib_package",
+    "enterprise_root": "1.3.6.1.4.1.2011",
+    "bulk_walk_allowed": false,
+    "required_artifacts": ["official_mib_files", "sha256_checksums", "symbol_oid_access_index_unit_map", "real_device_noSuchObject_fixture"]
+  }
+}

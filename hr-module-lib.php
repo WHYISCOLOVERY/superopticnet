@@ -4,17 +4,19 @@ declare(strict_types=1);
 require_once __DIR__ . '/hr-employee-service.php';
 
 require_once __DIR__ . '/mgs-integration-lib.php';
+// HR views (attendance/*) call app_ui_status()/app_ui_term(); ensure available on
+// both full-page and AJAX-partial render paths.
+require_once __DIR__ . '/ui-language-lib.php';
 
 function app_hr_tabs(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'employees' => 'Emekdaslar',
-        'attendance' => 'Davamiyyet',
-        'leave-travel' => 'Mezuniyyet ve ezamiyyet',
+        'overview' => 'Ümumi baxış',
+        'employees' => 'Əməkdaşlar',
+        'attendance' => 'Davamiyyət',
+        'leave-travel' => 'Məzuniyyət və ezamiyyət',
         'performance' => 'Performans',
-        'payroll' => 'Maas ve vergiler',
-        'documents' => 'Senedler',
+        'documents' => 'Sənədlər',
         'statistics' => 'Statistika',
     ];
 }
@@ -132,7 +134,7 @@ function app_hr_employee_page(PDO $db, array $query): array
 {
     $params = [];
     $where = ' WHERE a.role = "employee" AND ' . app_hr_operational_sql('a');
-    $where .= app_hr_search_filter($query, ['a.full_name', 'a.login', 'a.employee_role', 'a.area'], $params);
+    $where .= app_hr_search_filter($query, ['a.full_name', 'a.login', 'a.employee_role', 'a.job_title', 'a.area'], $params);
     $role = clean_text((string) ($query['employee_role'] ?? ''));
     if ($role !== '') {
         $where .= ' AND a.employee_role = :employee_role';
@@ -142,11 +144,17 @@ function app_hr_employee_page(PDO $db, array $query): array
               LEFT JOIN hr_employee_compensations c ON c.id = (
                   SELECT MAX(c2.id) FROM hr_employee_compensations c2
                    WHERE c2.employee_account_id = a.id AND c2.status = "active"
-              )' . $where;
+              )
+              LEFT JOIN hr_positions p ON p.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(a.payload_json, "$.employee.position_id")) AS UNSIGNED)
+                  OR (p.title = a.job_title AND JSON_EXTRACT(a.payload_json, "$.employee.position_id") IS NULL)' . $where;
     return app_hr_query_page(
         $db,
         'SELECT COUNT(*)' . $from,
         'SELECT a.id, a.full_name, a.login, a.account_type, a.employee_role, a.job_title, a.email, a.phone, a.area, a.address, a.status, a.is_active,
+                COALESCE(
+                    JSON_UNQUOTE(JSON_EXTRACT(a.payload_json, "$.employee.position_id")),
+                    CAST(p.id AS CHAR)
+                ) AS position_id,
                 JSON_UNQUOTE(JSON_EXTRACT(a.payload_json, "$.employee.branch_id")) AS branch_id,
                 JSON_UNQUOTE(JSON_EXTRACT(a.payload_json, "$.employee.hire_date")) AS hire_date,
                 c.salary_mode, c.gross_salary, c.net_salary, c.employee_total_deductions,
@@ -384,6 +392,8 @@ function app_hr_build_context(PDO $db, array $user, array $query): array
         $context['data']['page'] = app_hr_employee_page($db, $query);
         $context['data']['employees'] = $employeeSelector();
         $context['data']['branches'] = function_exists('app_db_branches') ? app_db_branches($db) : [];
+        $context['data']['positions'] = app_hr_positions($db, true);
+        $context['data']['can_manage_positions'] = app_portal_is_admin($user);
     } elseif ($tab === 'attendance') {
         $context['data']['page'] = app_hr_attendance_page($db, $query);
         $context['data']['employees'] = $employeeSelector();
@@ -400,6 +410,9 @@ function app_hr_build_context(PDO $db, array $user, array $query): array
         $context['data']['page'] = app_hr_score_page($db, $query);
         $context['data']['employees'] = $employeeSelector();
         $context['data']['reasons'] = app_mgs_hr_score_reason_defaults();
+        $context['data']['recent_events'] = app_mgs_hr_score_recent_events($db, 25);
+        $context['data']['pending_appeals'] = app_mgs_hr_score_appeals($db, ['status' => 'pending']);
+        $context['data']['can_manage_appeals'] = app_portal_is_admin($user);
     } elseif ($tab === 'payroll') {
         $context['data']['page'] = app_hr_payroll_page($db, $query);
         $context['data']['employees'] = $employeeSelector();

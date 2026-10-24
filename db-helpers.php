@@ -8,7 +8,7 @@ function app_db_settings(): array
         'port' => (int) app_setting('db_port', 3306),
         'name' => app_config('db_name', 'superoptic_portal'),
         'user' => app_config('db_user', 'root'),
-        'pass' => (string) app_setting('db_pass', ''),
+        'pass' => app_environment_secret('DB_PASS'),
         'charset' => app_config('db_charset', 'utf8mb4'),
     ];
 }

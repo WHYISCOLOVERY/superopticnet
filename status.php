@@ -13,7 +13,8 @@ $summary = [
     'down' => 0,
 ];
 $clientIp = app_client_ip();
-$detailAllowed = in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
+$detailEnabled = in_array(strtolower(trim((string) app_setting('health_detail_enabled', '0'))), ['1', 'true', 'yes', 'on'], true);
+$detailAllowed = $detailEnabled && in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
     || str_starts_with($clientIp, '10.')
     || str_starts_with($clientIp, '192.168.')
     || preg_match('/^172\.(1[6-9]|2[0-9]|3[0-1])\./', $clientIp) === 1;
@@ -136,7 +137,7 @@ http_response_code($overallStatus === 'down' ? 503 : 200);
                     <span class="portal-pill"><?= e((string) $summary['degraded']); ?> Degraded</span>
                     <span class="portal-pill portal-pill-danger"><?= e((string) $summary['down']); ?> Down</span>
                 </div>
-                <small>YenilÉ™nmÉ™: <?= e(date('d.m.Y H:i:s')); ?></small>
+                <small>Yenilənmə: <?= e(date('d.m.Y H:i:s')); ?></small>
             </article>
         </section>
 

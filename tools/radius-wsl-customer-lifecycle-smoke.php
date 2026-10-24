@@ -293,7 +293,17 @@ try {
         'SELECT COUNT(*) FROM radacct WHERE acctsessionid = :session_id AND username = :username AND acctstoptime IS NULL',
         ['session_id' => $sessionId, 'username' => $subscriberCode]
     );
-    lifecycle_check($checks, 'accounting_start', !empty($acctStart['ok']) && $openAccounting === 1);
+    lifecycle_check(
+        $checks,
+        'accounting_start',
+        !empty($acctStart['ok']) && $openAccounting === 1,
+        [
+            'client_exit_code' => (int) ($acctStart['exit_code'] ?? -1),
+            'client_stdout' => mb_substr((string) ($acctStart['stdout'] ?? ''), 0, 1200),
+            'client_stderr' => mb_substr((string) ($acctStart['stderr'] ?? ''), 0, 1200),
+            'open_accounting_rows' => $openAccounting,
+        ]
+    );
     $acctStop = lifecycle_wsl($wslDistro, ['accounting-stop', $subscriberCode, 'unused', $assignedIp, $sessionId]);
     $closedAccounting = (int) lifecycle_value(
         $db,
@@ -408,6 +418,12 @@ try {
                 'session_id' => $sessionId,
             ]);
             $db->prepare('DELETE FROM radius_session_actions WHERE username = :username')->execute(['username' => $subscriberCode]);
+            $db->prepare('DELETE r FROM billing_payment_reversals r JOIN billing_payment_operations o ON o.id = r.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE e FROM billing_payment_operation_events e JOIN billing_payment_operations o ON o.id = e.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE a FROM billing_payment_service_attempts a JOIN billing_payment_service_actions s ON s.id = a.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE b FROM billing_payment_outbox b JOIN billing_payment_service_actions s ON s.id = b.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE s FROM billing_payment_service_actions s JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id = :id')->execute(['id' => $accountId]);
+            $db->prepare('DELETE FROM billing_payment_operations WHERE account_id = :id')->execute(['id' => $accountId]);
             $db->prepare('DELETE FROM billing_payments WHERE account_id = :id OR subscriber_code = :code')->execute([
                 'id' => $accountId,
                 'code' => $subscriberCode,

@@ -1,0 +1,242 @@
+{
+  "schema": 1,
+  "source": "SuperOpticNet canonical workflow map; descriptive only, not an execution grant.",
+  "workflows": [
+    {
+      "id": "noc_network_health",
+      "label": "NOC şəbəkə vəziyyəti",
+      "module": "network",
+      "intent_phrases": ["şəbəkənin vəziyyəti", "core router vəziyyəti", "trafiki yoxla", "SNMP walk", "cihazları yoxla"],
+      "stages": [
+        "owner-declared node scope-ni müəyyən et",
+        "device profile və management path-i yoxla",
+        "SSH health və SNMP GET/IF-MIB read-only probe et",
+        "CPU, uptime, interface, alarm və son ölçüləri birləşdir",
+        "evidence və açıq qalan mərhələləri audit hesabatına yaz"
+      ],
+      "read_operations": ["network_node_registry", "network_device_probe", "network_ont_optical_analysis", "monitor_snapshot", "alarm_feed"],
+      "propose_operations": ["ticket_create", "notify_owner", "snmp_enable_plan", "device_config_plan"],
+      "approval_required_operations": ["snmp_enable", "snmp_policy_change", "device_config_apply", "write_memory", "ticket_create", "external_notification"],
+      "evidence_required": ["checked_at", "target_ip", "ssh_or_snmp_result", "management_path_state", "next_action"],
+      "source_refs": ["api/agent-ops/network-readiness.php", "api/agent-ops/network-nodes.php", "mgs-integration-lib.php", "noc-devices.php"]
+    },
+    {
+      "id": "infrastructure_threat_triage",
+      "label": "Router və sayt təhlükəsizlik triage",
+      "module": "network",
+      "intent_phrases": ["hücum var", "internet gedib gəlir", "virus ehtimalı", "router brute force", "sayta hücum", "serveri qoru"],
+      "stages": ["router collector, management-auth və public sayt siqnallarının freshness vəziyyətini oxu", "ardıcıl nümunə delta-larını eyni vaxt pəncərəsində korrelyasiya et", "hücum, şəbəkə/sistem, monitorinq boşluğu və təsdiqlənməmiş virus ehtimalını ayır", "dedup edilmiş daxili Telegram xəbərdarlığı və evidence-backed cavab təklifi yarat", "ACL, WAF, restart və giriş dəyişikliyini yalnız rollback-li insan təsdiqindən sonra məhsul qatında icra et"],
+      "read_operations": ["infrastructure_security_snapshot", "network_monitor_snapshot", "router_status", "management_auth_delta", "website_http_tls", "web_access_log_window"],
+      "propose_operations": ["security_incident_review", "temporary_acl_block_plan", "waf_rate_limit_plan", "notify_owner"],
+      "approval_required_operations": ["router_acl_apply", "waf_block_apply", "service_restart", "access_rotation", "external_notification"],
+      "evidence_required": ["observed_at", "freshness_seconds", "counter_delta", "classification", "target", "rollback_plan"],
+      "role_contracts": ["manager", "controller", "protector"],
+      "governance_sequence": ["freshness", "delta", "correlate", "containment_plan", "notify", "approval", "verify"],
+      "source_refs": ["docs/42_INFRASTRUCTURE_SECURITY_BRIDGE.md", "docs/41_PUBLIC_SECURITY_AUDIT_2026-09-07.md", "security-anomaly-lib.php", "api/agent-ops/monitor-snapshot.php"]
+    },
+    {
+      "id": "device_onboarding_and_learning",
+      "label": "Cihaz qeydiyyatı və öyrənmə",
+      "module": "network",
+      "intent_phrases": ["yeni cihaz əlavə et", "OLT-ni qeydiyyata al", "cihazı öyrən", "access profile", "komanda xəritəsi"],
+      "stages": [
+        "IP, vendor, model və owner scope-ni təsdiqlə",
+        "credential vault/access profile statusunu yoxla",
+        "read-only discovery və vendor adapterini işə sal",
+        "command map, interface, neighbor və backup snapshot planını hazırla",
+        "monitoring activation və canlı yazma üçün ayrıca təsdiq tələb et"
+      ],
+      "read_operations": ["network_node_registry", "device_access_profile", "cli_discovery", "interface_inventory", "neighbor_discovery"],
+      "propose_operations": ["device_profile_create", "monitoring_enable_plan", "backup_plan"],
+      "approval_required_operations": ["credential_write", "monitoring_enable", "device_command_apply", "write_memory"],
+      "evidence_required": ["device_key", "vendor_adapter", "discovery_status", "profile_status", "approval_state"],
+      "source_refs": ["mgs-integration-lib.php", "device-credential-vault-lib.php", "tools/cisco-cli-discovery.py", "tools/hsgq-cli-discovery.py", "noc-authorization-lib.php"]
+    },
+    {
+      "id": "alarm_to_ticket_response",
+      "label": "Alarmdan ticket və cavab",
+      "module": "monitoring",
+      "intent_phrases": ["alarmı analiz et", "açıq alarm", "problemə ticket aç", "NOC alarmı", "hadisəni araşdır"],
+      "stages": [
+        "alarmın severity, source və son state transition məlumatını oxu",
+        "cihaz/interface/customer əlaqəsini yoxla",
+        "təkrarlanan siqnalları deduplicate et",
+        "root-cause hipotezini evidence ilə hazırla",
+        "ticket və bildiriş üçün insan təsdiqli proposal yarat"
+      ],
+      "read_operations": ["work_queue", "alarm_state_history", "device_context", "ticket_history"],
+      "propose_operations": ["ticket_create", "alarm_ack_plan", "notify_owner"],
+      "approval_required_operations": ["alarm_ack", "alarm_resolve", "ticket_create", "external_notification"],
+      "evidence_required": ["alarm_id", "severity", "state_history", "related_device", "dedup_key", "next_action"],
+      "source_refs": ["agent-ops-queue-lib.php", "mgs-integration-lib.php", "crm.php", "copilot-agent.php"]
+    },
+    {
+      "id": "billing_maintenance_and_radius",
+      "label": "Billing, RADIUS və xidmət statusu",
+      "module": "billing",
+      "intent_phrases": ["borcları yoxla", "ödəniş hesabatı", "expired xidmətlər", "RADIUS vəziyyəti", "billing maintenance"],
+      "stages": [
+        "customer, service, tariff, payment və RADIUS snapshotını oxu",
+        "expired/expiring və risk qruplarını hesabla",
+        "dry-run nəticəsini operatora göstər",
+        "suspend/sync/notice əməliyyatlarını proposal kimi növbəyə yaz",
+        "təsdiqdən sonra apply işini audit və rollback məlumatı ilə icra et"
+      ],
+      "read_operations": ["superoptic_business_analysis", "customer_360", "billing_summary", "radius_active", "payment_history", "maintenance_dry_run"],
+      "propose_operations": ["billing_maintenance_apply", "radius_sync", "notice_queue"],
+      "approval_required_operations": ["payment_write", "radius_suspend", "radius_sync", "customer_message", "maintenance_apply"],
+      "evidence_required": ["account_or_scope", "calculation_timestamp", "dry_run_counts", "provider_state", "audit_id"],
+      "source_refs": ["billing-operations-check-lib.php", "tools/billing-maintenance.php", "billing-customer-profile.php", "billing-payment-workflow-lib.php", "radius-active.php"]
+    },
+    {
+      "id": "finance_cash_receivables",
+      "label": "Maliyyə pul axını və alacaqlar",
+      "module": "finance",
+      "intent_phrases": ["maliyyə vəziyyəti", "gəlir və xərc", "pul axını", "açıq alacaqlar", "borc hesabatı"],
+      "stages": [
+        "cari dövrün canonical gəlir, xərc, qaimə və borc mənbələrini oxu",
+        "mənbə hazırlığı, son tarix və gələcək tarixli qeydlər üzrə data keyfiyyətini yoxla",
+        "net pul axını, alacaq və borc KPI-larını qrafik və sübutla göstər",
+        "anomaliya və prioritetləri proposal_only tövsiyələrə çevir",
+        "ödəniş, büdcə və collection dəyişikliyini yalnız insan təsdiqinə göndər"
+      ],
+      "read_operations": ["superoptic_business_analysis", "finance_summary", "payment_history", "debt_ledger", "invoice_summary"],
+      "propose_operations": ["collection_plan", "budget_change", "finance_review"],
+      "approval_required_operations": ["payment_write", "debt_writeoff", "budget_apply", "external_notification"],
+      "evidence_required": ["period", "metric_definition", "source_table", "freshness", "data_status", "next_action"],
+      "source_refs": ["business-analysis-lib.php", "finance-module-lib.php", "billing-module-lib.php", "api/agent-ops/business-analysis.php"]
+    },
+    {
+      "id": "crm_customer_health",
+      "label": "CRM və müştəri sağlamlığı",
+      "module": "crm",
+      "intent_phrases": ["müştəri analizi", "CRM vəziyyəti", "açıq müraciətlər", "passiv müştərilər", "churn riski", "retention"],
+      "stages": [
+        "CRM və billing icazə scope-larını ayrıca yoxla",
+        "müştəri, xidmət, ödəniş yeniliyi və müraciət KPI-larını aggregate formada oxu",
+        "köhnəlmiş ticket, şöbə blokları və passivlik seqmentlərini hesabla",
+        "nəticəni KPI, trend, seqment və mənbə hazırlığı ilə göstər",
+        "kampaniya, callback və mesaj addımlarını proposal_only saxla"
+      ],
+      "read_operations": ["superoptic_business_analysis", "crm_summary", "customer_health", "ticket_age", "payment_recency"],
+      "propose_operations": ["ticket_reassignment", "retention_campaign", "customer_callback"],
+      "approval_required_operations": ["ticket_write", "customer_message", "campaign_apply", "customer_profile_change"],
+      "evidence_required": ["metric_definition", "source_table", "freshness", "segment_count", "data_status", "next_action"],
+      "source_refs": ["business-analysis-lib.php", "customer-intelligence-lib.php", "agent-ops-queue-lib.php", "api/agent-ops/business-analysis.php"]
+    },
+    {
+      "id": "inventory_customer_equipment",
+      "label": "Anbar və müştəri avadanlığı",
+      "module": "inventory",
+      "intent_phrases": ["anbar qalığı", "modem ver", "avadanlığı qaytar", "stok hesabatı", "müştəriyə cihaz bağla"],
+      "stages": [
+        "SKU/serial və stok vəziyyətini oxu",
+        "müştəri və ya əməkdaş scope-sunu təsdiqlə",
+        "mədaxil, çıxış, transfer və qaytarma hesablamasını dry-run et",
+        "customer_equipment_assignments dəyişiklik proposalı hazırla",
+        "təsdiqdən sonra inventory audit və əlaqəli profil/ticket yenilə"
+      ],
+      "read_operations": ["superoptic_business_analysis", "inventory_summary", "stock_movements", "customer_equipment", "work_queue"],
+      "propose_operations": ["inventory_movement", "equipment_assignment", "ticket_create"],
+      "approval_required_operations": ["inventory_write", "equipment_assignment", "customer_message"],
+      "evidence_required": ["sku_or_serial", "available_quantity", "owner_scope", "movement_preview", "audit_id"],
+      "source_refs": ["inventory-module-lib.php", "inventory-operations-lib.php", "billing-customer-profile.php", "copilot-agent.php"]
+    },
+    {
+      "id": "department_control_plane_readiness",
+      "label": "Billing, maliyyə və anbar idarəetmə xəritəsi",
+      "module": "ai",
+      "intent_phrases": ["billingi kim idarə edir", "şöbə əlaqəsi", "maliyyə və anbar vəziyyəti", "bütün şöbələri yoxla"],
+      "stages": ["sahib və operator rollarını workflow xəritəsindən müəyyən et", "billing-network və inventory-network əlaqələrini read-only müqavilə kimi göstər", "biznes mənbələrinin data_status/freshness vəziyyətini oxu", "read, analysis, dry-run, proposal və apply sərhədlərini ayır", "stale və ya çatışmayan mənbələri needs_attention kimi bağla"],
+      "read_operations": ["superoptic_department_readiness", "superoptic_business_analysis", "superoptic_workflow_catalog"],
+      "propose_operations": ["department_data_refresh_plan", "role_scope_review", "approval_plan"],
+      "approval_required_operations": ["payment_write", "radius_sync", "inventory_write", "equipment_assignment", "customer_message"],
+      "evidence_required": ["owner_role", "workflow_id", "data_status", "source_freshness", "network_relation", "approval_boundary"],
+      "source_refs": ["config/department_controls.json", "config/agents.yaml", "config/agent_workflows.json", "src/department_readiness.py"]
+    },
+    {
+      "id": "communication_queue_delivery",
+      "label": "Bildiriş növbəsi və provider çatdırılması",
+      "module": "messaging",
+      "intent_phrases": ["mesajları göndər", "Telegram bildirişi", "WhatsApp növbəsi", "çatdırılma hesabatı", "provider vəziyyəti"],
+      "stages": [
+        "queued/failed mesajları və kanal üzrə provider readiness-i oxu",
+        "destination və məzmunun təhlükəsiz redaksiyasını yoxla",
+        "dry-run worker nəticəsini hazırla",
+        "provider çağırışını yalnız explicit approval/apply ilə başlat",
+        "delivery attempt, failure reason və retry auditini göstər"
+      ],
+      "read_operations": ["message_queue", "provider_readiness", "delivery_attempts", "worker_runs"],
+      "propose_operations": ["queue_apply", "retry_failed", "notify_owner"],
+      "approval_required_operations": ["external_message_send", "queue_apply", "bulk_retry"],
+      "evidence_required": ["channel", "queued_count", "provider_status", "dry_run", "delivery_attempt_id"],
+      "source_refs": ["communication-provider.php", "tools/process-communication-queue.php", "message-center.php", "api/agent-ops/telegram-notify.php"]
+    },
+    {
+      "id": "crew_proposal_to_human_review",
+      "label": "Agent proposal → insan təsdiqi",
+      "module": "ai",
+      "intent_phrases": ["agent proposal", "planı təsdiqə göndər", "iş axını qur", "agent növbəsi", "təklif hazırla"],
+      "stages": [
+        "aidiyyəti workflow kataloqunu və real read-only contexti oxu",
+        "müşahidə olunan faktları və fərziyyələri ayır",
+        "proposal summary, evidence, risk və next_action hazırla",
+        "crew proposalı status=proposed olaraq növbəyə yaz",
+        "insan approvalından sonra canonical məhsul əməliyyatı icra olunur"
+      ],
+      "read_operations": ["workflow_catalog", "work_queue", "copilot_context", "graphify_query"],
+      "propose_operations": ["proposal_ingest", "draft_pr", "ticket_create"],
+      "approval_required_operations": ["proposal_approval", "production_change", "router_write", "customer_message", "payment_write"],
+      "evidence_required": ["workflow_id", "source_refs", "evidence", "risk", "approval_owner", "proposal_id"],
+      "source_refs": ["crew-proposal-lib.php", "api/agent-ops/proposal-ingest.php", "agent-ops-queue-lib.php", "mgs-copilot-context.php"]
+    },
+    {
+      "id": "self_improvement_sandbox",
+      "label": "R&D self-improvement sandbox",
+      "module": "engineering",
+      "intent_phrases": ["agent uğursuzluğunu araşdır", "post-mortem", "agenti təkmilləşdir", "promptu test et", "provider fallback"],
+      "stages": ["failure signature və evidence-i redaktə edib qeyd et", "RCA/post-mortem hazırla", "candidate prompt/provider/workflow patch yarat", "sandbox və regression/eval testlərini işə sal", "nəticəni proposal_only olaraq approval növbəsinə göndər", "canary monitor, verification və rollback planını bağla"],
+      "read_operations": ["orchestrator_control_plane_status", "graphify_query", "project_read_file", "project_run_check", "llm_provider_status"],
+      "propose_operations": ["orchestrator_self_improvement_proposal", "prompt_revision", "workflow_patch", "draft_pr"],
+      "approval_required_operations": ["provider_switch", "production_deploy", "workflow_activation", "merge"],
+      "evidence_required": ["failure_signature", "streak", "postmortem", "test_report", "eval_delta", "rollback_plan", "approval_owner"],
+      "source_refs": ["config/master_orchestrator_policy.json", "src/orchestration_control_plane.py", "src/execution_runtime.py"]
+    },
+    {
+      "id": "incident_rca_cross_validation",
+      "label": "Incident → RCA → şöbələrarası yoxlama",
+      "module": "monitoring",
+      "intent_phrases": ["incident RCA", "kök səbəbi tap", "iki mənbə ilə yoxla", "şöbələrarası analiz"],
+      "stages": ["incidenti dedup et və sahib şöbəni müəyyən et", "faktları fərziyyələrdən ayır", "ən az iki müstəqil operational mənbəni korrelyasiya et", "ziddiyyət və çatışmayan sübutu qeyd et", "rollback və verification planlı proposal hazırla", "production dəyişiklik üçün insan təsdiqini gözlə"],
+      "read_operations": ["orchestrator_control_plane_status", "orchestrator_incident_rca", "orchestrator_rca_add_evidence", "orchestrator_model_advisory", "orchestrator_cross_validate", "network_monitor_snapshot", "infrastructure_security_snapshot"],
+      "propose_operations": ["orchestrator_record_incident", "remediation_plan", "ticket_create"],
+      "approval_required_operations": ["router_write", "node_isolation", "credential_rotation", "external_notification", "production_change"],
+      "evidence_required": ["incident_id", "fact_hypothesis_split", "operational_sources", "freshness", "handoff_plan", "rollback_plan", "approval_owner"],
+      "source_refs": ["config/master_orchestrator_policy.json", "src/orchestration_control_plane.py", "dashboard.py"]
+    },
+    {
+      "id": "daily_system_health_evolution",
+      "label": "24 saatlıq System Health & Evolution",
+      "module": "hr",
+      "intent_phrases": ["gündəlik evolyusiya", "agent performansı", "system health", "24 saatlıq hesabat"],
+      "stages": ["execution auditlərini 24 saatlıq pəncərədə topla", "success/failure/denied nəticələrini agent və tool üzrə hesabla", "təkrar uğursuzluqları sandbox namizədi kimi işarələ", "API cost datası yoxdursa unavailable göstər", "lokal evolyusiya artifactı yarat", "provider/prompt/workflow dəyişikliyini proposal və approval-a saxla"],
+      "read_operations": ["orchestrator_agent_performance", "orchestrator_control_plane_status", "llm_provider_status"],
+      "propose_operations": ["orchestrator_daily_evolution_report", "orchestrator_self_improvement_proposal"],
+      "approval_required_operations": ["provider_switch", "prompt_apply", "workflow_activation", "production_deploy"],
+      "evidence_required": ["audit_window", "terminal_call_count", "failure_signature", "candidate_count", "artifact_path", "approval_owner"],
+      "source_refs": ["data/execution-audit", "src/orchestration_control_plane.py", "config/master_orchestrator_policy.json"]
+    },
+    {
+      "id": "orchestrator_safety_controls",
+      "label": "LLM budget, loop-breaker, tool evidence və 24 saatlıq read-only qapı",
+      "module": "engineering",
+      "intent_phrases": ["API limitini yoxla", "sonsuz dövrəni dayandır", "tool sübutunu yoxla", "24 saat read-only"],
+      "stages": ["provider request sayğacını və açıq circuit-ləri oxu", "eyni tool+hədəf uğursuzluğunu maksimum 3 cəhdlə sərhədlə", "cross-validation provider sayını maksimum 2 saxla", "pozitiv icra iddiasını uyğun tool evidence ilə attestasiya et", "ilk 24 saat non-read əməliyyatları blokla", "bloklanmanı insan yoxlamasına çıxar"],
+      "read_operations": ["orchestrator_control_plane_status", "llm_provider_status", "execution_attestation"],
+      "propose_operations": ["budget_limit_change", "provider_console_budget_setup", "workflow_patch"],
+      "approval_required_operations": ["workflow_activation", "provider_switch", "production_change", "budget_limit_apply"],
+      "evidence_required": ["request_window", "provider_request_count", "attempt_count", "tool_evidence", "observation_ends_at", "human_review_state"],
+      "source_refs": ["src/provider_budget.py", "src/execution_runtime.py", "src/orchestration_control_plane.py", "config/n8n/orchestrator-safety-gate.workflow.json"]
+    }
+  ]
+}

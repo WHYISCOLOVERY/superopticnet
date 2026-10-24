@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superoptic.local/schemas/huawei-readonly-catalog.json",
+  "title": "SuperOptic Huawei read-only vendor catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "vendor",
+    "family",
+    "release",
+    "hardware_validated",
+    "sources",
+    "cli",
+    "snmp",
+    "private_mib_policy"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "vendor": { "const": "Huawei" },
+    "family": { "type": "string", "minLength": 1 },
+    "release": { "type": "string", "minLength": 1 },
+    "hardware_validated": { "type": "boolean" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "publisher", "title", "url", "status"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "publisher": { "const": "Huawei" },
+          "title": { "type": "string", "minLength": 1 },
+          "url": { "type": "string", "pattern": "^https://(info\\.)?support\\.huawei\\.com/" },
+          "status": { "enum": ["official_product_reference", "official_command_evidence", "official_snmp_guidance"] }
+        }
+      }
+    },
+    "cli": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cliEntry" }
+    },
+    "snmp": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/snmpEntry" }
+    },
+    "private_mib_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "enterprise_root", "bulk_walk_allowed", "required_artifacts"],
+      "properties": {
+        "status": { "const": "blocked_until_matching_release_mib_package" },
+        "enterprise_root": { "const": "1.3.6.1.4.1.2011" },
+        "bulk_walk_allowed": { "const": false },
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cliEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "risk", "status", "command_family", "context", "source_ids", "executable"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "risk": { "const": "read_only" },
+        "status": { "enum": ["active_mock_allowlist", "source_confirmed_syntax_unverified"] },
+        "command_family": { "type": "string", "pattern": "^display " },
+        "context": { "type": "string", "minLength": 1 },
+        "source_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "executable": { "type": "boolean" }
+      }
+    },
+    "snmpEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "oid", "operation", "access", "status", "mib"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "oid": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)+$" },
+        "operation": { "enum": ["get", "walk"] },
+        "access": { "const": "read_only" },
+        "status": { "const": "standards_verified_device_support_pending" },
+        "mib": { "enum": ["SNMPv2-MIB", "IF-MIB", "ENTITY-MIB"] }
+      }
+    }
+  }
+}

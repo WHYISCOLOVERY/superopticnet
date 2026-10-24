@@ -3,30 +3,56 @@ declare(strict_types=1);
 
 require __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
+require_once __DIR__ . '/ticket-resolution-lib.php';
 
 app_session_boot();
 $lang = app_lang();
 $token = (string) ($_GET['token'] ?? $_POST['token'] ?? '');
-$secret = app_config('portal_ticket_close_secret', app_config('olt_sso_shared_secret', 'superoptic-ticket-secret'));
-$payload = $token !== '' ? app_portal_verify_token($token, $secret) : null;
+$payload = $token !== '' ? app_ticket_resolution_token_payload($token) : null;
 $ticketId = is_array($payload) ? (string) ($payload['ticket_id'] ?? '') : '';
 $ticket = $ticketId !== '' ? app_portal_ticket_find($ticketId) : null;
+$user = app_portal_current_user();
+$resolutionRequestId = (string) ($_POST['resolution_request_id'] ?? bin2hex(random_bytes(16)));
+$actorAllowed = is_array($user) && is_array($ticket) && app_ticket_resolution_actor_allowed([
+    'assigned_technician_account_id' => (int) ($ticket['assigned_technician_id'] ?? 0),
+], is_array($payload) ? $payload : [], $user);
 $flash = null;
+
+if (is_array($payload) && $user === null) {
+    $_SESSION['portal_login_return_to'] = 'technician-close.php?token=' . rawurlencode($token);
+    header('Location: staff-login.php?status=auth_required');
+    exit;
+}
+
+if ($user !== null && is_array($ticket) && !$actorAllowed) {
+    $flash = ['type' => 'error', 'message' => 'Bu bilet yalniz teyin olunmus texnik ve ya admin terefinden yoxlanila biler.'];
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $csrfToken = (string) ($_POST['csrf_token'] ?? '');
     $reason = clean_text((string) ($_POST['reason'] ?? ''));
     $note = clean_text((string) ($_POST['note'] ?? ''));
+    $reportedState = clean_text((string) ($_POST['reported_state'] ?? ''));
+    $verificationMode = clean_text((string) ($_POST['verification_mode'] ?? 'auto'));
 
     if (!app_verify_csrf($csrfToken)) {
         $flash = ['type' => 'error', 'message' => 'Sessiya yoxlamasi ugursuz oldu.'];
-    } elseif ($token === '' || !$ticket) {
+    } elseif ($token === '' || !$ticket || !is_array($user)) {
         $flash = ['type' => 'error', 'message' => 'Bilet tapilmadi ve ya link vaxti bitib.'];
     } else {
-        $success = app_portal_close_ticket_by_token($token, $reason, $note);
+        $resolution = app_ticket_resolution_request(
+            $token,
+            $reason,
+            $note,
+            $reportedState,
+            $verificationMode,
+            $user,
+            $resolutionRequestId
+        );
+        $success = !empty($resolution['ok']);
+        $closed = !empty($resolution['closed']);
         $inventoryFailed = false;
-        if ($success) {
-            app_mgs_record_ticket_close($ticket, $reason, $note);
+        if ($closed && $reportedState === 'resolved') {
             $inventorySku = clean_text((string) ($_POST['inventory_sku'] ?? ''));
             $inventoryQuantity = (float) ($_POST['inventory_quantity'] ?? 0);
             if ($inventorySku !== '' && $inventoryQuantity > 0) {
@@ -46,9 +72,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ], true);
                 $inventoryFailed = empty($inventoryResult['ok']);
             }
-            app_mgs_rebuild_employee_work_snapshots();
         }
-        $redirectStatus = $success ? ($inventoryFailed ? 'technician_ticket_closed_inventory_failed' : 'technician_ticket_closed') : 'technician_ticket_failed';
+        $redirectStatus = match (true) {
+            !$success => 'technician_ticket_failed',
+            $inventoryFailed => 'technician_ticket_inventory_failed',
+            $closed => 'technician_ticket_closed',
+            (string) ($resolution['status'] ?? '') === 'manual_review_required' => 'technician_ticket_review_required',
+            default => 'technician_ticket_still_open',
+        };
         header('Location: technician-close.php?token=' . rawurlencode($token) . '&status=' . $redirectStatus . ($lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''));
         exit;
     }
@@ -59,8 +90,14 @@ if ($status === 'technician_ticket_closed') {
     $flash = ['type' => 'success', 'message' => 'Bilet ugurla baglandi.'];
 } elseif ($status === 'technician_ticket_closed_inventory_failed') {
     $flash = ['type' => 'error', 'message' => 'Bilet baglandi, amma inventar stokdan azalmadi. Stok qaliqini anbardar yoxlamalidir.'];
+} elseif ($status === 'technician_ticket_inventory_failed') {
+    $flash = ['type' => 'error', 'message' => 'Yoxlama qeyde alindi, amma inventar stokdan azalmadi. Anbardar stok qaligini yoxlamalidir.'];
+} elseif ($status === 'technician_ticket_review_required') {
+    $flash = ['type' => 'error', 'message' => 'Avtomatik yoxlama bu problem novune tetbiq edilmir. Bilet aciq saxlanildi ve mesul sexse yoxlama xeberdarligi gonderildi.'];
+} elseif ($status === 'technician_ticket_still_open') {
+    $flash = ['type' => 'error', 'message' => 'Problem hell olunmus kimi tesdiqlenmedi. Bilet aciq saxlanildi ve tekrar yoxlama novbesine qaytarildi.'];
 } elseif ($status === 'technician_ticket_failed') {
-    $flash = ['type' => 'error', 'message' => 'Bilet baglanmadi.'];
+    $flash = ['type' => 'error', 'message' => 'Baglanma sorgusu qeyde alinmadi. Melumatlari ve icazenizi yoxlayin.'];
 }
 
 $closeReasons = app_portal_ticket_close_reasons();
@@ -70,7 +107,7 @@ $closeReasons = app_portal_ticket_close_reasons();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bileti bagla</title>
+    <title>Bileti yoxla ve bagla</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
 </head>
@@ -78,8 +115,8 @@ $closeReasons = app_portal_ticket_close_reasons();
     <main class="portal-layout portal-close-layout">
         <section class="portal-card portal-reveal">
             <div class="portal-card-head">
-                <h1>Bileti bagla</h1>
-                <small>Texnik qeydi CRM ve musteri paneline yazilacaq.</small>
+                <h1>Bileti yoxla ve bagla</h1>
+                <small>Texnik qeydi, avtomatik olculer ve yekun netice CRM-de saxlanilacaq.</small>
             </div>
 
             <?php if ($flash !== null): ?>
@@ -104,6 +141,8 @@ $closeReasons = app_portal_ticket_close_reasons();
                         <span><strong>Erazi:</strong> <?= e((string) ($ticket['area'] ?? '')); ?></span>
                         <span><strong>Texnik:</strong> <?= e((string) ($ticket['assigned_technician_name'] ?? '')); ?></span>
                         <span><strong>Acilma:</strong> <?= e((string) ($ticket['opened_at'] ?? '')); ?></span>
+                        <span><strong>Son yoxlama:</strong> <?= e((string) ($ticket['resolution_verification_status'] ?? 'none')); ?></span>
+                        <span><strong>Cehd:</strong> <?= e((string) ($ticket['verification_attempts'] ?? 0)); ?></span>
                     </div>
                 </div>
 
@@ -112,10 +151,16 @@ $closeReasons = app_portal_ticket_close_reasons();
                         <strong>Bu bilet artiq baglanib.</strong>
                         <p><?= e((string) ($ticket['resolution_reason'] ?? '')); ?> / <?= e((string) ($ticket['resolution_note'] ?? '')); ?></p>
                     </div>
+                <?php elseif (!$actorAllowed): ?>
+                    <div class="portal-empty-state">
+                        <strong>Bu bilet sizin uzre deyil</strong>
+                        <p>Baglanma yoxlamasini yalniz teyin olunmus texnik ve ya admin icra ede biler.</p>
+                    </div>
                 <?php else: ?>
                     <form class="portal-stacked-form" method="post">
                         <input type="hidden" name="token" value="<?= e($token); ?>">
                         <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                        <input type="hidden" name="resolution_request_id" value="<?= e($resolutionRequestId); ?>">
                         <div class="portal-form-row">
                             <label for="reason">Baglanma sebebi</label>
                             <select id="reason" name="reason" required>
@@ -130,6 +175,21 @@ $closeReasons = app_portal_ticket_close_reasons();
                             <textarea id="note" name="note" rows="5" placeholder="Meselen: Fastconnector deyisdirildi, signal normallasdi." required></textarea>
                         </div>
                         <div class="portal-form-row">
+                            <label for="reported_state">Cari netice</label>
+                            <select id="reported_state" name="reported_state" required>
+                                <option value="">Neticeni secin</option>
+                                <option value="resolved">Problem hell olunub</option>
+                                <option value="unresolved">Problem davam edir</option>
+                            </select>
+                            <small>ONT temperaturu ve signal telemetriyasi, xidmet statusu ve RADIUS sessiyasi problem novune uygun avtomatik yoxlanilir.</small>
+                        </div>
+                        <?php if (is_array($user) && app_portal_is_admin($user)): ?>
+                            <input type="hidden" name="verification_mode" value="manual_override">
+                            <p class="hint">Admin olaraq bileti birbasa baglaya bilersiniz, avtomatik telemetriya yoxlamasi teleb olunmur.</p>
+                        <?php else: ?>
+                            <input type="hidden" name="verification_mode" value="auto">
+                        <?php endif; ?>
+                        <div class="portal-form-row">
                             <label>Istifade olunan inventar (optional)</label>
                             <div class="portal-grid-slim">
                                 <input type="text" name="inventory_sku" placeholder="SKU / barkod">
@@ -143,7 +203,7 @@ $closeReasons = app_portal_ticket_close_reasons();
                             </div>
                             <small>SKU ve say yazilsa, bilet baglananda anbar qaliqindan avtomatik cixilacaq.</small>
                         </div>
-                        <button type="submit" class="portal-primary-btn">Bileti bagla</button>
+                        <button type="submit" class="portal-primary-btn">Yoxla ve baglanma sorgusu yarat</button>
                     </form>
                 <?php endif; ?>
             <?php endif; ?>

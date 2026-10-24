@@ -30,7 +30,14 @@ $tierId = 0;
 $bracketId = 0;
 $qualityRuleId = 0;
 $paymentExternal = 'bonus-smoke-' . $run;
-$superActor = ['id' => 1, 'role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'super_admin', 'full_name' => 'Bonus Smoke Super'];
+$superActor = [
+    'id' => 1,
+    'role' => 'employee',
+    'account_type' => 'admin',
+    'employee_role' => 'super_admin',
+    'full_name' => 'Bonus Smoke Super',
+    'login' => 's.abdullayev@superoptic.net',
+];
 $financeActor = ['id' => 2, 'role' => 'employee', 'account_type' => 'operator', 'employee_role' => 'finance', 'full_name' => 'Bonus Smoke Finance'];
 $errors = [];
 
@@ -115,9 +122,25 @@ try {
     $expect((float) ($summaryRow['new_connection_bonus'] ?? 0) === 5.0, 'new_connection_bonus_wrong:' . (string) $summaryDebug);
     $expect((float) ($summaryRow['recurring_bonus'] ?? 0) === 1.0, 'recurring_bonus_wrong:' . (string) $summaryDebug);
 
-    $adjustment = app_bonus_save_adjustment($db, ['period_id' => $periodId, 'employee_id' => $employeeId, 'adjustment_type' => 'bonus', 'amount' => 10, 'reason' => 'smoke approved bonus'], $superActor);
+    // Real flow: finance proposes the adjustment (only manage_rules/super-admin
+    // can approve regardless of who creates it -- financeActor can never approve).
+    $adjustment = app_bonus_save_adjustment($db, ['period_id' => $periodId, 'employee_id' => $employeeId, 'adjustment_type' => 'bonus', 'amount' => 10, 'reason' => 'smoke approved bonus'], $financeActor);
     $adjustmentId = (int) ($adjustment['id'] ?? 0);
-    $expect(!empty($adjustment['ok']) && ($adjustment['status'] ?? '') === 'approved', 'adjustment_not_approved_for_super_admin');
+    $expect(!empty($adjustment['ok']) && ($adjustment['status'] ?? '') === 'pending', 'adjustment_not_pending_by_default');
+    $financeSelfApprove = app_bonus_update_adjustment_status($db, $adjustmentId, 'approved', $financeActor, 'smoke finance approve attempt');
+    $expect(($financeSelfApprove['error'] ?? '') === 'super_admin_required', 'finance_was_able_to_approve_adjustment');
+    $checkerApprove = app_bonus_update_adjustment_status($db, $adjustmentId, 'approved', $superActor, 'smoke checker approve');
+    $expect(!empty($checkerApprove['ok']), 'checker_approve_failed:' . (string) ($checkerApprove['error'] ?? ''));
+
+    // Edge case: the single super-admin creates their OWN adjustment proposal --
+    // maker-checker must still block them from approving it themselves, even
+    // though they hold the only approval permission in the system.
+    $selfProposed = app_bonus_save_adjustment($db, ['period_id' => $periodId, 'employee_id' => $employeeId, 'adjustment_type' => 'bonus', 'amount' => 3, 'reason' => 'smoke self-proposed bonus'], $superActor);
+    $selfProposedId = (int) ($selfProposed['id'] ?? 0);
+    $selfApprove = app_bonus_update_adjustment_status($db, $selfProposedId, 'approved', $superActor, 'smoke self-approve attempt');
+    $expect(($selfApprove['error'] ?? '') === 'creator_cannot_approve', 'super_admin_was_able_to_approve_own_adjustment');
+    $selfCancel = app_bonus_update_adjustment_status($db, $selfProposedId, 'cancelled', $superActor, 'smoke self-cancel (not an approval, allowed)');
+    $expect(!empty($selfCancel['ok']), 'super_admin_could_not_cancel_own_pending_adjustment');
 
     $recalc = app_bonus_calculate_period($db, '2001-01-01', '2001-01-31', $financeActor);
     $expect(!empty($recalc['ok']) && (int) ($recalc['period_id'] ?? 0) === $periodId, 'recalculate_duplicate_period');

@@ -28,6 +28,48 @@ function billing_require_employee(bool $adminOnly = false, ?string $requiredModu
     return $user;
 }
 
+function billing_actor_can_modify_customer(array $user): bool
+{
+    return app_portal_is_admin($user);
+}
+
+function billing_actor_can_manage_customer_network(array $user): bool
+{
+    if (app_portal_is_admin($user)) {
+        return true;
+    }
+
+    $role = strtolower(trim((string) ($user['employee_role'] ?? '')));
+    return in_array($role, ['operator', 'support', 'noc'], true);
+}
+
+function billing_actor_can_create_customer(array $user): bool
+{
+    if (app_portal_is_admin($user)) {
+        return true;
+    }
+
+    $role = strtolower(trim((string) ($user['employee_role'] ?? '')));
+    return in_array($role, ['operator', 'support'], true);
+}
+
+function billing_actor_can_change_customer_package(array $user): bool
+{
+    return billing_actor_can_create_customer($user);
+}
+
+function billing_reject_customer_write(array $user): void
+{
+    if (billing_actor_can_modify_customer($user)) {
+        return;
+    }
+
+    http_response_code(403);
+    header('Content-Type: text/html; charset=UTF-8');
+    echo '<!DOCTYPE html><html lang="az"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>403</title></head><body><h1>İcazə yoxdur</h1><p>Bu əməliyyat üçün səlahiyyətiniz yoxdur. İcazəli əməliyyatları müştəri profilindən seçin.</p><a href="billing-customers.php">Müştəri axtarışına qayıt</a></body></html>';
+    exit;
+}
+
 function billing_nav_groups(string $lang): array
 {
     $suffix = $lang !== 'az' ? '?lang=' . rawurlencode($lang) : '';
@@ -73,30 +115,30 @@ function billing_nav_groups(string $lang): array
             'links' => [
             ['key' => 'operations', 'label' => 'Operations Center', 'href' => 'operations-center.php' . $suffix],
             ['key' => 'mgs-integration', 'label' => 'Sistem servislari', 'href' => 'mgs-integration.php' . $suffix],
-            ['key' => 'dashboard', 'label' => 'Ana sÉ™hifÉ™', 'href' => 'billing-dashboard.php' . $suffix],
+            ['key' => 'dashboard', 'label' => 'Ana səhifə', 'href' => 'billing-dashboard.php' . $suffix],
             ['key' => 'statistics', 'label' => 'Statistika', 'href' => 'billing-statistics.php' . $suffix],
             ],
         ],
-        'MÃ¼ÅŸtÉ™rilÉ™r' => [
+        'Müştərilər' => [
             'icon' => 'fa-users',
             'links' => [
-            ['key' => 'customers', 'label' => 'MÃ¼ÅŸtÉ™ri siyahÄ±sÄ±', 'href' => 'billing-customers.php' . $suffix],
-            ['key' => 'customer-create', 'label' => 'Yeni mÃ¼ÅŸtÉ™ri', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'create=1'],
-            ['key' => 'customers-active', 'label' => 'Aktiv mÃ¼ÅŸtÉ™rilÉ™r', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'status_filter=billing_active'],
-            ['key' => 'customers-risk', 'label' => 'Riskli mÃ¼ÅŸtÉ™rilÉ™r', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'status_filter=billing_inactive'],
+            ['key' => 'customers', 'label' => 'Müştəri siyahısı', 'href' => 'billing-customers.php' . $suffix],
+            ['key' => 'customer-create', 'label' => 'Yeni müştəri', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'create=1'],
+            ['key' => 'customers-active', 'label' => 'Aktiv müştərilər', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'status_filter=billing_active'],
+            ['key' => 'customers-risk', 'label' => 'Riskli müştərilər', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'status_filter=billing_inactive'],
             ['key' => 'customer-intelligence', 'label' => 'Customer intelligence', 'href' => 'billing-customers.php' . ($suffix === '' ? '?' : $suffix . '&') . 'intel=full'],
             ],
         ],
         'Billing' => [
             'icon' => 'fa-wallet',
             'links' => [
-            ['key' => 'payments', 'label' => 'Ã–dÉ™niÅŸ siyahÄ±sÄ±', 'href' => 'billing-payments.php' . $suffix],
-            ['key' => 'cash', 'label' => 'NaÄŸd Ã¶dÉ™niÅŸ', 'href' => 'billing-cash-payment.php' . $suffix],
+            ['key' => 'payments', 'label' => 'Ödəniş siyahısı', 'href' => 'billing-payments.php' . $suffix],
+            ['key' => 'cash', 'label' => 'Nağd ödəniş', 'href' => 'billing-cash-payment.php' . $suffix],
             ['key' => 'finance', 'label' => 'Maliyye / xercler', 'href' => 'operations-center.php?section=finance'],
-            ['key' => 'profiles', 'label' => 'PaketlÉ™r', 'href' => 'radius-billing.php' . $suffix . '#tariffs'],
+            ['key' => 'profiles', 'label' => 'Paketlər', 'href' => 'radius-billing.php' . $suffix . '#tariffs'],
             ['key' => 'ip-pools', 'label' => 'IP pool engine', 'href' => 'ip-pools.php' . $suffix],
             ['key' => 'pools', 'label' => 'Legacy poollar', 'href' => 'radius-billing.php' . $suffix . '#pools'],
-            ['key' => 'requests', 'label' => 'MÃ¼raciÉ™tlÉ™r', 'href' => 'billing-requests.php' . $suffix],
+            ['key' => 'requests', 'label' => 'Müraciətlər', 'href' => 'billing-requests.php' . $suffix],
             ['key' => 'billing-check', 'label' => 'Billing yoxlama', 'href' => 'billing-operations-check.php' . $suffix],
             ],
         ],
@@ -119,17 +161,17 @@ function billing_nav_groups(string $lang): array
             'icon' => 'fa-satellite-dish',
             'links' => [
             ['key' => 'radius-active', 'label' => 'Online sessiyalar', 'href' => 'radius-active.php' . $suffix],
-            ['key' => 'radius-nas', 'label' => 'NAS cihazlarÄ±', 'href' => 'radius-nas.php' . $suffix],
-            ['key' => 'radius-stats', 'label' => 'Reject/Auth statistikasÄ±', 'href' => 'billing-statistics.php' . $suffix . '#radius-stats'],
-            ['key' => 'radius-logs', 'label' => 'RADIUS loglarÄ±', 'href' => 'radius-logs.php' . $suffix],
-            ['key' => 'radius-natlog', 'label' => 'NAT log axtarÄ±ÅŸÄ±', 'href' => 'radius-natlog.php' . $suffix],
+            ['key' => 'radius-nas', 'label' => 'NAS cihazları', 'href' => 'radius-nas.php' . $suffix],
+            ['key' => 'radius-stats', 'label' => 'Reject/Auth statistikası', 'href' => 'billing-statistics.php' . $suffix . '#radius-stats'],
+            ['key' => 'radius-logs', 'label' => 'RADIUS logları', 'href' => 'radius-logs.php' . $suffix],
+            ['key' => 'radius-natlog', 'label' => 'NAT log axtarışı', 'href' => 'radius-natlog.php' . $suffix],
             ],
         ],
         'OLT / ONT' => [
             'icon' => 'fa-diagram-project',
             'links' => [
-            ['key' => 'olt-list', 'label' => 'OLT siyahÄ±sÄ±', 'href' => 'portal.php' . $suffix . '#olt-panel'],
-            ['key' => 'ont-list', 'label' => 'ONT siyahÄ±sÄ±', 'href' => 'portal.php' . $suffix . '#ont-panel'],
+            ['key' => 'olt-list', 'label' => 'OLT siyahısı', 'href' => 'portal.php' . $suffix . '#olt-panel'],
+            ['key' => 'ont-list', 'label' => 'ONT siyahısı', 'href' => 'portal.php' . $suffix . '#ont-panel'],
             ['key' => 'ont-search', 'label' => 'ONT axtaris', 'href' => 'noc-devices.php?view=ont-search' . ($suffix !== '' ? '&' . ltrim($suffix, '?') : '')],
             ['key' => 'olt-bridge', 'label' => 'OLT / ONT paneli', 'href' => 'noc-devices.php?view=devices' . ($suffix !== '' ? '&' . ltrim($suffix, '?') : '')],
             ['key' => 'optical', 'label' => 'Optik siqnal analizi', 'href' => 'billing-statistics.php' . $suffix . '#optical'],
@@ -138,9 +180,9 @@ function billing_nav_groups(string $lang): array
         'Tickets' => [
             'icon' => 'fa-ticket',
             'links' => [
-            ['key' => 'tickets', 'label' => 'AÃ§Ä±q ticketlÉ™r', 'href' => 'crm.php' . $suffix],
-            ['key' => 'tickets-sla', 'label' => 'SLA gecikÉ™nlÉ™r', 'href' => 'crm.php' . $suffix . '#sla'],
-            ['key' => 'tickets-closed', 'label' => 'BaÄŸlanmÄ±ÅŸ ticketlÉ™r', 'href' => 'crm.php' . $suffix . '#closed'],
+            ['key' => 'tickets', 'label' => 'Açıq ticketlər', 'href' => 'crm.php' . $suffix],
+            ['key' => 'tickets-sla', 'label' => 'SLA gecikənlər', 'href' => 'crm.php' . $suffix . '#sla'],
+            ['key' => 'tickets-closed', 'label' => 'Bağlanmış ticketlər', 'href' => 'crm.php' . $suffix . '#closed'],
             ['key' => 'technical-work', 'label' => 'Texniki isler', 'href' => 'operations-center.php?section=technical'],
             ],
         ],
@@ -152,18 +194,18 @@ function billing_nav_groups(string $lang): array
             ['key' => 'critical-stock', 'label' => 'Kritik stok', 'href' => 'operations-center.php?section=inventory&focus=critical-stock'],
             ],
         ],
-        'SMS & BildiriÅŸlÉ™r' => [
+        'SMS & Bildirişlər' => [
             'icon' => 'fa-message',
             'links' => [
-            ['key' => 'messages', 'label' => 'Mesaj mÉ™rkÉ™zi', 'href' => 'message-center.php' . $suffix],
-            ['key' => 'message-templates', 'label' => 'SMS ÅŸablonlarÄ±', 'href' => 'message-center.php' . $suffix . '#templates'],
+            ['key' => 'messages', 'label' => 'Mesaj mərkəzi', 'href' => 'message-center.php' . $suffix],
+            ['key' => 'message-templates', 'label' => 'SMS şablonları', 'href' => 'message-center.php' . $suffix . '#templates'],
             ['key' => 'campaigns', 'label' => 'Kampaniyalar', 'href' => 'campaigns.php' . $suffix],
             ],
         ],
         'Analitika' => [
             'icon' => 'fa-chart-line',
             'links' => [
-            ['key' => 'analytics-revenue', 'label' => 'GÉ™lir analitikasÄ±', 'href' => 'billing-statistics.php' . $suffix . '#revenue'],
+            ['key' => 'analytics-revenue', 'label' => 'Gəlir analitikası', 'href' => 'billing-statistics.php' . $suffix . '#revenue'],
             ['key' => 'analytics-churn', 'label' => 'Churn/risk', 'href' => 'billing-statistics.php' . $suffix . '#risk'],
             ['key' => 'analytics-traffic', 'label' => 'Trafik analizi', 'href' => 'billing-statistics.php' . $suffix . '#traffic'],
             ['key' => 'traffic-monetization', 'label' => 'Traffic monetization', 'href' => 'billing-statistics.php' . $suffix . '#traffic-monetization'],
@@ -183,7 +225,7 @@ function billing_nav_groups(string $lang): array
         'Ayarlar' => [
             'icon' => 'fa-sliders',
             'links' => [
-            ['key' => 'settings-radius', 'label' => 'Rollar vÉ™ icazÉ™lÉ™r', 'href' => 'portal.php' . $suffix . '#roles'],
+            ['key' => 'settings-radius', 'label' => 'Rollar və icazələr', 'href' => 'portal.php' . $suffix . '#roles'],
             ['key' => 'identity-integrations', 'label' => 'MyGov ID / SSO', 'href' => 'identity-integrations.php' . $suffix],
             ['key' => 'copilot-context', 'label' => 'Copilot konteksti', 'href' => 'mgs-copilot-context.php' . $suffix],
             ['key' => 'area-code-prefixes', 'label' => 'Erazi kod prefixleri', 'href' => 'area-code-prefixes.php' . $suffix],
@@ -418,12 +460,12 @@ function billing_page_title(string $title): string
     if (str_contains($lower, 'profil')) {
         return 'Musteri profili';
     }
-    if (str_contains($lower, 'billing') && (str_contains($title, 'Ãƒ') || str_contains($title, 'Ã…') || str_contains($title, 'Ã‰'))) {
+    if (str_contains($lower, 'billing') && (str_contains($title, 'Ã') || str_contains($title, 'Å') || str_contains($title, 'É'))) {
         return 'Billing musterileri';
     }
 
     return match ($title) {
-        'NaÃ„Å¸d ÃƒÂ¶dÃ‰â„¢niÃ…Å¸' => 'Nagd odenis',
+        'Nağd ödəniş' => 'Nagd odenis',
         default => $title,
     };
 }
@@ -459,6 +501,13 @@ function billing_render_header(string $title, string $active, string $lang): voi
                 }
             }
             ?>
+            <?php if (count($links) === 1): ?>
+                <a class="billing-nav-direct<?= $isOpen ? ' is-active-group' : ''; ?>" href="<?= e(billing_nav_link_href($links[0])); ?>"<?= $isOpen ? ' aria-current="page"' : ''; ?>>
+                    <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
+                    <span><?= e(billing_nav_group_label((string) $groupTitle, $group)); ?></span>
+                </a>
+                <?php continue; ?>
+            <?php endif; ?>
             <details class="billing-nav-group<?= $isOpen ? ' is-active-group' : ''; ?>" name="billing-nav" data-module-nav-group>
                 <summary class="billing-nav-title">
                     <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
@@ -507,6 +556,7 @@ function billing_render_header(string $title, string $active, string $lang): voi
             nav.style.setProperty('--billing-nav-popover-left', `${left}px`);
             nav.style.setProperty('--billing-nav-popover-width', `${width}px`);
         };
+        const canHover = window.matchMedia && window.matchMedia('(hover: hover)').matches;
         groups.forEach((group) => {
             group.addEventListener('toggle', () => {
                 if (group.open) {
@@ -514,7 +564,18 @@ function billing_render_header(string $title, string $active, string $lang): voi
                 }
                 requestAnimationFrame(syncPopover);
             });
+            if (canHover) {
+                // Desktop: mouse üstünə gələndə aç (ox-klikə ehtiyac yoxdur).
+                group.addEventListener('mouseenter', () => { closeAll(group); group.open = true; });
+                const summary = group.querySelector('.billing-nav-title');
+                if (summary) { summary.addEventListener('click', (event) => event.preventDefault()); }
+            }
         });
+        if (canHover) {
+            let leaveTimer = null;
+            nav.addEventListener('mouseleave', () => { leaveTimer = setTimeout(() => { closeAll(); syncPopover(); }, 150); });
+            nav.addEventListener('mouseenter', () => { if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; } });
+        }
         document.addEventListener('click', (event) => {
             if (!nav.contains(event.target)) {
                 closeAll();
@@ -531,27 +592,6 @@ function billing_render_header(string $title, string $active, string $lang): voi
         window.addEventListener('scroll', syncPopover, {passive: true});
         syncPopover();
 
-        const syncMobileTables = () => {
-            document.querySelectorAll('.portal-table').forEach((table) => {
-                const headers = Array.from(table.querySelectorAll('thead th')).map((header) => header.textContent.trim());
-                table.querySelectorAll('tbody tr').forEach((row) => {
-                    Array.from(row.children).forEach((cell, index) => {
-                        if (!cell.dataset.label && headers[index]) {
-                            cell.dataset.label = headers[index];
-                        }
-                    });
-                });
-            });
-        };
-        syncMobileTables();
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', syncMobileTables, {once: true});
-        } else {
-            requestAnimationFrame(syncMobileTables);
-        }
-        const tableObserver = new MutationObserver(() => requestAnimationFrame(syncMobileTables));
-        tableObserver.observe(document.body, {childList: true, subtree: true});
-        document.addEventListener('superoptic:table-refresh', syncMobileTables);
     })();
     </script>
     <?php app_render_copilot_widget($lang); ?>
@@ -843,6 +883,10 @@ function billing_mock_date_to_sql(mixed $value, string $fallback = ''): string
 
 function billing_mock_customer_rows(): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $data = app_mock_portal_data();
     $rows = [];
     $index = 0;
@@ -900,6 +944,10 @@ function billing_mock_customer_rows(): array
 
 function billing_mock_payment_rows(): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $rows = [];
     $index = 0;
 
@@ -931,6 +979,10 @@ function billing_mock_payment_rows(): array
 
 function billing_mock_radius_rows(): array
 {
+    if (!app_demo_fixtures_enabled()) {
+        return [];
+    }
+
     $rows = [];
     $index = 0;
 

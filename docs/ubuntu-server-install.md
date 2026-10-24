@@ -49,7 +49,7 @@ sudo APP_DOMAIN='billing.superoptic.net' \
 Əgər script birbaşa `superopticnet` qovluğunun içindən işə salınırsa:
 
 ```bash
-sudo SOURCE_WEB_ROOT="$PWD" SOURCE_MGS_ROOT="/opt/source/oltidareetme" bash deploy/ubuntu-install-superoptic-mgs.sh
+sudo SOURCE_WEB_ROOT="$PWD" SKIP_MGS_NPM_INSTALL=1 bash deploy/ubuntu-install-superoptic-mgs.sh
 ```
 
 ## Dry-run
@@ -57,7 +57,7 @@ sudo SOURCE_WEB_ROOT="$PWD" SOURCE_MGS_ROOT="/opt/source/oltidareetme" bash depl
 Serverə toxunmadan nə edəcəyini görmək üçün:
 
 ```bash
-sudo DRY_RUN=1 SOURCE_WEB_ROOT="$PWD" SOURCE_MGS_ROOT="/path/to/oltidareetme" bash deploy/ubuntu-install-superoptic-mgs.sh
+sudo DRY_RUN=1 SOURCE_WEB_ROOT="$PWD" SKIP_MGS_NPM_INSTALL=1 bash deploy/ubuntu-install-superoptic-mgs.sh
 ```
 
 ## Apache
@@ -93,7 +93,6 @@ docs/ubuntu-freeradius-connect.md
 
 ```bash
 systemctl status apache2
-systemctl status superoptic-mgs-node
 systemctl list-timers 'superoptic-*'
 ```
 

@@ -9,8 +9,14 @@ function app_render_copilot_widget(string $lang = 'az'): void
     if ($rendered) {
         return;
     }
+    $viewer = function_exists('app_portal_current_user') ? app_portal_current_user() : null;
+    if (!is_array($viewer) || (string) ($viewer['role'] ?? '') !== 'employee') {
+        return;
+    }
     $rendered = true;
     $csrf = app_csrf_token();
+    $scriptDir = rtrim(str_replace('\\', '/', dirname((string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php'))), '/');
+    $copilotEndpoint = $scriptDir . '/api/copilot/agent-chat.php';
     ?>
     <section class="billing-copilot-widget" data-copilot-widget aria-label="Superpilot">
         <button class="billing-copilot-toggle" type="button" data-copilot-toggle>
@@ -32,7 +38,7 @@ function app_render_copilot_widget(string $lang = 'az'): void
                     "bos trafik saatlari ve traffic monetization teklifleri hansilardir?"
                 </div>
             </div>
-            <form class="billing-copilot-form" data-copilot-form>
+            <form class="billing-copilot-form" data-copilot-form data-endpoint="<?= e($copilotEndpoint); ?>">
                 <input type="hidden" name="csrf_token" value="<?= e($csrf); ?>">
                 <textarea name="question" rows="4" maxlength="1200" placeholder="Musteri kodu, SN/MAC, emekdas adi ve ya problem yazin..." required></textarea>
                 <button type="submit">Superpilotdan sorus</button>
@@ -56,7 +62,7 @@ function app_render_copilot_widget(string $lang = 'az'): void
         .billing-copilot-form{display:grid;gap:9px;padding:12px;background:#fff;border-top:1px solid rgba(148,163,184,.2)}
         .billing-copilot-form textarea{width:100%;resize:vertical;min-height:78px;max-height:150px;border:1px solid rgba(148,163,184,.35);border-radius:15px;padding:11px;font:inherit}
         .billing-copilot-form button{justify-self:end;border:0;border-radius:999px;background:#ff8a4c;color:#111827;padding:10px 16px;font-weight:900;cursor:pointer}
-        @media (max-width:680px){.billing-copilot-widget{right:10px;bottom:10px;left:auto}.billing-copilot-toggle{margin-left:auto;padding:10px 13px}.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(78vh,640px);border-radius:20px}.billing-copilot-head{padding:12px 14px}.billing-copilot-log{padding:12px}.billing-copilot-form textarea{min-height:72px;max-height:120px}.billing-copilot-form button{width:100%;justify-self:stretch}}
+        @media (max-width:680px){.billing-copilot-widget{position:static;display:flex;justify-content:flex-end;padding:10px 12px 16px}.billing-copilot-toggle{margin-left:auto;padding:10px 13px}.billing-copilot-panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(78vh,640px);border-radius:20px}.billing-copilot-head{padding:12px 14px}.billing-copilot-log{padding:12px}.billing-copilot-form textarea{min-height:72px;max-height:120px}.billing-copilot-form button{width:100%;justify-self:stretch}}
     </style>
     <script>
     (() => {
@@ -81,6 +87,13 @@ function app_render_copilot_widget(string $lang = 'az'): void
         close.addEventListener('click', () => {
             panel.hidden = true;
         });
+        const submitBtn = form.querySelector('button[type="submit"]');
+        form.question.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                form.requestSubmit();
+            }
+        });
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             const data = new FormData(form);
@@ -88,8 +101,14 @@ function app_render_copilot_widget(string $lang = 'az'): void
             if (!question) return;
             append(question, 'user');
             form.question.value = '';
+            submitBtn.disabled = true;
+            const wait = document.createElement('div');
+            wait.className = 'billing-copilot-msg is-bot';
+            wait.textContent = 'Superpilot arasdirir...';
+            log.appendChild(wait);
+            log.scrollTop = log.scrollHeight;
             try {
-                const response = await fetch('api/copilot/agent-chat.php', {
+                const response = await fetch(form.dataset.endpoint, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     credentials: 'same-origin',
@@ -98,10 +117,20 @@ function app_render_copilot_widget(string $lang = 'az'): void
                         question,
                     }),
                 });
-                const payload = await response.json();
-                append(String(payload.text || payload.reason || 'Cavab alina bilmedi.'), payload.ok ? 'bot' : 'error');
+                let payload = null;
+                try { payload = await response.json(); } catch (parseError) { payload = null; }
+                wait.remove();
+                if (!payload) {
+                    append('Server cavabi oxunmadi (HTTP ' + response.status + '). Sehifeni yenileyib yeniden cehd edin.', 'error');
+                } else {
+                    append(String(payload.text || payload.reason || 'Cavab alina bilmedi.'), payload.ok ? 'bot' : 'error');
+                }
             } catch (error) {
+                wait.remove();
                 append('Superpilot API cavab vermedi: ' + (error && error.message ? error.message : 'network error'), 'error');
+            } finally {
+                submitBtn.disabled = false;
+                form.question.focus();
             }
         });
     })();

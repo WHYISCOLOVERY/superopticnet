@@ -1,40 +1,51 @@
-# Fayl sahibliyi
+# Fayl sahibliyi - Cross-module defect duzelisi (2026-08-02 round)
 
-Aktiv WhatsApp Monitoring tapsirigi ucun daraldilmis fayl serhedleri asagidadir.
+Bu sened evvelki WhatsApp-only sahiblik siyahisini legv etmir, bu round ucun genisləndirir. Evvelki siyahi asagida "Evvelki round sahibliyi" bolmesinde qorunur.
 
-## A. Codex backend fayllari
+## Claude Code (bu round)
 
-- `whatsapp-monitor-lib.php`
-- `api/whatsapp-monitor/**`
-- `whatsapp-monitor.php` daxilindeki auth, POST action ve AJAX data wiring
-- `whatsapp-bridge/server.js`
-- `tools/whatsapp-*.php`
-- `tools/full-system-regression.php`
+Implementasiya lideri kimi asagidaki sahelerde oxuma+yazma icazesi var:
 
-Claude bu fayllari yalniz oxuya biler; deyise bilmez.
+- Billing: `billing-*.php`, `views/billing/**`
+- Maliyye: `finance-*.php`, `views/finance/**`
+- HR: `hr-*.php`, `views/hr/**`
+- Anbar: `inventory-*.php`, `views/inventory/**`
+- Sebeke/NOC: `noc-*.php`, `operations-center.php`, `mgs-integration*.php`, `router-registry-lib.php`, `radius-*.php`, `network-definitions.php`, `noc-authorization-lib.php`
+- Mesaj Merkezi/SMS/Telegram/WhatsApp: `message-center.php`, `whatsapp-monitor*.php`, `communication-*.php`, `views/whatsapp-monitor/**`, `form-telegram.php`, `script/message-center.js`, `script/whatsapp-monitor.js`, `css/message-center.css`, `css/whatsapp-monitor.css`
+- Statistika: `statistics-center*.php`, `views/statistics/**`, `problem-statistics.php`
+- CRM: `crm.php`
+- Rol/admin: `admin-users.php`, `admin-positions.php`, `role-agent-lib.php`, `operations-permission-lib.php`, `feature-flags-lib.php`
+- Portal shell: `portal.php`, `portal-actions.php`, `portal-login.php`, `index.php`, `config.php`, `page-helpers.php`, `views/_module-group-nav.php`, `css/portal.css`, `script/portal.js`
+- Elaqeli `api/**` endpoint-leri ve service/lib fayllari, yalniz movcud is axinini duzeltmek ucun
+- `db/schema.sql` ve `db/migrations/**`: YALNIZ elave (additive), versiyali, rollback-li migration yolu ile
+- Elaqeli `tools/*-smoke.php` test fayllari
 
-## B. Claude frontend fayllari
+## Qadağan olunan sahe (bu roundda da)
 
-- `views/whatsapp-monitor/**`
-- WhatsApp modulu ucun yeni `css/whatsapp-monitor.css`
-- WhatsApp modulu ucun yeni `script/whatsapp-monitor.js`
-- yalniz WhatsApp gorunusu yaradan yeni partial ve komponentler
+- Production secrets, `.env*`, `config.local.php`, real provider credential
+- Real SMS/Telegram/WhatsApp gonderisi ve ya canli RADIUS/OLT/router emeliyyati tetikleyen kod yollarinin production-da icrasi
+- Destruktiv/geri qaytarilmaz DB emeliyyati (DROP/TRUNCATE/data-loss migration)
 
-Codex inteqrasiya merhelesinde bu fayllari sebebsiz yeniden dizayn etmemelidir.
+## Codex
 
-## C. Qarisiq fayllar
+- Implementasiyadan sonra review, regression ve production tehlukesizlik tesdiqi
+- `.ai-collaboration/**` yekun hesabat fayllarinin bu rounddan evvelki tarixi qeydleri
 
-- `whatsapp-monitor.php`
+## Evvelki round sahibliyi (COMPLETE, qorunub, bu roundda evez olunub)
 
-Claude `whatsapp-monitor.php` faylinda yalniz frontend script/style importu ve gorunus wiring hissesine toxuna biler. Auth, POST action, CSRF ve context yaratma hissesini deyise bilmez.
+WhatsApp round-da Claude yalniz bu fayllara malik idi: `views/whatsapp-monitor/chats.php`, `views/whatsapp-monitor/screen-wall.php`, `css/whatsapp-monitor.css`, netice qeydi ucun `.ai-collaboration/CLAUDE_FRONTEND_RESULT.md`. Qalan her sey (`communication-provider.php`, `message-center.php`, `whatsapp-monitor-lib.php`, API-ler, JS, `whatsapp-bridge/**`) Codex-e aid idi. Bu dar serhed bu round ucun yuxaridaki genis sahiblik ile evez olunub.
+
+## Deyisdirilmez contract saheleri (butun roundlarda)
+
+- form `action`, `name`, `value` ve hidden input-lar movcud is axinlarinda sebebsiz deyisdirilmir
+- auth, rol, permission, CSRF, DB ve audit qaydalari zeiflədilmir
+- message ingest ve pairing worker token contracti
+- `number_id`, `chat_id`, `after_id` query adlari
 
 ## Runtime ve mexfi saheler
 
-Asagidaki yollar hec bir agente source deyisikliyi ucun verilmir:
-
 - `config.local.php`
-- `whatsapp-bridge/.env`
+- `.env*`
+- `tmp/**`
 - `whatsapp-bridge/.wwebjs_auth/**`
 - `whatsapp-bridge/.wwebjs_cache/**`
-- `tmp/**`
-- `.tools/**`

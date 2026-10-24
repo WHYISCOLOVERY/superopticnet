@@ -39,7 +39,15 @@ if (!$db instanceof PDO) {
     $importedDebtIds = [];
     $paymentId = 0;
     $batchId = '';
+    $importedFinanceEntryIds = [];
     $runId = bin2hex(random_bytes(4));
+    $financeActor = [
+        'id' => 987654,
+        'role' => 'employee',
+        'account_type' => 'operator',
+        'employee_role' => 'finance',
+        'full_name' => 'Smoke Finance',
+    ];
 
     try {
         $debt = app_mgs_save_finance_debt_record([
@@ -49,7 +57,7 @@ if (!$db instanceof PDO) {
             'amount' => 500,
             'document_no' => 'PAY-' . $runId,
             'due_date' => '2026-12-31',
-        ], ['id' => 987654, 'full_name' => 'Smoke Finance'], $db);
+        ], $financeActor, $db);
         $debtId = (int) ($debt['id'] ?? 0);
         if (empty($debt['ok']) || $debtId <= 0) {
             $errors[] = 'debt_seed_failed';
@@ -62,7 +70,7 @@ if (!$db instanceof PDO) {
                 'payment_method' => 'cash',
                 'reference_no' => 'PAYREF-' . $runId,
                 'note' => 'Smoke partial payment',
-            ], ['id' => 987654, 'full_name' => 'Smoke Finance'], $db);
+            ], $financeActor, $db);
             $paymentId = (int) ($payment['id'] ?? 0);
             if (empty($payment['ok']) || $paymentId <= 0) {
                 $errors[] = 'debt_payment_save_failed';
@@ -80,7 +88,7 @@ if (!$db instanceof PDO) {
                 'payment_date' => '2026-06-26',
                 'payment_method' => 'bank',
                 'reference_no' => 'CLOSEREF-' . $runId,
-            ], ['id' => 987654, 'full_name' => 'Smoke Finance'], $db);
+            ], $financeActor, $db);
             if (empty($closing['ok'])) {
                 $errors[] = 'debt_closing_payment_failed';
             }
@@ -116,7 +124,7 @@ if (!$db instanceof PDO) {
             $errors[] = 'e_invoice_parse_failed';
         }
 
-        $import = app_mgs_import_finance_e_invoice_rows($eInvoiceText, ['id' => 987654, 'full_name' => 'Smoke Finance'], $db);
+        $import = app_mgs_import_finance_e_invoice_rows($eInvoiceText, $financeActor, $db);
         $batchId = (string) ($import['batch_id'] ?? '');
         $importedDebtIds = array_map('intval', (array) ($import['debt_ids'] ?? []));
         if (empty($import['ok']) || (int) ($import['imported'] ?? 0) !== 2 || count($importedDebtIds) !== 2) {
@@ -135,6 +143,14 @@ if (!$db instanceof PDO) {
         }
         if (!$importHit) {
             $errors[] = 'e_invoice_import_rows_missing';
+        }
+        if ($batchId !== '') {
+            $entryIds = $db->prepare(
+                'SELECT finance_entry_id FROM finance_e_invoice_imports
+                  WHERE import_batch = :batch_id AND finance_entry_id IS NOT NULL'
+            );
+            $entryIds->execute(['batch_id' => $batchId]);
+            $importedFinanceEntryIds = array_map('intval', $entryIds->fetchAll(PDO::FETCH_COLUMN) ?: []);
         }
 
         $csv = app_mgs_export_finance_e_invoice_csv($db, 'all');
@@ -169,6 +185,18 @@ if (!$db instanceof PDO) {
             try {
                 $cleanup = $db->prepare('DELETE FROM finance_e_invoice_imports WHERE import_batch = :batch_id');
                 $cleanup->execute(['batch_id' => $batchId]);
+            } catch (Throwable) {
+            }
+            try {
+                $cleanup = $db->prepare('DELETE FROM finance_e_invoice_batches WHERE batch_key = :batch_id');
+                $cleanup->execute(['batch_id' => $batchId]);
+            } catch (Throwable) {
+            }
+        }
+        foreach (array_filter($importedFinanceEntryIds, static fn (int $id): bool => $id > 0) as $entryId) {
+            try {
+                $cleanup = $db->prepare('DELETE FROM finance_entries WHERE id = :id');
+                $cleanup->execute(['id' => $entryId]);
             } catch (Throwable) {
             }
         }

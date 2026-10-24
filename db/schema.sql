@@ -44,6 +44,32 @@ CREATE TABLE IF NOT EXISTS portal_account_areas (
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS portal_password_recovery_requests (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    account_id BIGINT UNSIGNED NOT NULL,
+    channel VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
+    token_hash CHAR(64) NOT NULL,
+    code_hash CHAR(64) NOT NULL,
+    destination_hash CHAR(64) NOT NULL,
+    requested_ip_hash CHAR(64) NOT NULL,
+    attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 5,
+    expires_at DATETIME NOT NULL,
+    consumed_at DATETIME DEFAULT NULL,
+    invalidated_at DATETIME DEFAULT NULL,
+    created_by_account_id BIGINT UNSIGNED DEFAULT NULL,
+    metadata_json LONGTEXT DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_portal_password_recovery_token (token_hash),
+    KEY idx_portal_password_recovery_account (account_id, created_at),
+    KEY idx_portal_password_recovery_expiry (expires_at, consumed_at, invalidated_at),
+    CONSTRAINT fk_portal_password_recovery_account
+        FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_portal_password_recovery_actor
+        FOREIGN KEY (created_by_account_id) REFERENCES portal_accounts(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS portal_tickets (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     ticket_no VARCHAR(32) NOT NULL,

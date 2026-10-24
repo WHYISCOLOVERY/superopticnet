@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_db_migrations_20260719_010_stage0_payment_outbox_php", "label": "20260719_010_stage0_payment_outbox.php", "file_type": "code", "source_file": "db/migrations/20260719_010_stage0_payment_outbox.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

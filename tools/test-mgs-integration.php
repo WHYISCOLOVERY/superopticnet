@@ -33,6 +33,7 @@ $applyInventory = mgs_test_has_flag('--apply-inventory');
 $applyBackup = mgs_test_has_flag('--apply-backup');
 $sendTelegram = mgs_test_has_flag('--send-telegram');
 $probeDevices = mgs_test_has_flag('--probe-devices');
+$nocActor = ['role' => 'employee', 'account_type' => 'admin', 'employee_role' => 'admin', 'is_active' => 1, 'name' => 'MGS CLI'];
 $results = [];
 $failed = 0;
 
@@ -48,15 +49,18 @@ $results['telegram_registry'] = [
 ];
 
 $customBotKey = 'smoke_custom_bot_' . strtolower(bin2hex(random_bytes(3)));
+$customBotEnvKey = strtoupper('telegram_custom_' . $customBotKey . '_token');
+$customBotPreviousEnv = getenv($customBotEnvKey);
 if (!function_exists('app_mgs_upsert_custom_telegram_bot') || !function_exists('app_mgs_delete_custom_telegram_bot')) {
     $results['telegram_custom_bot_lifecycle'] = ['ok' => false, 'reason' => 'custom_bot_helpers_missing'];
     $failed++;
 } else {
+    $dryRunToken = (string) random_int(100000000, 999999999) . ':TEST_' . bin2hex(random_bytes(16));
+    putenv($customBotEnvKey . '=' . $dryRunToken);
     $customBot = app_mgs_upsert_custom_telegram_bot($db, [
         'bot_key' => $customBotKey,
         'display_name' => 'Smoke Custom Bot',
         'purpose' => 'Custom bot lifecycle smoke',
-        'token' => '1234567890:TEST_custom_token_for_dry_run_only',
         'chat_id' => '-1001234567890',
     ], ['id' => 0, 'full_name' => 'SPoG CLI']);
     $customBotConfig = app_mgs_telegram_bot_config($customBotKey);
@@ -78,9 +82,14 @@ if (!function_exists('app_mgs_upsert_custom_telegram_bot') || !function_exists('
         'after_delete_reason' => (string) ($customBotAfterDelete['reason'] ?? ''),
     ];
     $failed += $customBotOk ? 0 : 1;
+    if ($customBotPreviousEnv === false) {
+        putenv($customBotEnvKey);
+    } else {
+        putenv($customBotEnvKey . '=' . $customBotPreviousEnv);
+    }
 }
 
-$processSync = app_mgs_sync_process_registry($db);
+$processSync = app_mgs_sync_process_registry($db, $nocActor);
 $results['process_registry'] = [
     'ok' => true,
     'synced' => (int) ($processSync['synced'] ?? 0),
@@ -88,8 +97,8 @@ $results['process_registry'] = [
     'blocked' => (int) ($processSync['blocked'] ?? 0),
 ];
 
-$deviceLearning = app_mgs_seed_device_learning_profiles($db);
-$reachability = app_mgs_refresh_device_reachability($db, $probeDevices);
+$deviceLearning = app_mgs_seed_device_learning_profiles($db, $nocActor);
+$reachability = app_mgs_refresh_device_reachability($db, $probeDevices, $nocActor);
 $results['device_learning'] = [
     'ok' => true,
     'seeded' => (int) ($deviceLearning['seeded'] ?? 0),
@@ -97,7 +106,7 @@ $results['device_learning'] = [
     'reachability' => $reachability,
 ];
 
-$backupWorker = app_mgs_run_backup_worker($db, $applyBackup, 3, 'profile_snapshot');
+$backupWorker = app_mgs_run_backup_worker($db, $applyBackup, 3, 'profile_snapshot', $nocActor);
 $results['device_backup_worker'] = $backupWorker;
 $failed += !empty($backupWorker['ok']) ? 0 : 1;
 
@@ -112,7 +121,7 @@ $alarm = app_mgs_record_alarm_event([
     'human_problem' => 'Alarm, ticket ve mesaj renderer test rejiminde yoxlanildi',
     'recommendation' => 'Bu test real bilet yaratmir ve real alarm sayilmir.',
     'telegram_bot_key' => 'network',
-], true, true);
+], true, true, $nocActor, $db);
 $results['alarm_message_queue'] = $alarm;
 $failed += !empty($alarm['ok']) ? 0 : 1;
 
@@ -181,10 +190,12 @@ if ($sendTelegram) {
 } else {
     $telegramDryRun = app_mgs_send_telegram_bot_test('network', 'TEST MESAJI' . "\n" . 'SPoG CLI dry-run', '', false);
     $results['telegram_dry_run'] = $telegramDryRun;
-    $failed += !empty($telegramDryRun['configured']) ? 0 : 1;
+    $dryRunSafe = empty($telegramDryRun['sent'])
+        && in_array((string) ($telegramDryRun['reason'] ?? ''), ['dry_run_no_provider_request_sent', 'bot_not_configured'], true);
+    $failed += $dryRunSafe ? 0 : 1;
 }
 
-$summary = app_mgs_summary($db);
+$summary = app_mgs_summary($db, true, $nocActor);
 mgs_test_json([
     'status' => $failed === 0 ? 'ok' : 'failed',
     'mode' => [

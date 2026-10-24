@@ -88,7 +88,24 @@ $employees = [
 
 $created = 0;
 $updated = 0;
-$defaultPassword = 'SuperOptic!2026';
+$defaultPassword = (string) (getenv('INITIAL_EMPLOYEE_PASSWORD') ?: '');
+$hasNewAccounts = false;
+foreach ($employees as [$name]) {
+    $candidateLogin = $name === 'Serdar Abdullayev' ? 'serdar@sp.az' : so_employee_login($name);
+    if (!is_array(so_existing_employee($db, $candidateLogin, $name))) {
+        $hasNewAccounts = true;
+        break;
+    }
+}
+$strongPassword = strlen($defaultPassword) >= 14
+    && preg_match('/[a-z]/', $defaultPassword) === 1
+    && preg_match('/[A-Z]/', $defaultPassword) === 1
+    && preg_match('/\d/', $defaultPassword) === 1
+    && preg_match('/[^A-Za-z0-9]/', $defaultPassword) === 1;
+if ($hasNewAccounts && !$strongPassword) {
+    fwrite(STDERR, "INITIAL_EMPLOYEE_PASSWORD must be supplied through the process environment and satisfy the 14-character password policy.\n");
+    exit(2);
+}
 foreach ($employees as [$name, $employeeRole, $accountType, $area, $areas]) {
     $login = so_employee_login($name);
     if ($name === 'Serdar Abdullayev') {
@@ -129,6 +146,12 @@ foreach ($employees as [$name, $employeeRole, $accountType, $area, $areas]) {
         'responsible_areas' => $areas,
         'is_active' => 1,
     ];
+    if (!is_array($existing)) {
+        $payload['payload']['security'] = [
+            'must_change_password' => true,
+            'organization_seeded_at' => date(DATE_ATOM),
+        ];
+    }
     $saved = app_db_upsert_account($payload, false);
     if (is_array($saved)) {
         is_array($existing) ? $updated++ : $created++;
@@ -139,5 +162,5 @@ echo json_encode([
     'ok' => true,
     'created' => $created,
     'updated' => $updated,
-    'default_password_for_new_accounts' => $defaultPassword,
+    'initial_password_exposed' => false,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL;

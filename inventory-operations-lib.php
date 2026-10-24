@@ -1,20 +1,35 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__.'/config.php';require_once __DIR__.'/mgs-integration-lib.php';
+require_once __DIR__.'/config.php';require_once __DIR__.'/mgs-integration-lib.php';require_once __DIR__.'/stage1-feature-lib.php';
+
+function app_inventory_operational_schema_ready(PDO $db): bool
+{
+    $tables = [
+        'inventory_location_balances',
+        'inventory_document_sequences',
+        'inventory_operational_locks',
+        'inventory_documents',
+        'inventory_document_items',
+    ];
+    $placeholders = implode(',', array_fill(0, count($tables), '?'));
+    $statement = $db->prepare(
+        'SELECT COUNT(*)
+           FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME IN (' . $placeholders . ')'
+    );
+    $statement->execute($tables);
+    return (int) $statement->fetchColumn() === count($tables);
+}
 
 function app_inventory_ensure_operational_schema(PDO $db): void
 {
-    app_mgs_ensure_schema($db);
-    $db->exec("CREATE TABLE IF NOT EXISTS inventory_location_balances(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,item_id BIGINT UNSIGNED NOT NULL,location_type ENUM('warehouse','branch','employee','external') NOT NULL,location_id VARCHAR(128) NOT NULL,available_quantity DECIMAL(14,2) NOT NULL DEFAULT 0,reserved_quantity DECIMAL(14,2) NOT NULL DEFAULT 0,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,UNIQUE KEY uq_inventory_location_balance(item_id,location_type,location_id),KEY idx_inventory_location_lookup(location_type,location_id),CONSTRAINT fk_inventory_location_item FOREIGN KEY(item_id) REFERENCES inventory_stock_items(id) ON DELETE CASCADE)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $db->exec("CREATE TABLE IF NOT EXISTS inventory_document_sequences(document_type VARCHAR(16) NOT NULL,fiscal_year SMALLINT UNSIGNED NOT NULL,next_value BIGINT UNSIGNED NOT NULL DEFAULT 1,PRIMARY KEY(document_type,fiscal_year))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $db->exec("CREATE TABLE IF NOT EXISTS inventory_operational_locks(lock_name VARCHAR(64) PRIMARY KEY,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $db->exec("INSERT IGNORE INTO inventory_operational_locks(lock_name)VALUES('location_reconcile')");
-    $db->exec("CREATE TABLE IF NOT EXISTS inventory_documents(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,document_no VARCHAR(64) NOT NULL,document_type VARCHAR(32) NOT NULL,status ENUM('draft','pending','approved','rejected') NOT NULL DEFAULT 'draft',entity_item_id BIGINT UNSIGNED DEFAULT NULL,source_location_type VARCHAR(32) DEFAULT NULL,source_location_id VARCHAR(128) DEFAULT NULL,destination_type VARCHAR(32) DEFAULT NULL,destination_id VARCHAR(128) DEFAULT NULL,destination_name VARCHAR(191) DEFAULT NULL,reason VARCHAR(96) DEFAULT NULL,disposition VARCHAR(64) DEFAULT NULL,note TEXT DEFAULT NULL,rejection_reason TEXT DEFAULT NULL,created_by_account_id BIGINT UNSIGNED DEFAULT NULL,created_by_name VARCHAR(191) DEFAULT NULL,approved_by_account_id BIGINT UNSIGNED DEFAULT NULL,approved_by_name VARCHAR(191) DEFAULT NULL,approved_at DATETIME DEFAULT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,UNIQUE KEY uq_inventory_document_no(document_no),KEY idx_inventory_document_status(status,created_at))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $db->exec("CREATE TABLE IF NOT EXISTS inventory_document_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,document_id BIGINT UNSIGNED NOT NULL,item_id BIGINT UNSIGNED DEFAULT NULL,line_no INT UNSIGNED NOT NULL,item_name VARCHAR(191) NOT NULL,quantity DECIMAL(14,2) NOT NULL,unit VARCHAR(32) NOT NULL DEFAULT 'eded',unit_price DECIMAL(14,2) NOT NULL DEFAULT 0,mac_address VARCHAR(32) DEFAULT NULL,serial_number VARCHAR(128) DEFAULT NULL,note VARCHAR(255) DEFAULT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,KEY idx_inventory_document_item(document_id,line_no),KEY idx_inventory_document_stock(item_id),CONSTRAINT fk_inventory_document_line FOREIGN KEY(document_id) REFERENCES inventory_documents(id) ON DELETE CASCADE)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    app_inventory_reconcile_unallocated_stock($db);
+    if (!app_mgs_schema_ready($db) || !app_inventory_operational_schema_ready($db)) {
+        throw new RuntimeException('inventory_operational_schema_not_migrated');
+    }
 }
-function app_inventory_actor_can_write(array $a):bool{return app_portal_is_admin($a)||in_array(strtolower((string)($a['employee_role']??'')),['warehouse','warehouse_manager'],true);}
-function app_inventory_actor_can_approve(array $a):bool{return app_portal_is_admin($a)||strtolower((string)($a['employee_role']??''))==='warehouse_manager';}
+function app_inventory_actor_can_write(array $a):bool{$p=json_decode((string)($a['payload_json']??''),true);$caps=is_array($p)&&is_array($p['mobile_capabilities']??null)?$p['mobile_capabilities']:[];return app_portal_is_admin($a)||in_array(strtolower((string)($a['employee_role']??'')),['warehouse','warehouse_manager'],true)||in_array('warehouse',$caps,true)||in_array('warehouse_manager',$caps,true);}
+function app_inventory_actor_can_approve(array $a):bool{return app_portal_is_admin($a)||in_array(strtolower((string)($a['employee_role']??'')),['super_admin','admin','director'],true);}
 function app_inventory_location_exists(PDO $db,string $type,string $id):bool
 {
     if($type==='warehouse')return $id==='MAIN';
@@ -87,7 +102,7 @@ function app_inventory_update_item(PDO $db,array $input,array $actor):array
 }
 function app_inventory_deactivate_item(PDO $db,array $input,array $actor):array
 {
-    if(!app_inventory_actor_can_write($actor))return['ok'=>false,'error'=>'forbidden'];
+    if(!app_inventory_actor_can_approve($actor))return['ok'=>false,'error'=>'admin_approval_required'];
     try{$reason=app_inventory_required_reason($input['reason']??'');}catch(InvalidArgumentException){return['ok'=>false,'error'=>'reason_required'];}
     app_inventory_ensure_operational_schema($db);app_audit_ensure_schema($db);
     $itemId=(int)($input['item_id']??0);if($itemId<=0)return['ok'=>false,'error'=>'invalid_item'];
@@ -175,24 +190,24 @@ function app_inventory_handover_employee(PDO $db,array $input,array $actor):arra
 {
     if(!app_inventory_actor_can_write($actor))return['ok'=>false,'error'=>'forbidden'];
     app_inventory_ensure_operational_schema($db);
-    $item=(int)($input['item_id']??0);$employee=(int)($input['employee_id']??0);$qty=(float)($input['quantity']??0);$branch=(string)($input['source_branch_id']??'');
+    $item=(int)($input['item_id']??0);$employee=(int)($input['employee_id']??0);$qty=(float)($input['quantity']??0);$sourceType=clean_text((string)($input['source_location_type']??'branch'));$sourceId=clean_text((string)($input['source_location_id']??$input['source_branch_id']??''));
     $requireConfirmation=!empty($input['require_confirmation']);
-    if($item<=0||$employee<=0||$qty<=0||$branch==='')return['ok'=>false,'error'=>'invalid_handover'];
-    if(!app_inventory_location_exists($db,'branch',$branch)||!app_inventory_location_exists($db,'employee',(string)$employee))return['ok'=>false,'error'=>'invalid_location'];
+    if($item<=0||$employee<=0||$qty<=0||$sourceId===''||!in_array($sourceType,['warehouse','branch'],true))return['ok'=>false,'error'=>'invalid_handover'];
+    if(!app_inventory_location_exists($db,$sourceType,$sourceId)||!app_inventory_location_exists($db,'employee',(string)$employee))return['ok'=>false,'error'=>'invalid_location'];
     try{
         $db->beginTransaction();
-        $src=app_inventory_lock_location_balance($db,$item,'branch',$branch);
+        $src=app_inventory_lock_location_balance($db,$item,$sourceType,$sourceId);
         if((float)$src['available_quantity']<$qty){$db->rollBack();return['ok'=>false,'error'=>'insufficient_stock'];}
         $status=$requireConfirmation?'pending':'approved';
-        $doc=app_inventory_write_document($db,'THV','handover',$status,['source_location_type'=>'branch','source_location_id'=>$branch,'destination_type'=>'employee','destination_id'=>(string)$employee,'note'=>clean_text((string)($input['note']??''))],[['item_id'=>$item,'quantity'=>$qty,'serial_number'=>$input['serial_number']??'','mac_address'=>$input['mac_address']??'','note'=>$input['item_note']??'']],$actor);
+        $doc=app_inventory_write_document($db,'THV','handover',$status,['source_location_type'=>$sourceType,'source_location_id'=>$sourceId,'destination_type'=>'employee','destination_id'=>(string)$employee,'note'=>clean_text((string)($input['note']??''))],[['item_id'=>$item,'quantity'=>$qty,'serial_number'=>$input['serial_number']??'','mac_address'=>$input['mac_address']??'','note'=>$input['item_note']??'']],$actor);
         if(!$requireConfirmation){
             $dst=app_inventory_lock_location_balance($db,$item,'employee',(string)$employee);
             $db->prepare('UPDATE inventory_location_balances SET available_quantity=available_quantity-:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$src['id']]);
             $db->prepare('UPDATE inventory_location_balances SET available_quantity=available_quantity+:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$dst['id']]);
             $employeeName=app_mgs_hr_employee_name($db,$employee,(string)$employee);
-            app_inventory_lifecycle($db,'handover',$item,$qty,'branch',$branch,'employee',(string)$employee,'employee handover',$actor,$doc['document_no'],$employeeName);
+            app_inventory_lifecycle($db,'handover',$item,$qty,$sourceType,$sourceId,'employee',(string)$employee,'employee handover',$actor,$doc['document_no'],$employeeName);
         }
-        app_inventory_record_audit($db,'inventory_handover',$doc['document_no'],$requireConfirmation?'pending':'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'branch_id'=>$branch,'employee_id'=>$employee,'confirmation_required'=>$requireConfirmation]);
+        app_inventory_record_audit($db,'inventory_handover',$doc['document_no'],$requireConfirmation?'pending':'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'source_type'=>$sourceType,'source_id'=>$sourceId,'employee_id'=>$employee,'confirmation_required'=>$requireConfirmation]);
         $db->commit();
         return['ok'=>true,'confirmation_required'=>$requireConfirmation]+$doc;
     }catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'handover_failed','detail'=>$e->getMessage()];}
@@ -238,11 +253,12 @@ function app_inventory_consume_employee_stock(PDO $db,array $input,array $actor)
     $customer=clean_text((string)($input['customer_code']??''));$ticket=clean_text((string)($input['ticket_no']??''));
     $actorId=(int)($actor['id']??0);
     if($item<=0||$employee<=0||$qty<=0||$customer===''||($actorId!==$employee&&!app_inventory_actor_can_write($actor)))return['ok'=>false,'error'=>'invalid_consumption'];
+    $ownsTransaction = !$db->inTransaction();
     try{
-        $db->beginTransaction();$source=app_inventory_lock_location_balance($db,$item,'employee',(string)$employee);
-        if((float)($source['available_quantity']??0)<$qty){$db->rollBack();return['ok'=>false,'error'=>'insufficient_employee_stock'];}
+        if ($ownsTransaction) $db->beginTransaction();$source=app_inventory_lock_location_balance($db,$item,'employee',(string)$employee);
+        if((float)($source['available_quantity']??0)<$qty){if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'insufficient_employee_stock'];}
         $company=$db->prepare('SELECT quantity_on_hand FROM inventory_stock_items WHERE id=:id FOR UPDATE');$company->execute(['id'=>$item]);
-        if((float)$company->fetchColumn()<$qty){$db->rollBack();return['ok'=>false,'error'=>'insufficient_company_stock'];}
+        if((float)$company->fetchColumn()<$qty){if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'insufficient_company_stock'];}
         $db->prepare('UPDATE inventory_location_balances SET available_quantity=available_quantity-:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$source['id']]);
         $db->prepare('UPDATE inventory_stock_items SET quantity_on_hand=quantity_on_hand-:q WHERE id=:id')->execute(['q'=>$qty,'id'=>$item]);
         $employeeName=app_mgs_hr_employee_name($db,$employee,(string)$employee);
@@ -251,8 +267,8 @@ function app_inventory_consume_employee_stock(PDO $db,array $input,array $actor)
         $movement=$db->prepare('INSERT INTO inventory_stock_movements(item_id,movement_type,quantity,ticket_no,customer_account_id,technician_account_id,actor_account_id,actor_name,note,status,metadata_json)VALUES(:item,"customer_install",:qty,:ticket,:customer_id,:employee,:actor_id,:actor_name,:note,"posted",:metadata)');
         $movement->execute(['item'=>$item,'qty'=>$qty,'ticket'=>$ticket?:null,'customer_id'=>(int)($input['customer_account_id']??0)?:null,'employee'=>$employee,'actor_id'=>$actorId?:null,'actor_name'=>app_inventory_actor_name($actor),'note'=>clean_text((string)($input['note']??'')),'metadata'=>app_db_json_encode($input)]);
         app_inventory_record_audit($db,'inventory_employee_consumed',$doc['document_no'],'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'employee_id'=>$employee,'customer_code'=>$customer,'ticket_no'=>$ticket]);
-        $db->commit();return['ok'=>true]+$doc;
-    }catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'employee_consumption_failed','detail'=>$e->getMessage()];}
+        if ($ownsTransaction) $db->commit();return['ok'=>true]+$doc;
+    }catch(Throwable $e){if (!$ownsTransaction) throw $e; if($db->inTransaction())if ($ownsTransaction) $db->rollBack();return['ok'=>false,'error'=>'employee_consumption_failed','detail'=>$e->getMessage()];}
 }
 
 function app_inventory_return_employee_stock(PDO $db,array $input,array $actor):array
@@ -276,6 +292,535 @@ function app_inventory_return_employee_stock(PDO $db,array $input,array $actor):
         app_inventory_record_audit($db,'inventory_employee_returned',$doc['document_no'],'executed',$actor,['item_id'=>$item,'quantity'=>$qty,'employee_id'=>$employee,'destination_type'=>$destinationType,'destination_id'=>$destinationId]);
         $db->commit();return['ok'=>true]+$doc;
     }catch(Throwable $e){if($db->inTransaction())$db->rollBack();return['ok'=>false,'error'=>'employee_return_failed','detail'=>$e->getMessage()];}
+}
+
+function app_inventory_stage1_schema_ready(PDO $db): bool
+{
+    try {
+        $statement = $db->query(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME IN ("inventory_asset_repairs","inventory_asset_repair_events")'
+        );
+        return (int) $statement->fetchColumn() === 2;
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+function app_inventory_receive_asset_return(PDO $db, array $input, array $actor): array
+{
+    if (!app_inventory_actor_can_write($actor)) {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+    if (!app_stage1_feature_enabled($db, 'stage1_inventory_repair_contract')) {
+        return ['ok' => false, 'error' => 'stage1_inventory_repair_contract_disabled'];
+    }
+    if (!app_inventory_stage1_schema_ready($db)) {
+        return ['ok' => false, 'error' => 'stage1_inventory_schema_not_migrated'];
+    }
+    try {
+        $reason = app_inventory_required_reason($input['reason'] ?? $input['return_reason'] ?? '');
+    } catch (InvalidArgumentException) {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    $assetId = (int) ($input['asset_id'] ?? 0);
+    $idempotencyKey = mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191);
+    if ($assetId <= 0 || $idempotencyKey === '') {
+        return ['ok' => false, 'error' => 'invalid_return'];
+    }
+    app_audit_ensure_schema($db);
+    $correlationId = mb_substr(
+        clean_text((string) ($input['correlation_id'] ?? app_request_correlation_id())),
+        0,
+        96
+    );
+    try {
+        $db->beginTransaction();
+        $duplicate = $db->prepare('SELECT * FROM inventory_asset_returns WHERE idempotency_key = :key LIMIT 1 FOR UPDATE');
+        $duplicate->execute(['key' => $idempotencyKey]);
+        $duplicateRow = $duplicate->fetch(PDO::FETCH_ASSOC);
+        if (is_array($duplicateRow)) {
+            $db->commit();
+            return ['ok' => true, 'id' => (int) $duplicateRow['id'], 'existing' => true, 'record' => $duplicateRow];
+        }
+
+        $asset = $db->prepare('SELECT * FROM inventory_assets WHERE id = :id FOR UPDATE');
+        $asset->execute(['id' => $assetId]);
+        $assetRow = $asset->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($assetRow)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'asset_not_found'];
+        }
+        $openReturn = $db->prepare(
+            'SELECT id FROM inventory_asset_returns
+              WHERE asset_id = :asset_id AND return_status IN ("pending","received","inspected")
+              LIMIT 1 FOR UPDATE'
+        );
+        $openReturn->execute(['asset_id' => $assetId]);
+        if ($openReturn->fetchColumn()) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'asset_return_already_open'];
+        }
+
+        $metadata = [
+            'source_location_type' => (string) ($assetRow['current_location_type'] ?? ''),
+            'source_location_id' => (string) ($assetRow['current_location_id'] ?? ''),
+            'received_location_type' => clean_text((string) ($input['location_type'] ?? 'warehouse')) ?: 'warehouse',
+            'received_location_id' => clean_text((string) ($input['location_id'] ?? 'MAIN')) ?: 'MAIN',
+        ];
+        $insert = $db->prepare(
+            'INSERT INTO inventory_asset_returns (
+                asset_id,customer_code,technician_code,return_ticket_no,return_reason,return_status,
+                received_by,received_at,metadata_json,idempotency_key,correlation_id
+             ) VALUES (
+                :asset_id,:customer_code,:technician_code,:ticket_no,:reason,"received",
+                :received_by,NOW(),:metadata_json,:idempotency_key,:correlation_id
+             )'
+        );
+        $insert->execute([
+            'asset_id' => $assetId,
+            'customer_code' => clean_text((string) ($input['customer_code'] ?? '')) ?: null,
+            'technician_code' => clean_text((string) ($input['technician_code'] ?? '')) ?: null,
+            'ticket_no' => clean_text((string) ($input['ticket_no'] ?? '')) ?: null,
+            'reason' => $reason,
+            'received_by' => app_inventory_actor_name($actor),
+            'metadata_json' => app_db_json_encode($metadata),
+            'idempotency_key' => $idempotencyKey,
+            'correlation_id' => $correlationId,
+        ]);
+        $returnId = (int) $db->lastInsertId();
+        $db->prepare(
+            'UPDATE inventory_assets
+                SET lifecycle_status = "return_quarantine",
+                    condition_status = "pending_inspection",
+                    current_location_type = :location_type,
+                    current_location_id = :location_id,
+                    return_count = return_count + 1,
+                    updated_at = NOW()
+              WHERE id = :id'
+        )->execute([
+            'location_type' => $metadata['received_location_type'],
+            'location_id' => $metadata['received_location_id'],
+            'id' => $assetId,
+        ]);
+        app_audit_record($db, [
+            'module_key' => 'inventory',
+            'operation_class' => 'asset_return',
+            'action_type' => 'inventory_asset_return_received',
+            'entity_type' => 'inventory_asset_return',
+            'entity_id' => (string) $returnId,
+            'status' => 'executed',
+            'actor_account_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'summary' => 'Serialized asset received into quarantine',
+            'reason' => $reason,
+            'before' => $assetRow,
+            'after' => ['return_id' => $returnId, 'asset_id' => $assetId, 'return_status' => 'received'],
+            'payload' => ['idempotency_key' => $idempotencyKey, 'correlation_id' => $correlationId],
+            'sensitivity' => 'high',
+        ]);
+        $db->commit();
+        return ['ok' => true, 'id' => $returnId, 'existing' => false];
+    } catch (Throwable) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'asset_return_failed'];
+    }
+}
+
+function app_inventory_inspect_asset_return(PDO $db, array $input, array $actor): array
+{
+    if (!app_inventory_actor_can_write($actor)) {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+    if (!app_stage1_feature_enabled($db, 'stage1_inventory_repair_contract')) {
+        return ['ok' => false, 'error' => 'stage1_inventory_repair_contract_disabled'];
+    }
+    if (!app_inventory_stage1_schema_ready($db)) {
+        return ['ok' => false, 'error' => 'stage1_inventory_schema_not_migrated'];
+    }
+    $returnId = (int) ($input['return_id'] ?? 0);
+    $status = strtolower(clean_text((string) ($input['inspection_status'] ?? '')));
+    $allowed = ['new', 'used_working', 'repair', 'rma', 'scrap'];
+    $idempotencyKey = mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191);
+    if ($returnId <= 0 || !in_array($status, $allowed, true) || $idempotencyKey === '') {
+        return ['ok' => false, 'error' => 'invalid_inspection'];
+    }
+    try {
+        $reason = app_inventory_required_reason($input['reason'] ?? '');
+    } catch (InvalidArgumentException) {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    app_audit_ensure_schema($db);
+    $correlationId = mb_substr(
+        clean_text((string) ($input['correlation_id'] ?? app_request_correlation_id())),
+        0,
+        96
+    );
+    try {
+        $db->beginTransaction();
+        $duplicate = $db->prepare('SELECT * FROM inventory_asset_inspections WHERE idempotency_key = :key LIMIT 1 FOR UPDATE');
+        $duplicate->execute(['key' => $idempotencyKey]);
+        $duplicateRow = $duplicate->fetch(PDO::FETCH_ASSOC);
+        if (is_array($duplicateRow)) {
+            $db->commit();
+            return ['ok' => true, 'id' => (int) $duplicateRow['id'], 'existing' => true, 'record' => $duplicateRow];
+        }
+        $return = $db->prepare('SELECT * FROM inventory_asset_returns WHERE id = :id FOR UPDATE');
+        $return->execute(['id' => $returnId]);
+        $returnRow = $return->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($returnRow)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'return_not_found'];
+        }
+        if ((string) $returnRow['return_status'] !== 'received') {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'return_not_ready_for_inspection'];
+        }
+        $asset = $db->prepare('SELECT * FROM inventory_assets WHERE id = :id FOR UPDATE');
+        $asset->execute(['id' => (int) $returnRow['asset_id']]);
+        $assetRow = $asset->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($assetRow)) {
+            throw new RuntimeException('asset_not_found');
+        }
+
+        $insert = $db->prepare(
+            'INSERT INTO inventory_asset_inspections (
+                return_id,asset_id,inspection_status,inspected_by,notes,metadata_json,
+                idempotency_key,correlation_id,inspected_at
+             ) VALUES (
+                :return_id,:asset_id,:inspection_status,:inspected_by,:notes,:metadata_json,
+                :idempotency_key,:correlation_id,NOW()
+             )'
+        );
+        $insert->execute([
+            'return_id' => $returnId,
+            'asset_id' => (int) $returnRow['asset_id'],
+            'inspection_status' => $status,
+            'inspected_by' => app_inventory_actor_name($actor),
+            'notes' => clean_text((string) ($input['notes'] ?? '')) ?: null,
+            'metadata_json' => app_db_json_encode(['reason' => $reason]),
+            'idempotency_key' => $idempotencyKey,
+            'correlation_id' => $correlationId,
+        ]);
+        $inspectionId = (int) $db->lastInsertId();
+        $lifecycle = match ($status) {
+            'new', 'used_working' => 'in_warehouse',
+            'repair' => 'repair_pending',
+            'rma' => 'rma_pending',
+            'scrap' => 'scrapped',
+        };
+        $returnStatus = in_array($status, ['new', 'used_working', 'scrap'], true)
+            ? 'closed'
+            : 'inspected';
+        $db->prepare('UPDATE inventory_asset_returns SET return_status = :status WHERE id = :id')
+            ->execute(['status' => $returnStatus, 'id' => $returnId]);
+        $db->prepare(
+            'UPDATE inventory_assets
+                SET lifecycle_status = :lifecycle_status, condition_status = :condition_status,
+                    failure_count = failure_count + :failure_increment, updated_at = NOW()
+              WHERE id = :id'
+        )->execute([
+            'lifecycle_status' => $lifecycle,
+            'condition_status' => $status,
+            'failure_increment' => in_array($status, ['repair', 'rma', 'scrap'], true) ? 1 : 0,
+            'id' => (int) $returnRow['asset_id'],
+        ]);
+        app_audit_record($db, [
+            'module_key' => 'inventory',
+            'operation_class' => 'asset_inspection',
+            'action_type' => 'inventory_asset_inspected',
+            'entity_type' => 'inventory_asset_inspection',
+            'entity_id' => (string) $inspectionId,
+            'status' => 'executed',
+            'actor_account_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'summary' => 'Serialized asset inspection completed: ' . $status,
+            'reason' => $reason,
+            'before' => $assetRow,
+            'after' => ['inspection_id' => $inspectionId, 'status' => $status, 'lifecycle_status' => $lifecycle],
+            'payload' => ['idempotency_key' => $idempotencyKey, 'correlation_id' => $correlationId],
+            'sensitivity' => 'high',
+        ]);
+        $db->commit();
+        return ['ok' => true, 'id' => $inspectionId, 'existing' => false, 'inspection_status' => $status];
+    } catch (Throwable) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'asset_inspection_failed'];
+    }
+}
+
+function app_inventory_create_asset_repair(PDO $db, array $input, array $actor): array
+{
+    if (!app_inventory_actor_can_write($actor)) {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+    if (!app_stage1_feature_enabled($db, 'stage1_inventory_repair_contract')) {
+        return ['ok' => false, 'error' => 'stage1_inventory_repair_contract_disabled'];
+    }
+    if (!app_inventory_stage1_schema_ready($db)) {
+        return ['ok' => false, 'error' => 'stage1_inventory_schema_not_migrated'];
+    }
+    $inspectionId = (int) ($input['inspection_id'] ?? 0);
+    $idempotencyKey = mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191);
+    try {
+        $reason = app_inventory_required_reason($input['reason'] ?? '');
+    } catch (InvalidArgumentException) {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    if ($inspectionId <= 0 || $idempotencyKey === '') {
+        return ['ok' => false, 'error' => 'invalid_repair'];
+    }
+    app_audit_ensure_schema($db);
+    $correlationId = mb_substr(
+        clean_text((string) ($input['correlation_id'] ?? app_request_correlation_id())),
+        0,
+        96
+    );
+    try {
+        $db->beginTransaction();
+        $duplicate = $db->prepare('SELECT * FROM inventory_asset_repairs WHERE idempotency_key = :key LIMIT 1 FOR UPDATE');
+        $duplicate->execute(['key' => $idempotencyKey]);
+        $duplicateRow = $duplicate->fetch(PDO::FETCH_ASSOC);
+        if (is_array($duplicateRow)) {
+            $db->commit();
+            return ['ok' => true, 'id' => (int) $duplicateRow['id'], 'existing' => true, 'record' => $duplicateRow];
+        }
+        $inspection = $db->prepare(
+            'SELECT i.*,r.return_status
+               FROM inventory_asset_inspections i
+               INNER JOIN inventory_asset_returns r ON r.id = i.return_id
+              WHERE i.id = :id FOR UPDATE'
+        );
+        $inspection->execute(['id' => $inspectionId]);
+        $inspectionRow = $inspection->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($inspectionRow)
+            || !in_array(strtolower((string) $inspectionRow['inspection_status']), ['repair', 'rma'], true)
+            || (string) $inspectionRow['return_status'] !== 'inspected') {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'inspection_not_repairable'];
+        }
+        $insert = $db->prepare(
+            'INSERT INTO inventory_asset_repairs (
+                return_id,inspection_id,asset_id,repair_status,vendor_name,external_reference,
+                reason,notes,idempotency_key,correlation_id,created_by_account_id,created_by_name
+             ) VALUES (
+                :return_id,:inspection_id,:asset_id,"pending",:vendor_name,:external_reference,
+                :reason,:notes,:idempotency_key,:correlation_id,:actor_id,:actor_name
+             )'
+        );
+        $insert->execute([
+            'return_id' => (int) $inspectionRow['return_id'],
+            'inspection_id' => $inspectionId,
+            'asset_id' => (int) $inspectionRow['asset_id'],
+            'vendor_name' => clean_text((string) ($input['vendor_name'] ?? '')) ?: null,
+            'external_reference' => clean_text((string) ($input['external_reference'] ?? '')) ?: null,
+            'reason' => $reason,
+            'notes' => clean_text((string) ($input['notes'] ?? '')) ?: null,
+            'idempotency_key' => $idempotencyKey,
+            'correlation_id' => $correlationId,
+            'actor_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+        ]);
+        $repairId = (int) $db->lastInsertId();
+        $eventKey = 'repair-create:' . $idempotencyKey;
+        $db->prepare(
+            'INSERT INTO inventory_asset_repair_events (
+                repair_id,previous_status,new_status,reason,idempotency_key,correlation_id,
+                actor_account_id,actor_name,metadata_json
+             ) VALUES (
+                :repair_id,NULL,"pending",:reason,:idempotency_key,:correlation_id,
+                :actor_id,:actor_name,:metadata_json
+             )'
+        )->execute([
+            'repair_id' => $repairId,
+            'reason' => $reason,
+            'idempotency_key' => $eventKey,
+            'correlation_id' => $correlationId,
+            'actor_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'metadata_json' => app_db_json_encode(['inspection_id' => $inspectionId]),
+        ]);
+        app_audit_record($db, [
+            'module_key' => 'inventory',
+            'operation_class' => 'asset_repair',
+            'action_type' => 'inventory_asset_repair_created',
+            'entity_type' => 'inventory_asset_repair',
+            'entity_id' => (string) $repairId,
+            'status' => 'executed',
+            'actor_account_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'summary' => 'Serialized asset repair registered',
+            'reason' => $reason,
+            'before' => null,
+            'after' => ['repair_id' => $repairId, 'status' => 'pending'],
+            'payload' => ['idempotency_key' => $idempotencyKey, 'correlation_id' => $correlationId],
+            'sensitivity' => 'high',
+        ]);
+        $db->commit();
+        return ['ok' => true, 'id' => $repairId, 'existing' => false, 'status' => 'pending'];
+    } catch (Throwable) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'asset_repair_create_failed'];
+    }
+}
+
+function app_inventory_update_asset_repair_status(PDO $db, array $input, array $actor): array
+{
+    if (!app_inventory_actor_can_write($actor)) {
+        return ['ok' => false, 'error' => 'forbidden'];
+    }
+    if (!app_stage1_feature_enabled($db, 'stage1_inventory_repair_contract')) {
+        return ['ok' => false, 'error' => 'stage1_inventory_repair_contract_disabled'];
+    }
+    if (!app_inventory_stage1_schema_ready($db)) {
+        return ['ok' => false, 'error' => 'stage1_inventory_schema_not_migrated'];
+    }
+    $repairId = (int) ($input['repair_id'] ?? 0);
+    $newStatus = strtolower(clean_text((string) ($input['status'] ?? '')));
+    $idempotencyKey = mb_substr(clean_text((string) ($input['idempotency_key'] ?? '')), 0, 191);
+    try {
+        $reason = app_inventory_required_reason($input['reason'] ?? '');
+    } catch (InvalidArgumentException) {
+        return ['ok' => false, 'error' => 'reason_required'];
+    }
+    if ($repairId <= 0 || $idempotencyKey === '') {
+        return ['ok' => false, 'error' => 'invalid_repair_transition'];
+    }
+    $transitions = [
+        'pending' => ['in_repair', 'cancelled'],
+        'in_repair' => ['repaired', 'rma', 'scrapped', 'cancelled'],
+        'repaired' => [],
+        'rma' => [],
+        'scrapped' => [],
+        'cancelled' => [],
+    ];
+    if (!array_key_exists($newStatus, $transitions)) {
+        return ['ok' => false, 'error' => 'repair_status_invalid'];
+    }
+    app_audit_ensure_schema($db);
+    $correlationId = mb_substr(
+        clean_text((string) ($input['correlation_id'] ?? app_request_correlation_id())),
+        0,
+        96
+    );
+    try {
+        $db->beginTransaction();
+        $duplicate = $db->prepare('SELECT * FROM inventory_asset_repair_events WHERE idempotency_key = :key LIMIT 1 FOR UPDATE');
+        $duplicate->execute(['key' => $idempotencyKey]);
+        $duplicateRow = $duplicate->fetch(PDO::FETCH_ASSOC);
+        if (is_array($duplicateRow)) {
+            $db->commit();
+            return ['ok' => true, 'id' => $repairId, 'existing' => true, 'status' => (string) $duplicateRow['new_status']];
+        }
+        $repair = $db->prepare('SELECT * FROM inventory_asset_repairs WHERE id = :id FOR UPDATE');
+        $repair->execute(['id' => $repairId]);
+        $before = $repair->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($before)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'repair_not_found'];
+        }
+        $current = (string) $before['repair_status'];
+        if (!in_array($newStatus, $transitions[$current] ?? [], true)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'repair_transition_invalid'];
+        }
+        $terminal = in_array($newStatus, ['repaired', 'rma', 'scrapped', 'cancelled'], true);
+        $db->prepare(
+            'UPDATE inventory_asset_repairs
+                SET repair_status = :status,updated_by_account_id = :actor_id,
+                    updated_by_name = :actor_name,completed_at = :completed_at
+              WHERE id = :id'
+        )->execute([
+            'status' => $newStatus,
+            'actor_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'completed_at' => $terminal ? app_db_now() : null,
+            'id' => $repairId,
+        ]);
+        $db->prepare(
+            'INSERT INTO inventory_asset_repair_events (
+                repair_id,previous_status,new_status,reason,idempotency_key,correlation_id,
+                actor_account_id,actor_name,metadata_json
+             ) VALUES (
+                :repair_id,:previous_status,:new_status,:reason,:idempotency_key,:correlation_id,
+                :actor_id,:actor_name,:metadata_json
+             )'
+        )->execute([
+            'repair_id' => $repairId,
+            'previous_status' => $current,
+            'new_status' => $newStatus,
+            'reason' => $reason,
+            'idempotency_key' => $idempotencyKey,
+            'correlation_id' => $correlationId,
+            'actor_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'metadata_json' => app_db_json_encode(['repair_id' => $repairId]),
+        ]);
+        if ($terminal) {
+            $assetLifecycle = match ($newStatus) {
+                'repaired' => 'in_warehouse',
+                'rma' => 'rma',
+                'scrapped' => 'scrapped',
+                'cancelled' => 'return_quarantine',
+            };
+            $condition = match ($newStatus) {
+                'repaired' => 'repaired',
+                'rma' => 'rma',
+                'scrapped' => 'scrap',
+                'cancelled' => 'pending_inspection',
+            };
+            $db->prepare(
+                'UPDATE inventory_assets
+                    SET lifecycle_status = :lifecycle_status,condition_status = :condition_status,updated_at = NOW()
+                  WHERE id = :asset_id'
+            )->execute([
+                'lifecycle_status' => $assetLifecycle,
+                'condition_status' => $condition,
+                'asset_id' => (int) $before['asset_id'],
+            ]);
+            $returnStatus = $newStatus === 'cancelled' ? 'inspected' : 'closed';
+            $db->prepare('UPDATE inventory_asset_returns SET return_status = :status WHERE id = :id')
+                ->execute(['status' => $returnStatus, 'id' => (int) $before['return_id']]);
+        } elseif ($newStatus === 'in_repair') {
+            $db->prepare(
+                'UPDATE inventory_assets SET lifecycle_status = "in_repair",condition_status = "repair",updated_at = NOW()
+                  WHERE id = :asset_id'
+            )->execute(['asset_id' => (int) $before['asset_id']]);
+        }
+        $after = $db->prepare('SELECT * FROM inventory_asset_repairs WHERE id = :id');
+        $after->execute(['id' => $repairId]);
+        $afterRow = $after->fetch(PDO::FETCH_ASSOC) ?: [];
+        app_audit_record($db, [
+            'module_key' => 'inventory',
+            'operation_class' => 'asset_repair',
+            'action_type' => 'inventory_asset_repair_status_updated',
+            'entity_type' => 'inventory_asset_repair',
+            'entity_id' => (string) $repairId,
+            'status' => 'executed',
+            'actor_account_id' => app_inventory_actor_id($actor),
+            'actor_name' => app_inventory_actor_name($actor),
+            'summary' => 'Serialized asset repair status: ' . $current . ' -> ' . $newStatus,
+            'reason' => $reason,
+            'before' => $before,
+            'after' => $afterRow,
+            'payload' => ['idempotency_key' => $idempotencyKey, 'correlation_id' => $correlationId],
+            'sensitivity' => 'high',
+        ]);
+        $db->commit();
+        return ['ok' => true, 'id' => $repairId, 'existing' => false, 'status' => $newStatus];
+    } catch (Throwable) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['ok' => false, 'error' => 'asset_repair_transition_failed'];
+    }
 }
 
 function app_inventory_employee_balances(PDO $db,int $limit=500):array
@@ -346,6 +891,7 @@ function app_inventory_approve_request(PDO $db, int $id, array $actor): array
         if (!$doc) { $db->rollBack(); return ['ok'=>false,'error'=>'not_found']; }
         if (($doc['document_type'] ?? '') !== 'external_return') { $db->rollBack(); return ['ok'=>false,'error'=>'invalid_document_type']; }
         if (($doc['status'] ?? '') !== 'pending') { $db->rollBack(); return ['ok'=>false,'error'=>in_array($doc['status']??'', ['approved','rejected'], true)?'already_finalized':'not_pending']; }
+        if ((int) ($doc['created_by_account_id'] ?? 0) === (int) ($actor['id'] ?? 0)) { $db->rollBack(); return ['ok'=>false,'error'=>'creator_cannot_approve']; }
 
         $lineStatement = $db->prepare('SELECT * FROM inventory_document_items WHERE document_id=:id ORDER BY line_no');
         $lineStatement->execute(['id'=>$id]);

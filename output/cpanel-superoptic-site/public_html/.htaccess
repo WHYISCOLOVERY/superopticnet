@@ -1,0 +1,25 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<FilesMatch "(^\.|config\.local|\.env|composer\.(json|lock)|package(-lock)?\.json)$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Preserve mobile API Bearer tokens when PHP runs behind CGI/FastCGI.
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    # Do not turn an arbitrary Host header into an open redirect. Extend this
+    # allowlist when deploying the package under an approved canonical domain.
+    RewriteCond %{HTTP_HOST} ^(?:mgt\.superoptic\.net|superoptic\.net|www\.superoptic\.net)(?::[0-9]+)?$ [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</IfModule>

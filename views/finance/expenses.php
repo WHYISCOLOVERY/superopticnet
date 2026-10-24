@@ -5,6 +5,7 @@ $pageData = (array) ($financeContext['data']['page'] ?? []);
 $expenseRows = (array) ($pageData['rows'] ?? []);
 $financeBranches = (array) ($financeContext['data']['branches'] ?? []);
 $financeEmployees = (array) ($financeContext['data']['employees'] ?? []);
+$canConfirmExpense = !empty($financeContext['data']['can_confirm_maker_checker']);
 ?>
 <div data-finance-expenses>
     <div class="portal-card-head">
@@ -17,7 +18,7 @@ $financeEmployees = (array) ($financeContext['data']['employees'] ?? []);
         <span></span><span></span><button class="portal-primary-btn" type="submit">Axtar</button>
     </form>
     <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>ID</th><th>Basliq</th><th>Kateqoriya</th><th>Mebleg</th><th>Filial</th><th>Mesul</th><th>Status</th><th>Tarix</th></tr></thead><tbody>
-        <?php foreach ($expenseRows as $row): ?><tr data-finance-row><td>#<?= e((string) ($row['id'] ?? 0)); ?></td><td><?= e((string) ($row['title'] ?? $row['summary'] ?? '-')); ?></td><td><?= e((string) ($row['category'] ?? '-')); ?></td><td><?= e(billing_money($row['amount'] ?? 0)); ?></td><td><?= e((string) ($row['branch_id'] ?? '-')); ?></td><td><?= e((string) ($row['actor_name'] ?? '-')); ?></td><td><?= e((string) ($row['status'] ?? '-')); ?></td><td><?= e((string) ($row['created_at'] ?? '-')); ?></td></tr><?php endforeach; ?>
+        <?php foreach ($expenseRows as $row): ?><tr data-finance-row><td>#<?= e((string) ($row['id'] ?? 0)); ?></td><td><?= e((string) ($row['title'] ?? $row['summary'] ?? '-')); ?></td><td><?= e((string) ($row['category'] ?? '-')); ?></td><td><?= e(billing_money($row['amount'] ?? 0)); ?></td><td><?= e((string) ($row['branch_id'] ?? '-')); ?></td><td><?= e((string) ($row['actor_name'] ?? '-')); ?></td><td><span class="dash-badge<?= (string) ($row['status'] ?? '') === 'pending_approval' ? ' dash-badge-warning' : ''; ?>"><?= e((string) ($row['status'] ?? '-')); ?></span><?php if ((string) ($row['status'] ?? '') === 'pending_approval'): ?><?php if ($canConfirmExpense): ?><form class="portal-inline-form" method="post" style="margin-top:6px"><input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>"><input type="hidden" name="action" value="approve_finance_expense"><input type="hidden" name="finance_tab" value="expenses"><input type="hidden" name="entry_id" value="<?= e((string) ($row['id'] ?? 0)); ?>"><button class="portal-ghost-btn" type="submit">Basqa admin: tesdiq et</button></form><?php else: ?><small>Admin tesdiqi gozleyir</small><?php endif; ?><?php endif; ?></td><td><?= e((string) ($row['created_at'] ?? '-')); ?></td></tr><?php endforeach; ?>
         <?php if ($expenseRows === []): ?><tr><td colspan="8" class="finance-empty">Xerc qeydi yoxdur.</td></tr><?php endif; ?>
     </tbody></table></div>
     <?php require __DIR__ . '/_pagination.php'; ?>
@@ -30,7 +31,7 @@ $financeEmployees = (array) ($financeContext['data']['employees'] ?? []);
                 <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>"><input type="hidden" name="action" value="create_finance_entry"><input type="hidden" name="entry_type" value="expense"><input type="hidden" name="finance_tab" value="expenses">
                 <div class="portal-form-row portal-grid-slim"><input type="text" name="title" placeholder="Basliq" required><input type="text" name="category" placeholder="Kateqoriya" required></div>
                 <div class="portal-form-row portal-grid-slim"><input type="number" step="0.01" min="0.01" name="amount" placeholder="Mebleg" required><select name="branch_id"><option value="">Filial sec</option><?php foreach ($financeBranches as $branch): ?><option value="<?= e((string) ($branch['id'] ?? '')); ?>"><?= e((string) ($branch['name'] ?? $branch['branchName'] ?? '-')); ?></option><?php endforeach; ?></select></div>
-                <?php if ($financeEmployees !== []): ?><div class="portal-form-row"><select name="employee_user_id"><option value="">Mesul emekdas</option><?php foreach ($financeEmployees as $employee): ?><option value="<?= e((string) ($employee['id'] ?? '')); ?>"><?= e((string) ($employee['full_name'] ?? '-')); ?></option><?php endforeach; ?></select></div><?php endif; ?>
+                <div class="portal-form-row"><select name="employee_user_id"><option value="">Məsul əməkdaş</option><?php foreach ($financeEmployees as $employee): ?><option value="<?= e((string) ($employee['id'] ?? '')); ?>"><?= e((string) ($employee['full_name'] ?? '-')); ?></option><?php endforeach; ?><?php if ($financeEmployees === []): ?><option value="" disabled>Aktiv əməkdaş tapılmadı</option><?php endif; ?></select></div>
                 <div class="portal-form-row"><textarea name="note_text" placeholder="Qeyd"></textarea></div>
                 <button class="portal-primary-btn" type="submit">Xerci saxla</button>
             </form>

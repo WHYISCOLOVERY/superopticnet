@@ -114,11 +114,30 @@ function sim_action(PDO $db, string $type, string $entityType, string $entityId,
 
 function sim_create_employee(PDO $db, array $admin, string $runId, string $label, string $accountType, string $employeeRole, string $jobTitle, float $grossSalary, string $area): array
 {
+    $positionStatement = $db->prepare('SELECT id FROM hr_positions WHERE title=:title AND is_active=1 LIMIT 1');
+    $positionStatement->execute(['title' => $jobTitle]);
+    $positionId = (int) $positionStatement->fetchColumn();
+    if ($positionId <= 0) {
+        $positionInsert = $db->prepare(
+            'INSERT INTO hr_positions
+                (position_key,title,recommended_account_type,recommended_employee_role,module_keys_json,is_active,created_by_account_id,updated_by_account_id)
+             VALUES (:position_key,:title,:account_type,:employee_role,:module_keys_json,1,:actor_id,:actor_id)'
+        );
+        $positionInsert->execute([
+            'position_key' => 'sim_' . substr(hash('sha256', $runId . '|' . $jobTitle), 0, 20),
+            'title' => $jobTitle,
+            'account_type' => in_array($accountType, ['operator', 'technician', 'admin', 'support'], true) ? $accountType : 'operator',
+            'employee_role' => $employeeRole,
+            'module_keys_json' => app_db_json_encode([]),
+            'actor_id' => (int) ($admin['id'] ?? 0) ?: null,
+        ]);
+        $positionId = (int) $db->lastInsertId();
+    }
     $login = strtolower(str_replace([' ', '-'], ['.', '.'], $label)) . '.' . strtolower(str_replace('-', '', $runId)) . '@local';
     $created = app_hr_create_employee($db, [
         'full_name' => $label,
         'login' => $login,
-        'job_title' => $jobTitle,
+        'position_id' => $positionId,
         'salary_mode' => 'gross',
         'gross_salary' => $grossSalary,
         'branch_id' => '1',
@@ -254,9 +273,17 @@ try {
     $ladderModelId = app_mgs_inventory_upsert_asset_model($db, 'SIM26', 'Field Ladder ' . $runId, 'tool');
     $drillModelId = app_mgs_inventory_upsert_asset_model($db, 'SIM26', 'Field Drill ' . $runId, 'tool');
     $modemAssets = [];
+    $macSeed = hash('sha256', $runId, true);
     for ($i = 1; $i <= 16; $i++) {
         $serial = $prefix . '-MSN-' . str_pad((string) $i, 3, '0', STR_PAD_LEFT);
-        $mac = sprintf('02:26:%02X:%02X:%02X:%02X', ($i >> 24) & 255, ($i >> 16) & 255, ($i >> 8) & 255, $i & 255);
+        $mac = sprintf(
+            '02:%02X:%02X:%02X:%02X:%02X',
+            ord($macSeed[0]),
+            ord($macSeed[1]),
+            ord($macSeed[2]),
+            ($i >> 8) & 255,
+            $i & 255
+        );
         $assetId = app_mgs_inventory_create_asset($db, ['product_id' => $items['modem']['id'], 'model_id' => $modemModelId, 'asset_code' => $prefix . '-MODEM-' . $i, 'serial_number' => $serial, 'mac_address' => $mac, 'ownership_type' => 'company', 'lifecycle_status' => 'in_warehouse', 'condition_status' => 'new', 'current_location_type' => 'branch', 'current_location_id' => '1', 'metadata_json' => app_db_json_encode(['run_id' => $runId])]);
         $modemAssets[] = ['id' => $assetId, 'serial' => $serial, 'mac' => $mac];
         $report['entity_ids']['assets'][] = $assetId;

@@ -27,9 +27,10 @@ $dedupNeedles = [];
 $offlineDeviceKey = 'smoke-offline-device-' . strtolower($stamp);
 $offlineDeviceDedup = 'device-offline:' . $offlineDeviceKey;
 $previousDeviceState = null;
+$nocActor = app_noc_system_actor('olt-rule-worker');
 
 try {
-    app_mgs_seed_device_learning_profiles($db);
+    app_mgs_seed_device_learning_profiles($db, $nocActor);
 
     $previousDevice = $db->prepare(
         'SELECT reachability_state, status, last_probe_error
@@ -130,6 +131,7 @@ try {
                         'ont_tx' => '2.1',
                         'olt_tx' => '4.0',
                         'temperature' => '70',
+                        'optical_synced_at' => date('Y-m-d H:i:s'),
                     ]],
                 ],
             ], false);
@@ -145,8 +147,8 @@ try {
         'queue_messages' => false,
         'create_tickets' => true,
         'require_management_path' => false,
-        'olt_mass_pon_min_affected' => 9,
-    ], $db);
+        'olt_mass_pon_min_affected' => 5,
+    ], $db, $nocActor);
 
     if (empty($result['ok'])) {
         network_olt_rules_fail('engine_failed:' . (string) ($result['reason'] ?? 'unknown'), 4);

@@ -27,17 +27,10 @@ $chatRows = [
         'last_message_id' => 501,
         'message_count' => 12,
     ],
-    [
-        'number_id' => 102,
-        'chat_id' => '994502222222@c.us',
-        'contact_name' => 'Test elaqe 2',
-        'company_number' => '051 200 00 02',
-        'employee_name' => 'Test operator 2',
-        'last_message' => 'Odenis melumati yoxlanilir.',
-        'last_message_at' => '2026-07-13 10:12:00',
-        'last_message_id' => 402,
-        'message_count' => 7,
-    ],
+];
+$chatNumberGroups = [
+    ['number_id' => 101, 'company_number' => '051 200 00 01', 'employee_name' => 'Test operator', 'qr_status' => 'connected', 'chat_count' => 1],
+    ['number_id' => 102, 'company_number' => '051 200 00 02', 'employee_name' => 'Test operator 2', 'qr_status' => 'connected', 'chat_count' => 7],
 ];
 $selectedChat = $chatRows[0];
 $chatMessages = [
@@ -59,6 +52,7 @@ $renderDocument = static function (string $viewFile, array $context, string $nam
 };
 
 $baseChatContext = [
+    'chat_number_groups' => $chatNumberGroups,
     'chat_rows' => $chatRows,
     'selected_number_id' => 101,
     'selected_chat_id' => '994501111111@c.us',
@@ -73,8 +67,15 @@ $selectedContext = $baseChatContext + ['chat_selection_explicit' => true];
 $renderDocument($root . '/views/whatsapp-monitor/chats.php', $selectedContext, 'chats-selected');
 
 $emptyContext = [
+    'chat_number_groups' => [[
+        'number_id' => 201,
+        'company_number' => '051 200 00 03',
+        'employee_name' => 'Test operator 3',
+        'qr_status' => 'connected',
+        'chat_count' => 0,
+    ]],
     'chat_rows' => [],
-    'selected_number_id' => 0,
+    'selected_number_id' => 201,
     'selected_chat_id' => '',
     'selected_chat' => null,
     'chat_messages' => [],

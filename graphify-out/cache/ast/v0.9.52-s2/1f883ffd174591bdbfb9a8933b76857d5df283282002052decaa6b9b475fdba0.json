@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_db_migrations_20260819_460_snmp_trap_log_php", "label": "20260819_460_snmp_trap_log.php", "file_type": "code", "source_file": "db/migrations/20260819_460_snmp_trap_log.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

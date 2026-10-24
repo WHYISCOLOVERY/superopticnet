@@ -54,7 +54,14 @@ foreach ($markers as $key => $marker) {
 }
 
 if ($db instanceof PDO && function_exists('app_mgs_save_monitor_map_node') && function_exists('app_mgs_monitor_map_layout')) {
-    $smokeUser = ['id' => 987654, 'full_name' => 'Smoke Monitor'];
+    $smokeUser = [
+        'id' => 987654,
+        'full_name' => 'Smoke Monitor',
+        'role' => 'employee',
+        'account_type' => 'admin',
+        'employee_role' => 'admin',
+        'is_active' => 1,
+    ];
     $deviceId = '__smoke_monitor_layout__';
     try {
         app_mgs_save_monitor_map_node('noc-monitor-smoke', $smokeUser, $deviceId, 12.5, 34.5, 1.2, 'profile note', $db);

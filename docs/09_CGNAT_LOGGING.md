@@ -13,6 +13,10 @@ Store, search and retain CGNAT/NAT logs safely at ISP scale without collapsing t
 
 ## Storage Strategy
 
+- Production router currently exports Cisco NAT Event Logging (NetFlow v9/NEL) to `10.99.99.12:2055/UDP`.
+- The local `nfcapd` collector stores five-minute files below `/var/log/superoptic/netflow/YYYY/MM/DD/HH` with LZ4 compression and automatic expiration.
+- The live collector guardrail is 80 GB maximum size, 30 days maximum age and 90% low watermark. The size limit can shorten effective retention and is not a substitute for the final legal archive.
+- `tools/nfdump-law-export.php` provides an immediate CLI-only, approval-gated export path from raw NEL files and records the query scope plus output SHA-256 in an append-only JSONL audit.
 - Current v1 may store reduced NAT log samples or imported logs in MySQL for development/testing.
 - Target production storage is ClickHouse with time partitioning.
 - PostgreSQL stores metadata, requests, audit logs and search jobs.
@@ -28,11 +32,12 @@ Store, search and retain CGNAT/NAT logs safely at ISP scale without collapsing t
 
 ## Production Cutover
 
-1. Install ClickHouse on the analytics server.
-2. Apply `deploy/clickhouse/superoptic-cgnat.sql`.
-3. Set `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE` and `CLICKHOUSE_SECURE`.
-4. Run `php tools/cgnat-storage-readiness.php` and require `status=ready`.
-5. Keep MySQL `radius_nat_logs` only for short development/search samples; route high-volume CGNAT/syslog ingestion to ClickHouse.
+1. Keep the router NEL exporter and `nfcapd` collector healthy; alert on missing five-minute files, sequence failures and disk pressure.
+2. Install ClickHouse on the analytics server or attach a dedicated encrypted log volume sized for the measured event rate.
+3. Apply `deploy/clickhouse/superoptic-cgnat.sql`.
+4. Set `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE` and `CLICKHOUSE_SECURE`.
+5. Run `php tools/cgnat-storage-readiness.php` and require `status=ready`.
+6. Keep MySQL `radius_nat_logs` only for short development/search samples; route high-volume CGNAT/NEL ingestion to ClickHouse.
 
 ## Security
 

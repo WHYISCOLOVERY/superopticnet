@@ -3,22 +3,25 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/inventory-operations-lib.php';
+// Inventory views (handover/movements/approvals/devices) call app_ui_term();
+// ensure it is available on both the full-page and AJAX-partial render paths.
+require_once __DIR__ . '/ui-language-lib.php';
 
 function app_inventory_tabs(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'catalog' => 'Mehsul kataloqu',
+        'overview' => 'Ümumi baxış',
+        'catalog' => 'Məhsul kataloqu',
         'devices' => 'Cihazlar',
-        'materials' => 'Serfiyyat materiallari',
-        'cable-drums' => 'Kabel barabanlari',
-        'technicians' => 'Texniklerde olan mallar',
-        'customers' => 'Musterilerde olan cihazlar',
-        'handover' => 'Tehvil-teslim',
-        'returns-inspection' => 'Qaytarma ve inspection',
-        'repair-rma' => 'Temir / RMA',
-        'movements' => 'Medaxil ve transfer',
-        'approvals' => 'Transfer ve qaytarma',
+        'materials' => 'Sərfiyyat materialları',
+        'cable-drums' => 'Kabel barabanları',
+        'technicians' => 'Texniklərdə olan mallar',
+        'customers' => 'Müştərilərdə olan cihazlar',
+        'handover' => 'Təhvil-təslim',
+        'returns-inspection' => 'Qaytarma və yoxlama',
+        'repair-rma' => 'Təmir / RMA',
+        'movements' => 'Mədaxil və transfer',
+        'approvals' => 'Transfer və qaytarma',
         'statistics' => 'Statistika',
     ];
 }
@@ -296,16 +299,45 @@ function app_inventory_inspection_page(PDO $db, array $query): array
     $where .= app_inventory_search_filter($query, ['n.inspection_status', 'n.inspected_by', 'n.notes', 'a.asset_code', 'a.serial_number', 'r.return_ticket_no'], $params);
     $from = ' FROM inventory_asset_inspections n
               LEFT JOIN inventory_assets a ON a.id = n.asset_id
-              LEFT JOIN inventory_asset_returns r ON r.id = n.return_id' . $where;
-    return app_inventory_query_page($db, 'SELECT COUNT(*)' . $from, 'SELECT n.*, a.asset_code, a.serial_number, a.mac_address, r.return_ticket_no, r.customer_code' . $from . ' ORDER BY n.inspected_at DESC, n.id DESC', $params, $query);
+              LEFT JOIN inventory_asset_returns r ON r.id = n.return_id
+              LEFT JOIN inventory_asset_repairs rep ON rep.id = (
+                  SELECT id FROM inventory_asset_repairs WHERE inspection_id = n.id ORDER BY id DESC LIMIT 1
+              )' . $where;
+    return app_inventory_query_page($db, 'SELECT COUNT(*)' . $from, 'SELECT n.*, a.asset_code, a.serial_number, a.mac_address, r.return_ticket_no, r.customer_code, r.return_status, rep.id AS repair_id, rep.repair_status' . $from . ' ORDER BY n.inspected_at DESC, n.id DESC', $params, $query);
 }
 
 function app_inventory_rma_page(PDO $db, array $query): array
 {
     $params = [];
-    $extra = ' AND (LOWER(a.condition_status) LIKE "%defect%" OR LOWER(a.condition_status) LIKE "%repair%" OR LOWER(a.condition_status) LIKE "%rma%" OR LOWER(a.condition_status) LIKE "%fault%" OR LOWER(a.lifecycle_status) LIKE "%repair%" OR LOWER(a.lifecycle_status) LIKE "%rma%")';
-    [, $from, $select] = app_inventory_asset_base($query, $params, $extra);
-    return app_inventory_query_page($db, 'SELECT COUNT(*)' . $from, $select . ' ORDER BY a.failure_count DESC, a.updated_at DESC, a.id DESC', $params, $query);
+    $where = ' WHERE 1=1';
+    $where .= app_inventory_search_filter(
+        $query,
+        ['a.asset_code', 'a.serial_number', 'a.mac_address', 'm.vendor', 'm.model', 'i.item_name', 'r.repair_status', 'r.external_reference'],
+        $params
+    );
+    $status = clean_text((string) ($query['status'] ?? ''));
+    if ($status !== '') {
+        $where .= ' AND r.repair_status = :repair_status';
+        $params['repair_status'] = $status;
+    }
+    $from = ' FROM inventory_asset_repairs r
+              INNER JOIN inventory_assets a ON a.id = r.asset_id
+              LEFT JOIN inventory_stock_items i ON i.id = a.product_id
+              LEFT JOIN inventory_asset_models m ON m.id = a.model_id' . $where;
+    return app_inventory_query_page(
+        $db,
+        'SELECT COUNT(*)' . $from,
+        'SELECT r.id AS repair_id,r.repair_status,r.vendor_name AS repair_vendor,
+                r.external_reference,r.reason AS repair_reason,r.completed_at,
+                a.id,a.asset_code,a.serial_number,a.mac_address,a.ownership_type,
+                a.lifecycle_status,a.condition_status,a.current_location_type,a.current_location_id,
+                a.installation_count,a.failure_count,a.return_count,a.updated_at,
+                i.sku,i.item_name,m.vendor,m.model,m.device_type' . $from . '
+          ORDER BY FIELD(r.repair_status,"pending","in_repair","repaired","rma","scrapped","cancelled"),
+                   r.updated_at DESC,r.id DESC',
+        $params,
+        $query
+    );
 }
 
 function app_inventory_stock_movement_page(PDO $db, array $query): array

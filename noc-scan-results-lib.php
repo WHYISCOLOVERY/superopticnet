@@ -76,8 +76,8 @@ function app_noc_scan_results_from_state(array $state): array
 function app_noc_render_scan_results(array $scanResults, string $scanTarget, array $defaults = []): void
 {
     $limit = max(1, min(100, (int) ($defaults['limit'] ?? 24)));
-    $snmpRead = (string) ($defaults['snmp_read_community'] ?? app_setting('mgs_snmp_read_community', 'public'));
-    $snmpWrite = (string) ($defaults['snmp_write_community'] ?? app_setting('mgs_snmp_write_community', 'private'));
+    $snmpRead = (string) ($defaults['snmp_read_community'] ?? app_environment_secret('MGS_SNMP_READ_COMMUNITY'));
+    $snmpWrite = (string) ($defaults['snmp_write_community'] ?? app_environment_secret('MGS_SNMP_WRITE_COMMUNITY'));
     $snmpPort = (int) ($defaults['snmp_port'] ?? app_setting('mgs_snmp_port', 161));
     $snmpTrapPort = (int) ($defaults['snmp_trap_port'] ?? app_setting('mgs_snmp_trap_port', 162));
     $rows = array_slice(array_values(array_filter($scanResults, 'is_array')), 0, $limit);

@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $user = app_portal_current_user();
 $token = trim((string) ($_SERVER['HTTP_X_IMPORT_TOKEN'] ?? ''));
-$expectedToken = app_config('import_api_token');
+$expectedToken = app_environment_secret('IMPORT_API_TOKEN');
 $sessionAuthorized = $user !== null && ($user['role'] ?? '') === 'employee' && app_portal_is_admin($user);
 $tokenAuthorized = $expectedToken !== '' && $token !== '' && hash_equals($expectedToken, $token);
 $authorized = $sessionAuthorized || $tokenAuthorized;

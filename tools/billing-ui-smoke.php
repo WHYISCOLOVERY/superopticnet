@@ -314,13 +314,13 @@ $pages = [
         'name' => 'message_center',
         'page' => 'message-center.php',
         'query' => http_build_query(['view' => 'overview']),
-        'markers' => ['Mesaj', 'Umumi baxis', 'Kanal ve novbe veziyyeti', 'Kanal ve provider ayarlarina kec'],
+        'markers' => ['data-message-command-strip', 'Kanal ve novbe veziyyeti', 'data-message-channel-chart', 'Kanal ve provider ayarlarina kec'],
     ],
     [
         'name' => 'message_center_settings',
         'page' => 'message-center.php',
         'query' => http_build_query(['view' => 'settings']),
-        'markers' => ['Kanal ve provider ayarlari', 'WhatsApp Web bridge', 'sms-provider-settings', 'Texniki novbe komandalari'],
+        'markers' => ['Kanal ve provider ayarlari', 'data-whatsapp-provider-panel', 'sms-provider-settings', 'mgs-integration.php?view=bots'],
     ],
     [
         'name' => 'message_center_single',
@@ -332,7 +332,8 @@ $pages = [
         'name' => 'message_center_test',
         'page' => 'message-center.php',
         'query' => http_build_query(['view' => 'test']),
-        'markers' => ['Provider test paneli', 'providerDestination'],
+        'markers' => ['data-message-command-strip', 'Kanal ve novbe veziyyeti', 'data-message-channel-chart'],
+        'forbidden_markers' => ['Provider test paneli', 'providerDestination'],
     ],
     [
         'name' => 'ip_pools',
@@ -506,6 +507,14 @@ foreach ($pages as $pageSpec) {
         }
     }
 
+    $unexpectedMarkers = [];
+    foreach ((array) ($pageSpec['forbidden_markers'] ?? []) as $marker) {
+        $marker = (string) $marker;
+        if ($marker !== '' && str_contains($html, $marker)) {
+            $unexpectedMarkers[] = $marker;
+        }
+    }
+
     $matchedErrors = [];
     foreach ($errorPatterns as $pattern) {
         if (preg_match($pattern, $html . "\n" . $stderr) === 1) {
@@ -513,7 +522,10 @@ foreach ($pages as $pageSpec) {
         }
     }
 
-    $ok = (int) $render['exit_code'] === 0 && $missingMarkers === [] && $matchedErrors === [];
+    $ok = (int) $render['exit_code'] === 0
+        && $missingMarkers === []
+        && $unexpectedMarkers === []
+        && $matchedErrors === [];
     if (!$ok) {
         $failed++;
     }
@@ -526,6 +538,7 @@ foreach ($pages as $pageSpec) {
         'duration_ms' => (int) ($render['duration_ms'] ?? 0),
         'html_bytes' => strlen($html),
         'missing_markers' => $missingMarkers,
+        'unexpected_markers' => $unexpectedMarkers,
         'matched_errors' => $matchedErrors,
         'stderr' => $stderr,
     ];

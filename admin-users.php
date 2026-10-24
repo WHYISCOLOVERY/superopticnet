@@ -1,9 +1,13 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/config.php';
+require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/copilot-widget.php';
+require_once __DIR__ . '/ui-language-lib.php';
+require_once __DIR__ . '/design-system-lib.php';
+require_once __DIR__ . '/hr-position-service.php';
+require_once __DIR__ . '/admin-privilege-lib.php';
 
 app_session_boot();
 $lang = app_lang();
@@ -25,6 +29,13 @@ $statusMap = [
     'account_forbidden' => ['type' => 'error', 'message' => 'Bu rol deyisikliyine icazeniz yoxdur.'],
     'protected_account' => ['type' => 'error', 'message' => 'Qorunan super admin hesabi adi admin terefinden deyisdirile bilmez.'],
     'account_reason_required' => ['type' => 'error', 'message' => 'Rol, status ve ya silme emeliyyati ucun sebeb mutleq yazilmalidir.'],
+    'privilege_escalation_pending' => ['type' => 'success', 'message' => 'Bu deyisiklik icaze yukselisi sayilir (admin/reaktivasiya/yeni modul). Basqa bir admin tesdiqleyene qeder tetbiq olunmayacaq.'],
+    'privilege_escalation_resolved' => ['type' => 'success', 'message' => 'Icaze yukselisi sorgusu helli olundu.'],
+    'privilege_escalation_failed' => ['type' => 'error', 'message' => 'Icaze yukselisi sorgusu helli olunmadi.'],
+    'staff_password_reset' => ['type' => 'success', 'message' => 'Emekdas ucun muveqqeti sifre yaradildi. Sifre asagida yalniz bir defe gosterilir.'],
+    'staff_password_reset_failed' => ['type' => 'error', 'message' => 'Emekdas sifresi reset edilmedi. Icazeni ve hesabi yoxlayin.'],
+    'staff_password_reason_required' => ['type' => 'error', 'message' => 'Emekdas sifresini reset etmek ucun sebeb mutleq yazilmalidir.'],
+    'staff_password_policy_failed' => ['type' => 'error', 'message' => 'Ilkin sifre en az 14 simvol, boyuk ve kicik herf, reqem ve xususi isare saxlamalidir.'],
     'import_done' => ['type' => 'success', 'message' => 'Import tamamlandi.'],
     'import_failed' => ['type' => 'error', 'message' => 'Import ugursuz oldu.'],
 ];
@@ -44,12 +55,21 @@ if ($status === 'import_done' || $status === 'import_failed') {
         ),
     ];
 }
+$temporaryStaffPassword = is_array($_SESSION['admin_staff_temporary_password'] ?? null)
+    ? $_SESSION['admin_staff_temporary_password']
+    : null;
+unset($_SESSION['admin_staff_temporary_password']);
 
 $accounts = app_db_accounts([
     'q' => $_GET['q'] ?? '',
     'role' => 'employee',
     'account_type' => $_GET['type_filter'] ?? '',
 ]);
+$pendingPrivilegeEscalations = [];
+$appDbForEscalations = app_db();
+if ($appDbForEscalations instanceof PDO) {
+    $pendingPrivilegeEscalations = app_admin_privilege_change_requests($appDbForEscalations, 'pending');
+}
 if ($accounts === [] && !app_db_available()) {
     $mockData = app_mock_portal_data();
     $mockAccounts = [];
@@ -133,6 +153,19 @@ if ($editing !== null && (string) ($editing['role'] ?? '') !== 'employee') {
 $editingAreas = $editing !== null ? app_db_account_areas((int) $editing['id']) : [];
 $editingPayload = $editing !== null ? app_db_account_payload($editing) : [];
 $editingEmployeeMeta = is_array($editingPayload['employee'] ?? null) ? $editingPayload['employee'] : [];
+$editingAccess = is_array($editingPayload['access'] ?? null) ? $editingPayload['access'] : [];
+$positionCatalog = ($db = app_db()) instanceof PDO ? app_hr_positions($db, true) : [];
+$editingPosition = ($db instanceof PDO && $editing !== null) ? app_hr_position_for_account($db, $editing) : null;
+$moduleCatalog = app_portal_module_catalog($lang);
+if (array_key_exists('module_keys', $editingAccess) && is_array($editingAccess['module_keys'])) {
+    $editingModuleKeys = array_values($editingAccess['module_keys']);
+} elseif ($editing !== null && trim((string) ($editing['employee_role'] ?? '')) === '' && is_array($editingPosition)) {
+    $editingModuleKeys = app_hr_position_module_keys($editingPosition);
+} elseif ($editing !== null) {
+    $editingModuleKeys = app_portal_employee_module_keys($editing);
+} else {
+    $editingModuleKeys = [];
+}
 $editingCompensation = $editing !== null ? app_mgs_hr_employee_compensation((int) $editing['id']) : [];
 $editingEmployeeSalary = is_array($editingEmployeeMeta['compensation'] ?? null) ? $editingEmployeeMeta['compensation'] : [];
 $currentEmployeeSalaryMode = (string) ($editingCompensation['salary_mode'] ?? $editingEmployeeSalary['salary_mode'] ?? 'gross');
@@ -174,6 +207,7 @@ unset($queryBase['page']);
     <title>Istifadeci idareetmesi</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
+    <link rel="stylesheet" href="<?= e(app_asset('css/design-system.css')); ?>">
     <style>
         .admin-users-tools{display:flex;flex-direction:column;gap:16px}
         .admin-users-tools.portal-reveal,
@@ -308,7 +342,7 @@ unset($queryBase['page']);
         @media (max-width: 720px){.admin-users-form .portal-grid-slim{grid-template-columns:1fr}}
     </style>
 </head>
-<body class="portal-body<?= ($openEmployeeModal || $openImportModal) ? ' admin-modal-open' : ''; ?>">
+<body class="portal-body<?= ($openEmployeeModal || $openImportModal) ? ' admin-modal-open' : ''; ?>"<?= app_design_system_body_attribute(); ?>>
     <header class="portal-topbar">
         <div class="portal-topbar-inner">
             <a href="portal.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" class="portal-brand">
@@ -326,6 +360,15 @@ unset($queryBase['page']);
             <div class="portal-alert portal-alert-<?= e($flash['type']); ?>" data-autohide-alert>
                 <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'; ?>"></i>
                 <span><?= e($flash['message']); ?></span>
+            </div>
+        <?php endif; ?>
+        <?php if (is_array($temporaryStaffPassword)): ?>
+            <div class="portal-alert portal-alert-success">
+                <span>
+                    Emekdas login: <strong><?= e((string) ($temporaryStaffPassword['login'] ?? '')); ?></strong><br>
+                    Muveqqeti sifre: <strong><?= e((string) ($temporaryStaffPassword['password'] ?? '')); ?></strong><br>
+                    Bu sifre sehifeden cixdiqdan sonra yeniden gosterilmeyecek ve emekdas ilk girisde onu deyismelidir.
+                </span>
             </div>
         <?php endif; ?>
 
@@ -366,6 +409,9 @@ unset($queryBase['page']);
             <a class="portal-ghost-btn portal-inline-link" href="operation-logs.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
                 <i class="fa-solid fa-clipboard-list"></i> Emeliyyat jurnali
             </a>
+            <a class="portal-ghost-btn portal-inline-link" href="admin-positions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                <i class="fa-solid fa-user-shield"></i> Vezifeler ve icazeler
+            </a>
         </section>
 
         <section class="admin-users-tools portal-reveal">
@@ -380,10 +426,6 @@ unset($queryBase['page']);
                     </button>
                 </div>
                 <div class="admin-users-modal-inner" data-admin-modal-panel>
-                <div class="portal-card-head">
-                    <h2><?= $editing !== null ? 'Istifadeciye duzelis et' : 'Yeni istifadeci yarat'; ?></h2>
-                    <small>Burada yalniz emekdas hesablari yaradilir: operator, technician, support ve admin.</small>
-                </div>
                 <form class="admin-users-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" data-admin-users-employee-mode>
                     <input type="hidden" name="action" value="save_account">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
@@ -397,8 +439,13 @@ unset($queryBase['page']);
                             <input id="accountLogin" type="text" name="login" value="<?= e((string) ($editing['login'] ?? '')); ?>" required>
                         </div>
                         <div>
-                            <label for="accountPassword">Sifre <?= $editing !== null ? '(bos saxla = deyisme)' : ''; ?></label>
-                            <input id="accountPassword" type="text" name="password" value="">
+                            <?php if ($editing === null): ?>
+                                <label for="accountPassword">Ilkin sifre</label>
+                                <input id="accountPassword" type="password" name="password" minlength="14" autocomplete="new-password" required>
+                            <?php else: ?>
+                                <label>Sifre idareetmesi</label>
+                                <input type="text" value="Yalniz ayrica admin reseti ile deyisdirilir" disabled>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -411,7 +458,12 @@ unset($queryBase['page']);
                         <div class="portal-form-row">
                             <label for="accountJobTitle">HR vezifesi</label>
                             <input id="accountJobTitle" type="text" value="<?= e((string) ($editing['job_title'] ?? '')); ?>" readonly>
-                            <small>Vezife HR melumatidir; bu sehifede yalniz portal rolu ve icaze verilir.</small>
+                            <small>
+                                Vezife HR melumatidir; bu sehifede yalniz portal rolu ve icaze verilir.
+                                <?php if (is_array($editingPosition) && (string) ($editingPosition['recommended_employee_role'] ?? '') !== ''): ?>
+                                    Meslehet gorulen rol: <strong><?= e(app_ui_label((string) $editingPosition['recommended_employee_role'])); ?></strong>.
+                                <?php endif; ?>
+                            </small>
                         </div>
                     <?php endif; ?>
 
@@ -431,23 +483,36 @@ unset($queryBase['page']);
                             <?php $currentEmployeeRole = (string) ($editing['employee_role'] ?? ''); ?>
                             <select id="employeeRole" name="employee_role">
                                 <option value="">Yoxdur</option>
-                                <option value="support" <?= $currentEmployeeRole === 'support' ? 'selected' : ''; ?>>support</option>
-                                <option value="operator" <?= $currentEmployeeRole === 'operator' ? 'selected' : ''; ?>>operator</option>
-                                <option value="technician" <?= $currentEmployeeRole === 'technician' ? 'selected' : ''; ?>>technician</option>
-                                <option value="engineer" <?= $currentEmployeeRole === 'engineer' ? 'selected' : ''; ?>>engineer</option>
-                                <option value="finance" <?= $currentEmployeeRole === 'finance' ? 'selected' : ''; ?>>finance</option>
-                                <option value="warehouse" <?= $currentEmployeeRole === 'warehouse' ? 'selected' : ''; ?>>warehouse</option>
-                                <option value="warehouse_manager" <?= $currentEmployeeRole === 'warehouse_manager' ? 'selected' : ''; ?>>warehouse_manager</option>
-                                <option value="hr" <?= $currentEmployeeRole === 'hr' ? 'selected' : ''; ?>>hr</option>
-                                <option value="night_operator" <?= $currentEmployeeRole === 'night_operator' ? 'selected' : ''; ?>>night_operator</option>
-                                <option value="admin" <?= $currentEmployeeRole === 'admin' ? 'selected' : ''; ?>>admin</option>
+                                <option value="support" <?= $currentEmployeeRole === 'support' ? 'selected' : ''; ?>><?= e(app_ui_label('support')); ?></option>
+                                <option value="operator" <?= $currentEmployeeRole === 'operator' ? 'selected' : ''; ?>><?= e(app_ui_label('operator')); ?></option>
+                                <option value="technician" <?= $currentEmployeeRole === 'technician' ? 'selected' : ''; ?>><?= e(app_ui_label('technician')); ?></option>
+                                <option value="engineer" <?= $currentEmployeeRole === 'engineer' ? 'selected' : ''; ?>><?= e(app_ui_label('engineer')); ?></option>
+                                <option value="finance" <?= $currentEmployeeRole === 'finance' ? 'selected' : ''; ?>><?= e(app_ui_label('finance')); ?></option>
+                                <option value="warehouse" <?= $currentEmployeeRole === 'warehouse' ? 'selected' : ''; ?>><?= e(app_ui_label('warehouse')); ?></option>
+                                <option value="warehouse_manager" <?= $currentEmployeeRole === 'warehouse_manager' ? 'selected' : ''; ?>><?= e(app_ui_label('warehouse_manager')); ?></option>
+                                <option value="hr" <?= $currentEmployeeRole === 'hr' ? 'selected' : ''; ?>><?= e(app_ui_label('hr')); ?></option>
+                                <option value="night_operator" <?= $currentEmployeeRole === 'night_operator' ? 'selected' : ''; ?>><?= e(app_ui_label('night_operator')); ?></option>
+                                <option value="admin" <?= $currentEmployeeRole === 'admin' ? 'selected' : ''; ?>>Admin</option>
                                 <?php if ($isSuperAdminActor): ?>
-                                    <option value="super_admin" <?= $currentEmployeeRole === 'super_admin' ? 'selected' : ''; ?>>super_admin</option>
+                                    <option value="super_admin" <?= $currentEmployeeRole === 'super_admin' ? 'selected' : ''; ?>>Super admin</option>
                                 <?php endif; ?>
-                                <option value="noc" <?= $currentEmployeeRole === 'noc' ? 'selected' : ''; ?>>noc</option>
-                                <option value="sales" <?= $currentEmployeeRole === 'sales' ? 'selected' : ''; ?>>sales</option>
+                                <option value="noc" <?= $currentEmployeeRole === 'noc' ? 'selected' : ''; ?>><?= e(app_ui_label('noc')); ?></option>
+                                <option value="sales" <?= $currentEmployeeRole === 'sales' ? 'selected' : ''; ?>><?= e(app_ui_label('sales')); ?></option>
                             </select>
                         </div>
+                    </div>
+
+                    <div class="portal-form-row">
+                        <label>Portal modul icazeleri</label>
+                        <div class="admin-area-check-grid" data-admin-module-permission-grid>
+                            <?php foreach ($moduleCatalog as $moduleKey => $module): ?>
+                                <label class="admin-area-check">
+                                    <input type="checkbox" name="module_keys[]" value="<?= e((string) $moduleKey); ?>" <?= in_array((string) $moduleKey, $editingModuleKeys, true) ? 'checked' : ''; ?>>
+                                    <span><?= e((string) ($module['label'] ?? $moduleKey)); ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <small>Vezife sehifesinde saxlanilan sablon burada gosterilir. Bu icazeler yalniz admin formu saxladiginda hesaba tetbiq olunur.</small>
                     </div>
 
                     <div class="portal-form-row portal-grid-slim">
@@ -551,6 +616,19 @@ unset($queryBase['page']);
                         <?php endif; ?>
                     </div>
                 </form>
+                <?php if ($editing !== null): ?>
+                    <form class="admin-users-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" autocomplete="off">
+                        <input type="hidden" name="action" value="reset_staff_password">
+                        <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                        <input type="hidden" name="account_id" value="<?= e((string) ($editing['id'] ?? 0)); ?>">
+                        <div class="portal-form-row">
+                            <label for="staffPasswordResetReason">Sifre reseti sebebi</label>
+                            <textarea id="staffPasswordResetReason" name="reset_reason" rows="2" required placeholder="Meselen: Emekdas sifresini unudub ve sexsiyyeti daxili qaydada tesdiqlenib"></textarea>
+                            <small>Muveqqeti sifre yalniz bir defe gosterilir. Emekdas ilk girisde yeni sifre secmelidir.</small>
+                        </div>
+                        <button type="submit" class="portal-ghost-btn">Emekdas sifresini reset et</button>
+                    </form>
+                <?php endif; ?>
                 </div>
             </div>
 
@@ -584,12 +662,46 @@ unset($queryBase['page']);
                 </div>
             </div>
 
+            <?php if ($pendingPrivilegeEscalations !== []): ?>
+            <article class="portal-card admin-users-filter-card">
+                <div class="portal-card-head">
+                    <h2>Gozleyen icaze yukselisleri</h2>
+                    <small>Rol/status deyisikliyi vizyon 19.2-ye gore basqa admin terefinden tesdiqlenmelidir.</small>
+                </div>
+                <div class="portal-table-wrap"><table class="portal-table"><thead><tr><th>Hedef</th><th>Onceki</th><th>Teklif</th><th>Sebeb</th><th>Sorgu eden</th><th>Qerar</th></tr></thead><tbody>
+                <?php foreach ($pendingPrivilegeEscalations as $escalation): ?>
+                    <?php
+                    $prev = app_mgs_json_decode_array($escalation['previous_privileges_json'] ?? []);
+                    $prop = app_mgs_json_decode_array($escalation['proposed_privileges_json'] ?? []);
+                    ?>
+                    <tr>
+                        <td data-label="Hedef"><?= e((string) ($escalation['target_login'] ?? '-')); ?></td>
+                        <td data-label="Onceki"><?= e((string) ($prev['account_type'] ?? '-') . ' / ' . ($prev['employee_role'] ?? '-') . ' / aktiv=' . ($prev['is_active'] ?? '-')); ?></td>
+                        <td data-label="Teklif"><?= e((string) ($prop['account_type'] ?? '-') . ' / ' . ($prop['employee_role'] ?? '-') . ' / aktiv=' . ($prop['is_active'] ?? '-')); ?></td>
+                        <td data-label="Sebeb"><?= e((string) ($escalation['reason'] ?? '-')); ?></td>
+                        <td data-label="Sorgu eden"><?= e((string) ($escalation['requested_by_name'] ?? '-')); ?></td>
+                        <td data-label="Qerar">
+                            <form class="portal-inline-form" method="post" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">
+                                <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
+                                <input type="hidden" name="action" value="resolve_privilege_escalation">
+                                <input type="hidden" name="request_id" value="<?= e((string) ($escalation['id'] ?? 0)); ?>">
+                                <input type="text" name="resolution_note" placeholder="Qeyd" style="width:140px">
+                                <select name="decision"><option value="approved">Tesdiqle</option><option value="rejected">Redd et</option></select>
+                                <button class="portal-ghost-btn" type="submit">Qerar ver</button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody></table></div>
+            </article>
+            <?php endif; ?>
+
             <article class="portal-card admin-users-filter-card">
                 <div class="portal-card-head">
                     <h2>Filter</h2>
                     <small>DB daxilindeki hesablari axtar.</small>
                 </div>
-                <form class="portal-stacked-form" method="get">
+                <form class="portal-stacked-form" method="get" id="admin-users-filter" data-auto-filter data-auto-filter-targets="admin-users-results">
                     <?php if ($lang !== 'az'): ?>
                         <input type="hidden" name="lang" value="<?= e($lang); ?>">
                     <?php endif; ?>
@@ -623,11 +735,12 @@ unset($queryBase['page']);
                         <button type="submit" class="portal-primary-btn">Goster</button>
                         <a class="portal-ghost-btn portal-inline-link" href="admin-users.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>">Sifirla</a>
                     </div>
+                    <small data-auto-filter-status role="status" aria-live="polite"></small>
                 </form>
             </article>
         </section>
 
-        <section class="portal-card portal-reveal">
+        <section class="portal-card portal-reveal" data-auto-filter-results="admin-users-results" data-auto-filter-form="admin-users-filter">
             <div class="portal-card-head">
                 <h2>Emekdas siyahisi</h2>
                 <div class="admin-users-view-switch">
@@ -652,14 +765,14 @@ unset($queryBase['page']);
                                 </div>
                                 <?php $cardEmployeeRole = (string) ($account['employee_role'] ?? ''); ?>
                                 <span class="admin-pill <?= ((string) ($account['role'] ?? '') === 'employee') ? 'is-employee' : ''; ?> <?= ((string) ($account['account_type'] ?? '') === 'admin') ? 'is-admin' : ''; ?> <?= $cardEmployeeRole === 'super_admin' ? 'is-super-admin' : ''; ?>">
-                                    <?= $cardEmployeeRole === 'super_admin' ? 'Super admin' : e((string) ($account['account_type'] ?? '')); ?>
+                                    <?= $cardEmployeeRole === 'super_admin' ? 'Super admin' : e(app_ui_term((string) ($account['employee_role'] ?? $account['account_type'] ?? ''))); ?>
                                 </span>
                             </div>
                             <div class="admin-users-card-meta">
                                 <span>ID: <?= e((string) ($account['id'] ?? '')); ?></span>
                                 <span>Elaqe: <?= e(trim((string) ($account['phone'] ?? '') . ' ' . (string) ($account['email'] ?? '')) ?: '-'); ?></span>
                                 <span>Erazi: <?= e((string) ($account['area'] ?? '-')); ?></span>
-                                <span>Status: <?= e((string) ($account['status'] ?? '-')); ?></span>
+                                <span>Vəziyyət: <?= e(app_ui_status((string) ($account['status'] ?? '-'))); ?></span>
                                 <?php if ((string) ($accountEmployeeMeta['telegram_chat_id'] ?? '') !== ''): ?>
                                     <span>Telegram: <?= e((string) ($accountEmployeeMeta['telegram_chat_id'] ?? '')); ?></span>
                                 <?php endif; ?>
@@ -669,7 +782,7 @@ unset($queryBase['page']);
                                 <?php if ($canDeleteAccounts && (string) ($account['login'] ?? '') !== 's.abdullayev@superoptic.net'): ?>
                                     <details class="admin-users-danger-menu">
                                         <summary>Sil</summary>
-                                        <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" onsubmit="return confirm('Silinsin?');">
+                                        <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" data-ui-confirm="Bu istifadeci hesabi silinecek ve emeliyyat jurnala yazilacaq. Davam edilsin?" data-ui-confirm-title="Hesabi sil">
                                             <input type="hidden" name="action" value="delete_account">
                                             <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                             <input type="hidden" name="account_id" value="<?= e((string) ($account['id'] ?? '')); ?>">
@@ -712,7 +825,7 @@ unset($queryBase['page']);
                                     <span class="admin-pill <?= ((string) ($account['role'] ?? '') === 'employee') ? 'is-employee' : ''; ?> <?= ((string) ($account['account_type'] ?? '') === 'admin') ? 'is-admin' : ''; ?> <?= $rowEmployeeRole === 'super_admin' ? 'is-super-admin' : ''; ?>">
                                         <?= $rowEmployeeRole === 'super_admin'
                                             ? 'Super admin'
-                                            : e((string) ($account['role'] ?? '') . ' / ' . (string) ($account['account_type'] ?? '')); ?>
+                                            : e(app_ui_term((string) ($account['employee_role'] ?? $account['account_type'] ?? ''))); ?>
                                     </span>
                                 </td>
                                 <td data-label="Elaqe" class="admin-users-contact">
@@ -727,14 +840,14 @@ unset($queryBase['page']);
                                     <strong><?= e((string) ($account['area'] ?? '')); ?></strong><br>
                                     <small><?= e(implode(', ', (array) ($account['responsible_areas'] ?? []))); ?></small>
                                 </td>
-                                <td data-label="Status"><?= e((string) ($account['status'] ?? '')); ?></td>
+                                <td data-label="Status"><?= e(app_ui_status((string) ($account['status'] ?? ''))); ?></td>
                                 <td data-label="Emeliyyat">
                                     <div class="admin-users-actions">
                                         <a class="portal-primary-btn portal-inline-link" href="admin-users.php?edit=<?= e((string) ($account['id'] ?? '')); ?><?= $lang !== 'az' ? '&lang=' . rawurlencode($lang) : ''; ?>">Redakte et</a>
                                         <?php if ($canDeleteAccounts && (string) ($account['login'] ?? '') !== 's.abdullayev@superoptic.net'): ?>
                                             <details class="admin-users-danger-menu">
                                                 <summary>Sil</summary>
-                                                <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" onsubmit="return confirm('Silinsin?');">
+                                                <form class="admin-users-delete-form" action="portal-actions.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>" method="post" data-ui-confirm="Bu istifadeci hesabi silinecek ve emeliyyat jurnala yazilacaq. Davam edilsin?" data-ui-confirm-title="Hesabi sil">
                                                     <input type="hidden" name="action" value="delete_account">
                                                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                                                     <input type="hidden" name="account_id" value="<?= e((string) ($account['id'] ?? '')); ?>">
@@ -766,12 +879,17 @@ unset($queryBase['page']);
     <?php app_render_copilot_widget($lang); ?>
     <script>
     (() => {
-        const openModal = (id) => {
+        const modalOpeners = new WeakMap();
+        const focusableItems = (modal) => Array.from(modal.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((item) => item.offsetParent !== null);
+        const openModal = (id, opener = null) => {
             const modal = document.getElementById(id);
             if (!modal) return;
+            modalOpeners.set(modal, opener || document.activeElement);
             modal.setAttribute('open', 'open');
             document.body.classList.add('admin-modal-open');
-            modal.querySelector('input:not([type="hidden"]), select, textarea')?.focus({ preventScroll: true });
+            focusableItems(modal)[0]?.focus({ preventScroll: true });
         };
         const closeModal = (modal) => {
             if (!modal) return;
@@ -779,9 +897,12 @@ unset($queryBase['page']);
             if (!document.querySelector('.admin-users-modal[open]')) {
                 document.body.classList.remove('admin-modal-open');
             }
+            const opener = modalOpeners.get(modal);
+            if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+            modalOpeners.delete(modal);
         };
         document.querySelectorAll('[data-open-admin-modal]').forEach((button) => {
-            button.addEventListener('click', () => openModal(button.dataset.openAdminModal || ''));
+            button.addEventListener('click', () => openModal(button.dataset.openAdminModal || '', button));
         });
         document.querySelectorAll('[data-close-admin-modal]').forEach((button) => {
             button.addEventListener('click', () => closeModal(button.closest('.admin-users-modal')));
@@ -793,11 +914,28 @@ unset($queryBase['page']);
             });
         });
         document.addEventListener('keydown', (event) => {
-            if (event.key !== 'Escape') return;
-            document.querySelectorAll('.admin-users-modal[open]').forEach((modal) => closeModal(modal));
+            const modal = document.querySelector('.admin-users-modal[open]');
+            if (!modal) return;
+            if (event.key === 'Escape') {
+                closeModal(modal);
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = focusableItems(modal);
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         });
     })();
     </script>
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <script src="<?= e(app_asset('script/design-system.js')); ?>" defer></script>
 </body>
 </html>

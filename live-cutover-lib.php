@@ -39,18 +39,22 @@ function app_live_cutover_gates(?PDO $db = null): array
     };
 
     $radiusSettings = app_radius_settings();
-    $radiusReadiness = app_radius_disconnect_worker_readiness($radiusSettings);
+    $radiusReadiness = app_radius_disconnect_worker_readiness($radiusSettings, $db);
     $managementPathReady = app_mgs_management_path_ready();
     $reachableDevices = $count('SELECT COUNT(*) FROM device_learning_profiles WHERE reachability_state = "reachable"');
     $waitingDevices = $count('SELECT COUNT(*) FROM device_learning_profiles WHERE reachability_state = "unreachable_because_monitor_path_down"');
-    $telegramReady = $secretStatus(app_config('telegram_token')) && $secretStatus(app_config('telegram_chat_id'));
-    $smsDriver = strtolower(trim(app_config('sms_provider_driver', 'json')));
-    $smsReady = $secretStatus(app_config('sms_provider_endpoint'));
-    if ($smsDriver === 'poctgoyercini_xml') {
-        $smsReady = $smsReady && $secretStatus(app_config('sms_provider_user')) && $secretStatus(app_config('sms_provider_password'));
-    } else {
-        $smsReady = $smsReady && $secretStatus(app_config('sms_provider_token'));
-    }
+    $telegramReady = $secretStatus(app_communication_environment_secret('TELEGRAM_TOKEN')) && $secretStatus(app_config('telegram_chat_id'));
+    $smsProvider = app_communication_provider_config('sms', '994000000000');
+    $smsDriver = strtolower(trim((string) ($smsProvider['driver'] ?? '')));
+    $smsReady = !empty($smsProvider['configured'])
+        && $secretStatus((string) ($smsProvider['endpoint'] ?? ''))
+        && (
+            $secretStatus((string) ($smsProvider['token'] ?? ''))
+            || (
+                $secretStatus((string) ($smsProvider['user'] ?? ''))
+                && $secretStatus((string) ($smsProvider['password'] ?? ''))
+            )
+        );
     $whatsappEnabled = in_array(strtolower((string) app_setting('whatsapp_provider_enabled', '0')), ['1', 'true', 'yes', 'on'], true);
     $whatsappBridge = $whatsappEnabled ? app_communication_whatsapp_bridge_status() : ['reachable' => false, 'connected' => false, 'status' => 'disabled'];
 
