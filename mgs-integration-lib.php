@@ -10642,7 +10642,11 @@ function app_mgs_probe_device_services(
             'snmp_port_error' => (string) ($snmpPort['error'] ?? ''),
             'ssh_username' => is_array($accessProfile) ? (string) ($accessProfile['ssh_username'] ?? '') : '',
             'ssh_port' => $sshPort,
-            'snmp_read_community' => is_array($accessProfile) ? (string) ($accessProfile['read_community'] ?? '') : '',
+            // Never persist or return the decrypted community in probe
+            // telemetry. Callers only need to know whether a credential was
+            // available for the attempted SNMP request.
+            'snmp_read_community_set' => is_array($accessProfile)
+                && (string) ($accessProfile['read_community'] ?? '') !== '',
         ],
     ];
 }
