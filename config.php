@@ -1110,6 +1110,7 @@ function app_coverage_areas(): array
         'Mehdiabad',
         'Məmmədli',
         'Zabrat',
+        'Savxoz',
         'Qaraçuxur',
         'Bakıxanov',
         'Əhmədli',
@@ -1626,11 +1627,12 @@ function app_portal_statistics_context_url(string $module, string $reportType, a
 function app_portal_ticket_subjects(): array
 {
     return [
-        'Suret problemi',
-        'Texniki destek',
-        'Sifre deyisdirme',
-        'Qirmizi isiq yanir modemde',
-        'Tesekkur etmek',
+        'Qoşulma',
+        'Sürət problemi',
+        'Texniki dəstək',
+        'Şifrə dəyişdirilməsi',
+        'Qırmızı işıq yanır modemdə',
+        'Təşəkkür etmək',
     ];
 }
 
@@ -1958,6 +1960,24 @@ function app_portal_resolve_area_from_text(string $text): string
 
 function app_portal_assign_technician(string $area): ?array
 {
+    // Live dispatch is centralized in the database rule: it considers
+    // responsible areas, an active duty session, open workload and the time
+    // since the previous assignment. The old fixture loop remains only for
+    // database-free/demo mode.
+    $db = app_db();
+    if ($db instanceof PDO && function_exists('app_db_dispatch_ticket_assignee')) {
+        $assignee = app_db_dispatch_ticket_assignee($db, $area);
+        if (is_array($assignee)) {
+            return [
+                'id' => (string) ($assignee['id'] ?? ''),
+                'name' => (string) ($assignee['full_name'] ?? ''),
+                'areas' => [],
+                'employee_role' => (string) ($assignee['employee_role'] ?? ''),
+            ];
+        }
+        return null;
+    }
+
     $normalizedArea = strtolower(trim($area));
     $fallback = null;
 
@@ -2007,7 +2027,7 @@ function app_portal_seed_ticket_records(): array
                 'phone' => (string) ($profile['phone'] ?? ''),
                 'address' => (string) ($profile['address'] ?? ''),
                 'area' => $area,
-                'subject' => (string) ($ticket['subject'] ?? 'Texniki destek'),
+                'subject' => (string) ($ticket['subject'] ?? 'Texniki dəstək'),
                 'message' => (string) ($ticket['message'] ?? ''),
                 'status' => $status,
                 'opened_at' => (string) ($ticket['updated_at'] ?? date('d.m.Y H:i')),

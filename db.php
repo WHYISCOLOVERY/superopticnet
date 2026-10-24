@@ -1740,7 +1740,7 @@ function app_db_seed_tickets(PDO $db): void
                 'phone' => (string) ($profile['phone'] ?? ''),
                 'address' => (string) ($profile['address'] ?? ''),
                 'area' => $area,
-                'subject' => (string) ($ticket['subject'] ?? 'Texniki destek'),
+                'subject' => (string) ($ticket['subject'] ?? 'Texniki dəstək'),
                 'message' => mb_substr((string) ($ticket['message'] ?? ''), 0, 160),
                 'status' => $status,
                 'opened_at' => app_db_parse_datetime((string) ($ticket['updated_at'] ?? '')) ?? app_db_now(),
@@ -1783,7 +1783,7 @@ function app_db_insert_ticket_from_legacy(array $record): void
         'phone' => (string) ($record['phone'] ?? ''),
         'address' => (string) ($record['address'] ?? ''),
         'area' => (string) ($record['area'] ?? ''),
-        'subject' => (string) ($record['subject'] ?? 'Texniki destek'),
+        'subject' => (string) ($record['subject'] ?? 'Texniki dəstək'),
         'message' => mb_substr((string) ($record['message'] ?? ''), 0, 160),
         'status' => (string) ($record['status'] ?? 'Aciqdir'),
         'opened_at' => app_db_parse_datetime((string) ($record['opened_at'] ?? '')) ?? app_db_now(),
@@ -2623,7 +2623,12 @@ function app_db_insert_ticket(array $ticket): bool
             $ticket['assigned_technician_name'] = (string) $assignee['full_name'];
             $ticket['status'] = 'assigned';
             $metadata = is_array($ticket['metadata'] ?? null) ? $ticket['metadata'] : [];
-            $metadata['dispatch'] = ['mode' => 'area_workload', 'assigned_at' => app_db_now()];
+            $metadata['dispatch'] = [
+                'mode' => 'area_duty_workload_rotation',
+                'assigned_at' => app_db_now(),
+                'open_workload' => (int) ($assignee['open_workload'] ?? 0),
+                'last_assigned_at' => $assignee['last_assigned_at'] ?? null,
+            ];
             $ticket['metadata'] = $metadata;
         }
     }
@@ -2697,16 +2702,32 @@ function app_db_dispatch_ticket_assignee(PDO $db, string $area): ?array
 {
     $area = trim($area);
     if ($area === '') return null;
+
+    // A field ticket must go only to an employee who has checked in. If the
+    // attendance schema is not installed yet, preserve the old behaviour
+    // rather than failing ticket creation; production installs have this
+    // table and therefore enforce the duty check.
+    $dutyCondition = app_db_table_exists($db, 'mobile_duty_sessions')
+        ? ' AND EXISTS (SELECT 1 FROM mobile_duty_sessions ds WHERE ds.account_id=p.id AND ds.ended_at IS NULL)'
+        : '';
     $statement = $db->prepare(
-        "SELECT p.id,p.full_name,COUNT(t.id) AS open_workload
+        "SELECT p.id,p.full_name,p.employee_role,COUNT(t.id) AS open_workload,
+                assigned_history.last_assigned_at
            FROM portal_accounts p
       LEFT JOIN portal_tickets t ON t.assigned_technician_account_id=p.id
               AND t.resolved_at IS NULL AND t.status NOT IN ('resolved','closed','Baglandi','Tesdiqlendi')
+      LEFT JOIN (
+            SELECT assigned_technician_account_id,MAX(opened_at) AS last_assigned_at
+              FROM portal_tickets
+             WHERE assigned_technician_account_id IS NOT NULL
+             GROUP BY assigned_technician_account_id
+      ) assigned_history ON assigned_history.assigned_technician_account_id=p.id
           WHERE p.role='employee' AND p.is_active=1
             AND (p.account_type='technician' OR p.employee_role IN ('technician','team_lead','engineer'))
             AND (p.area=:area OR EXISTS (SELECT 1 FROM portal_account_areas paa WHERE paa.account_id=p.id AND paa.area=:area))
-          GROUP BY p.id,p.full_name
-          ORDER BY open_workload ASC,p.full_name ASC,p.id ASC LIMIT 1"
+            {$dutyCondition}
+          GROUP BY p.id,p.full_name,p.employee_role,assigned_history.last_assigned_at
+          ORDER BY open_workload ASC, last_assigned_at IS NULL DESC, last_assigned_at ASC, p.full_name ASC, p.id ASC LIMIT 1"
     );
     $statement->execute(['area' => $area]);
     $row = $statement->fetch(PDO::FETCH_ASSOC);

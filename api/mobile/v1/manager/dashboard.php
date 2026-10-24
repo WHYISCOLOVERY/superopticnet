@@ -90,7 +90,7 @@ $tickets = $db->query(
      FROM portal_tickets
      WHERE status IN ('open','assigned','in_progress','Aciqdir','Icrada','Gozlenilir')
        AND (ticket_no NOT LIKE 'LEGACY-%' OR opened_at >= (NOW() - INTERVAL 24 HOUR))
-     ORDER BY opened_at ASC, FIELD(status, 'in_progress','Icrada','assigned','open','Aciqdir','Gozlenilir')
+     ORDER BY opened_at DESC, id DESC, FIELD(status, 'in_progress','Icrada','assigned','open','Aciqdir','Gozlenilir')
      LIMIT 50"
 )->fetchAll(PDO::FETCH_ASSOC);
 

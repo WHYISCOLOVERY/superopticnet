@@ -104,7 +104,7 @@ $openTicketRows = $db->query(
       WHERE assigned_technician_account_id IS NULL
         AND status IN ('open','Aciqdir','Gozlenilir')
         AND (ticket_no NOT LIKE 'LEGACY-%' OR opened_at >= (NOW() - INTERVAL 24 HOUR))
-      ORDER BY opened_at ASC LIMIT 200"
+      ORDER BY opened_at DESC,id DESC LIMIT 200"
 )->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $routeStatement = $db->prepare(
     'SELECT latitude,longitude,recorded_at

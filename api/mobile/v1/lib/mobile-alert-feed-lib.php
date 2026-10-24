@@ -70,6 +70,13 @@ function app_mobile_explain_alarm(array $row): array
             'cause' => 'PON portu, splitter, feeder kabeli, kabinet enerjisi və ya ümumi optik xətt səbəb ola bilər.',
             'action' => 'Ayrı-ayrı müştəri bileti açmayın; PON xəttini vahid hadisə kimi yoxlayın.',
         ],
+        'ONT_OPTICAL_DEGRADATION' => [
+            'group' => 'Fərdi optik problem',
+            'title' => "{$device}" . ($pon !== '' ? " / {$pon}" : '') . ' üzrə ONT siqnalı normadan çıxıb',
+            'impact' => 'Bu abonentin interneti qeyri-sabit işləyə və ya kəsilə bilər.',
+            'cause' => 'Drop kabel, konnektor, splitter itkisi, ONT lazeri və ya cihazın temperaturu səbəb ola bilər.',
+            'action' => 'Biletdəki SN və ölçülərlə yerində optik xətti yoxlayın.',
+        ],
         'PON_DOWN' => [
             'group' => 'PON kəsintisi',
             'title' => "{$device}" . ($pon !== '' ? " / {$pon}" : '') . ' PON portu dayanıb',

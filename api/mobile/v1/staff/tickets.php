@@ -23,7 +23,7 @@ if ($area !== '') { $where[] = 't.area=?'; $params[] = $area; }
 $sql = "SELECT t.id,t.ticket_no,t.customer_account_id,t.customer_name,t.phone,t.address,t.area,t.subject,t.message,t.status,
                t.assigned_technician_account_id,t.assigned_technician_name,t.opened_at,t.updated_at,t.resolved_at,t.metadata_json
           FROM portal_tickets t" . ($where ? ' WHERE ' . implode(' AND ', $where) : '') .
-       " ORDER BY FIELD(t.status,'in_progress','Icrada','assigned','open','Aciqdir','Gozlenilir','resolved','closed'),t.opened_at ASC LIMIT 250";
+       " ORDER BY FIELD(t.status,'in_progress','Icrada','assigned','open','Aciqdir','Gozlenilir','resolved','closed'),t.opened_at DESC,t.id DESC LIMIT 250";
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
 $tickets = array_map(static function (array $row): array {
@@ -42,5 +42,5 @@ $employees = $db->query(
 )->fetchAll(PDO::FETCH_ASSOC) ?: [];
 foreach ($employees as &$employee) $employee['id'] = (int) $employee['id'];
 unset($employee);
-$areas = $db->query("SELECT DISTINCT area FROM portal_tickets WHERE area<>'' ORDER BY area LIMIT 200")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+$areas = app_service_areas();
 app_mobile_json_response(['tickets' => $tickets, 'employees' => $employees, 'areas' => $areas]);

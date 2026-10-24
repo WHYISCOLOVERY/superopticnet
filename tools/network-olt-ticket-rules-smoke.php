@@ -131,6 +131,7 @@ try {
                         'ont_tx' => '2.1',
                         'olt_tx' => '4.0',
                         'temperature' => '70',
+                        'optical_synced_at' => date('Y-m-d H:i:s'),
                     ]],
                 ],
             ], false);
@@ -146,7 +147,7 @@ try {
         'queue_messages' => false,
         'create_tickets' => true,
         'require_management_path' => false,
-        'olt_mass_pon_min_affected' => 9,
+        'olt_mass_pon_min_affected' => 5,
     ], $db, $nocActor);
 
     if (empty($result['ok'])) {

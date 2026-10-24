@@ -7743,6 +7743,14 @@ function app_mgs_execute_hsgq_ont_control(array $device, string $operation, int|
 function app_mgs_device_name_fingerprint(string $value): string
 {
     $value = app_repair_mojibake_dynamic(app_repair_mojibake(trim($value)));
+    // Device labels often use ASCII (Kurdexani) while CRM areas are stored
+    // with Azerbaijani characters (Kürdəxanı). Normalize both forms before
+    // matching an OLT to its service area.
+    $value = strtr($value, [
+        'Ə' => 'E', 'ə' => 'e', 'Ü' => 'U', 'ü' => 'u', 'Ö' => 'O', 'ö' => 'o',
+        'Ş' => 'S', 'ş' => 's', 'Ç' => 'C', 'ç' => 'c', 'Ğ' => 'G', 'ğ' => 'g',
+        'İ' => 'I', 'ı' => 'i',
+    ]);
     $value = strtolower($value);
     $value = preg_replace('/[^a-z0-9]+/', '', $value);
     return (string) $value;
@@ -11274,6 +11282,55 @@ function app_mgs_render_alarm_message(array $alarm): string
     return implode("\n", $lines);
 }
 
+/**
+ * Give operations staff an in-app copy of a real NOC event. The assigned
+ * field employee receives the ticket notification through app_db_insert_ticket;
+ * this copy is for operators and responsible network/management roles.
+ */
+function app_mgs_notify_mobile_alarm_recipients(PDO $db, int $alarmId, array $alarm): void
+{
+    if ($alarmId <= 0 || !app_db_table_exists($db, 'mobile_manager_alerts')) {
+        return;
+    }
+
+    $recipients = $db->query(
+        "SELECT id FROM portal_accounts
+          WHERE role = 'employee' AND is_active = 1
+            AND (employee_role IN ('operator','night_operator','admin','super_admin','director','engineer','noc','network_engineer','noc_monitor')
+                 OR account_type IN ('operator','manager','admin','engineer','noc'))"
+    );
+    if ($recipients === false) {
+        return;
+    }
+
+    $dedupKey = clean_text((string) ($alarm['dedup_key'] ?? ''));
+    $severity = strtolower(clean_text((string) ($alarm['severity'] ?? 'warning')));
+    $severity = in_array($severity, ['info', 'warning', 'critical', 'emergency'], true) ? $severity : 'warning';
+    $title = mb_substr(clean_text((string) ($alarm['title'] ?? 'Şəbəkə hadisəsi')), 0, 180);
+    $message = mb_substr(clean_text((string) ($alarm['message'] ?? $alarm['human_problem'] ?? '')), 0, 900);
+    $insert = $db->prepare(
+        "INSERT IGNORE INTO mobile_manager_alerts
+         (alert_key, account_id, alert_type, severity, title, message, event_at, metadata_json)
+         VALUES (:alert_key, :account_id, 'network_incident', :severity, :title, :message, NOW(), :metadata_json)"
+    );
+    foreach ($recipients->fetchAll(PDO::FETCH_COLUMN) ?: [] as $accountId) {
+        $insert->execute([
+            'alert_key' => 'network-alarm-' . $alarmId . '-' . (int) $accountId,
+            'account_id' => (int) $accountId,
+            'severity' => $severity,
+            'title' => $title,
+            'message' => $message,
+            'metadata_json' => app_db_json_encode([
+                'alarm_id' => $alarmId,
+                'dedup_key' => $dedupKey,
+                'ticket_no' => (string) ($alarm['ticket_no'] ?? ''),
+                'area' => (string) ($alarm['area'] ?? ''),
+                'device_key' => (string) ($alarm['device_key'] ?? ''),
+            ]),
+        ]);
+    }
+}
+
 function app_mgs_record_alarm_event(
     array $alarm,
     bool $testMode = true,
@@ -11391,6 +11448,9 @@ function app_mgs_record_alarm_event(
         $notificationEvent['metadata']['alarm_id'] = $alarmId;
         app_notification_route_event($notificationEvent, $testMode, true);
     }
+    if ($ok && !$testMode) {
+        app_mgs_notify_mobile_alarm_recipients($db, $alarmId, $alarm + ['ticket_no' => (string) ($alarm['ticket_no'] ?? '')]);
+    }
 
     // Best-effort append-only history (docs/39_MGS_NODE_CONSOLIDATION.md Faza 1):
     // mgs_alarm_events only ever holds current state; this keeps every
@@ -11459,15 +11519,76 @@ function app_mgs_olt_rule_thresholds(array $options = []): array
     };
 
     return [
-        'min_pon_issue_count' => max(1, (int) $setting('olt_mass_pon_min_affected', '9')),
-        'ont_rx_min_dbm' => (float) $setting('olt_ont_rx_min_dbm', '-27'),
-        'olt_rx_min_dbm' => (float) $setting('olt_olt_rx_min_dbm', '-27'),
+        // A shared PON incident is more useful than five separate field
+        // visits.  The values remain runtime-configurable for future tuning.
+        'min_pon_issue_count' => max(1, (int) $setting('olt_mass_pon_min_affected', '5')),
+        'ont_rx_min_dbm' => (float) $setting('olt_ont_rx_min_dbm', '-26'),
+        'olt_rx_min_dbm' => (float) $setting('olt_olt_rx_min_dbm', '-26'),
         'ont_tx_min_dbm' => (float) $setting('olt_ont_tx_min_dbm', '-1'),
         'ont_tx_max_dbm' => (float) $setting('olt_ont_tx_max_dbm', '6'),
         'olt_tx_min_dbm' => (float) $setting('olt_olt_tx_min_dbm', '1'),
         'olt_tx_max_dbm' => (float) $setting('olt_olt_tx_max_dbm', '8'),
-        'temperature_max_c' => (float) $setting('olt_ont_temperature_max_c', '68'),
+        'temperature_max_c' => (float) $setting('olt_ont_temperature_max_c', '51'),
+        'optical_fresh_minutes' => max(1, (int) $setting('olt_optical_fresh_minutes', '20')),
     ];
+}
+
+/**
+ * Optical values are useful only when they are a recent live snapshot.  A
+ * stale value must never create, or keep open, a field ticket.
+ */
+function app_mgs_ont_optical_snapshot_is_fresh(array $ont, int $maxAgeMinutes): bool
+{
+    $stamp = trim(app_mgs_search_profile_field($ont, [
+        'optical_synced_at', 'optical_updated_at', 'telemetry_at', 'last_seen_at',
+    ], ''));
+    if ($stamp === '') {
+        return false;
+    }
+    $timestamp = strtotime($stamp);
+    return $timestamp !== false && $timestamp >= (time() - max(60, $maxAgeMinutes * 60));
+}
+
+/** Resolve a device's operational area without inventing a field location. */
+function app_mgs_network_device_area(array $device): string
+{
+    $resolve = static function (string $value): string {
+        $direct = app_portal_resolve_area_from_text($value);
+        if ($direct !== '') {
+            return $direct;
+        }
+        $haystack = app_mgs_device_name_fingerprint($value);
+        foreach (app_service_areas() as $area) {
+            $needle = app_mgs_device_name_fingerprint((string) $area);
+            if ($needle !== '' && str_contains($haystack, $needle)) {
+                return (string) $area;
+            }
+        }
+        return '';
+    };
+    $explicit = clean_text((string) ($device['area'] ?? $device['location'] ?? ''));
+    if ($explicit !== '') {
+        $resolved = $resolve($explicit);
+        if ($resolved !== '') {
+            return $resolved;
+        }
+    }
+
+    $key = preg_replace('/[^a-z0-9_]/', '_', strtolower((string) ($device['device_key'] ?? '')));
+    if (is_string($key) && $key !== '') {
+        $configured = clean_text((string) app_mgs_runtime_setting('network_device_area_' . $key, ''));
+        $resolved = $resolve($configured);
+        if ($resolved !== '') {
+            return $resolved;
+        }
+    }
+
+    $text = implode(' ', [
+        (string) ($device['device_name'] ?? ''),
+        (string) ($device['device_key'] ?? ''),
+        (string) ($device['management_network'] ?? ''),
+    ]);
+    return $resolve($text) ?: 'Şəbəkə';
 }
 
 function app_mgs_monitored_olt_devices(?PDO $db = null, array $actor = []): array
@@ -11755,8 +11876,7 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
         }
     }
 
-    $area = clean_text((string) ($payload['area'] ?? 'Sebeke'));
-    $technician = app_portal_assign_technician($area);
+    $area = clean_text((string) ($payload['area'] ?? 'Şəbəkə'));
     $ticketNo = app_db_next_ticket_no();
     $message = mb_substr(clean_text((string) ($payload['message'] ?? '')), 0, 160);
     if ($message === '') {
@@ -11765,21 +11885,24 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
 
     $ok = app_db_insert_ticket([
         'ticket_no' => $ticketNo,
-        'customer_account_id' => null,
-        'subscriber_code' => '',
+        'customer_account_id' => (int) ($payload['customer_account_id'] ?? 0) ?: null,
+        'subscriber_code' => clean_text((string) ($payload['subscriber_code'] ?? '')),
         'contract_no' => '',
         'customer_name' => clean_text((string) ($payload['customer_name'] ?? 'NOC avtomatik')),
-        'phone' => '',
+        'phone' => clean_text((string) ($payload['phone'] ?? '')),
         'address' => clean_text((string) ($payload['address'] ?? '')),
         'area' => $area,
-        'subject' => clean_text((string) ($payload['subject'] ?? 'Texniki destek')),
+        'subject' => clean_text((string) ($payload['subject'] ?? 'Texniki dəstək')),
         'message' => $message,
         'status' => 'Aciqdir',
         'opened_at' => app_db_now(),
         'updated_at' => app_db_now(),
         'resolved_at' => null,
-        'assigned_technician_account_id' => (int) ($technician['id'] ?? 0) ?: null,
-        'assigned_technician_name' => (string) ($technician['name'] ?? 'Teyin edilmeyib'),
+        // Leave assignment to app_db_insert_ticket().  That single rule
+        // enforces active duty status and fair workload rotation for tickets
+        // created by CRM, mobile and NOC alike.
+        'assigned_technician_account_id' => null,
+        'assigned_technician_name' => '',
         'resolution_reason' => '',
         'resolution_note' => '',
         'handled_by' => '',
@@ -11807,9 +11930,9 @@ function app_mgs_network_create_ticket(array $payload, PDO $db): array
  * başlayır) — texnikin əl ilə açdığı/idarə etdiyi HEÇ BİR biletə toxunmur. dedup_key oxuna
  * bilmirsə (metadata korlanıbsa) həmin bilet ehtiyat xatirinə keçilir, bağlanmır.
  */
-function app_mgs_auto_close_resolved_olt_tickets(array $activeDedupKeys, PDO $db, array $actor = [], bool $testMode = false): array
+function app_mgs_auto_close_resolved_olt_tickets(array $activeDedupKeys, PDO $db, array $actor = [], bool $testMode = false, array $skipPrefixes = []): array
 {
-    $prefixes = ['device-offline:', 'pon-mass-optical:', 'core-bottleneck:'];
+    $prefixes = ['device-offline:', 'pon-mass-optical:', 'ont-optical:', 'core-bottleneck:'];
     $likeClauses = [];
     $params = [];
     foreach ($prefixes as $i => $prefix) {
@@ -11836,6 +11959,11 @@ function app_mgs_auto_close_resolved_olt_tickets(array $activeDedupKeys, PDO $db
         $dedupKey = is_array($metadata) ? (string) ($metadata['dedup_key'] ?? '') : '';
         if ($dedupKey === '' || isset($activeSet[$dedupKey])) {
             continue;
+        }
+        foreach ($skipPrefixes as $prefix) {
+            if ($prefix !== '' && str_starts_with($dedupKey, (string) $prefix)) {
+                continue 2;
+            }
         }
 
         if ($testMode) {
@@ -12072,7 +12200,7 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             'device_name' => (string) ($device['device_name'] ?? $deviceKey),
             'device_ip' => (string) ($device['ip_address'] ?? ''),
             'device_type' => (string) ($device['device_type'] ?? 'unknown'),
-            'area' => 'Sebeke',
+            'area' => app_mgs_network_device_area($device),
             'title' => (string) ($device['device_name'] ?? $deviceKey) . ' ilə əlaqə kəsilib',
             'human_problem' => 'Monitorinq aktivdir, amma cihaz cavab vermir. Bu cihazdan asılı xidmətlər təsirlənə bilər.',
             'recommendation' => 'Enerji və uplink-i, sonra VLAN 550 idarəetmə yolunu və SNMP/SSH cavabını yoxlayın.',
@@ -12080,6 +12208,7 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
         ];
     }
 
+    $staleOpticalRows = 0;
     foreach (app_mgs_collect_customer_ont_rows($db) as $ont) {
         if (!is_array($ont)) {
             continue;
@@ -12090,6 +12219,14 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             continue;
         }
 
+        // Do not turn an old imported profile into a fresh incident.  Test
+        // fixtures may opt in with allow_unfresh_optical so the rule engine's
+        // behaviour itself remains testable without a live OLT.
+        if (empty($options['allow_unfresh_optical'])
+            && !app_mgs_ont_optical_snapshot_is_fresh($ont, (int) $thresholds['optical_fresh_minutes'])) {
+            $staleOpticalRows++;
+            continue;
+        }
         $ontsChecked++;
         $device = app_mgs_resolve_olt_device_from_text($oltName, $deviceIndex);
         $deviceKey = is_array($device) ? (string) ($device['device_key'] ?? '') : app_mgs_device_name_fingerprint($oltName);
@@ -12108,19 +12245,31 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
         }
 
         $groups[$groupKey]['issues'][] = [
+            'account_id' => (int) ($ont['account_id'] ?? 0),
             'subscriber_code' => (string) ($ont['subscriber_code'] ?? ''),
             'customer_name' => (string) ($ont['customer_name'] ?? ''),
+            'phone' => (string) ($ont['phone'] ?? ''),
+            'address' => (string) ($ont['address'] ?? ''),
+            'area' => (string) ($ont['area'] ?? ''),
             'ont_id' => app_mgs_search_profile_field($ont, ['ont_id', 'ont'], '-'),
             'serial' => app_mgs_search_profile_field($ont, ['serial', 'sn'], '-'),
+            'ont_rx' => app_mgs_search_profile_field($ont, ['ont_rx', 'rx_power', 'rx'], ''),
+            'olt_rx' => app_mgs_search_profile_field($ont, ['olt_rx', 'olt_rx_power'], ''),
+            'ont_tx' => app_mgs_search_profile_field($ont, ['ont_tx', 'tx_power', 'tx'], ''),
+            'olt_tx' => app_mgs_search_profile_field($ont, ['olt_tx', 'olt_tx_power'], ''),
+            'temperature' => app_mgs_search_profile_field($ont, ['temperature', 'temp'], ''),
+            'optical_synced_at' => app_mgs_search_profile_field($ont, ['optical_synced_at', 'optical_updated_at', 'telemetry_at', 'last_seen_at'], ''),
             'findings' => $findings,
         ];
     }
 
+    $massGroups = [];
     foreach ($groups as $group) {
         $issueCount = count((array) ($group['issues'] ?? []));
         if ($issueCount < (int) $thresholds['min_pon_issue_count']) {
             continue;
         }
+        $massGroups[(string) ($group['device_key'] ?? '') . '|' . app_mgs_device_name_fingerprint((string) ($group['pon'] ?? ''))] = true;
         $dedupKey = 'pon-mass-optical:' . (string) ($group['device_key'] ?? '') . ':' . app_mgs_device_name_fingerprint((string) ($group['pon'] ?? ''));
         $samples = array_slice((array) ($group['issues'] ?? []), 0, 5);
         $alerts[] = [
@@ -12132,15 +12281,73 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             'device_key' => (string) ($group['device_key'] ?? ''),
             'device_name' => (string) ($group['device_name'] ?? ''),
             'device_ip' => (string) ($group['device_ip'] ?? ''),
-            'area' => 'Sebeke',
+            'area' => (string) (($samples[0]['area'] ?? '') ?: app_mgs_network_device_area([
+                'device_key' => (string) ($group['device_key'] ?? ''),
+                'device_name' => (string) ($group['device_name'] ?? ''),
+            ])),
             'title' => 'Kütləvi PON problemi: ' . (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? ''),
             'human_problem' => $issueCount . ' abunəçinin ONT-si eyni PON üzərində oflayndır və ya optik/temperatur həddini keçib.',
             'recommendation' => 'Ayrı-ayrı müştəri bileti açmayın. PON portunu, splitteri, feeder/drop kabelini, kabinet enerjisini və optik patchləri vahid hadisə kimi yoxlayın.',
-            'message' => (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ': ' . $issueCount . ' abunəçi eyni səbəbdən təsirlənir.',
+            'message' => (string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ': ' . $issueCount . ' abunəçi. ' . implode(', ', array_map(static function (array $issue): string {
+                $serial = (string) ($issue['serial'] ?? $issue['subscriber_code'] ?? '-');
+                $rx = (string) (($issue['ont_rx'] ?? '') ?: ($issue['olt_rx'] ?? ''));
+                return $serial . ($rx !== '' ? ' (' . $rx . ' dBm)' : '');
+            }, $samples)),
             'samples' => $samples,
             'issue_count' => $issueCount,
             'thresholds' => $thresholds,
         ];
+    }
+
+    // Below the mass-incident threshold each affected customer receives one
+    // focused ticket. Once a PON is a mass incident, only the combined PON
+    // ticket is produced; this prevents duplicate field work and alert noise.
+    foreach ($groups as $groupKey => $group) {
+        if (isset($massGroups[$groupKey])) {
+            continue;
+        }
+        foreach ((array) ($group['issues'] ?? []) as $issue) {
+            if (!is_array($issue)) {
+                continue;
+            }
+            $serial = clean_text((string) ($issue['serial'] ?? ''));
+            $subscriber = clean_text((string) ($issue['subscriber_code'] ?? ''));
+            $identity = $serial !== '' && $serial !== '-' ? $serial : ($subscriber !== '' ? $subscriber : (string) ($issue['ont_id'] ?? 'ont'));
+            $measurement = array_filter([
+                'ONT RX' => $issue['ont_rx'] ?? '', 'OLT RX' => $issue['olt_rx'] ?? '',
+                'ONT TX' => $issue['ont_tx'] ?? '', 'OLT TX' => $issue['olt_tx'] ?? '',
+                'Temp' => $issue['temperature'] ?? '',
+            ], static fn ($value): bool => trim((string) $value) !== '');
+            $measurementText = [];
+            foreach ($measurement as $label => $value) {
+                $measurementText[] = $label . ': ' . $value;
+            }
+            $alerts[] = [
+                'dedup_key' => 'ont-optical:' . (string) ($group['device_key'] ?? '') . ':' . app_mgs_device_name_fingerprint((string) ($group['pon'] ?? '')) . ':' . app_mgs_device_name_fingerprint($identity),
+                'alarm_type' => 'ONT_OPTICAL_DEGRADATION',
+                'severity' => 'warning',
+                'object_type' => 'ont',
+                'object_id' => (string) ($group['device_key'] ?? '') . '/' . (string) ($group['pon'] ?? '') . '/' . $identity,
+                'device_key' => (string) ($group['device_key'] ?? ''),
+                'device_name' => (string) ($group['device_name'] ?? ''),
+                'device_ip' => (string) ($group['device_ip'] ?? ''),
+                'pon' => (string) ($group['pon'] ?? ''),
+                'area' => (string) (($issue['area'] ?? '') ?: 'Şəbəkə'),
+                'customer_account_id' => (int) ($issue['account_id'] ?? 0),
+                'subscriber_code' => $subscriber,
+                'customer_name' => (string) ($issue['customer_name'] ?? 'ONT avtomatik'),
+                'phone' => (string) ($issue['phone'] ?? ''),
+                'address' => (string) ($issue['address'] ?? ''),
+                'serial' => $serial,
+                'findings' => (array) ($issue['findings'] ?? []),
+                'title' => 'ONT optik problem: ' . $identity,
+                'human_problem' => implode('; ', (array) ($issue['findings'] ?? [])),
+                'recommendation' => 'ONT, konnektor, drop kabel və optik səviyyələri yerində yoxlayın.',
+                'message' => trim((string) ($group['device_name'] ?? '') . ' / ' . (string) ($group['pon'] ?? '') . ' · SN: ' . $identity . '. ' . implode('; ', (array) ($issue['findings'] ?? [])) . (empty($measurementText) ? '' : ' · ' . implode(', ', $measurementText))),
+                'measurements' => $measurement,
+                'optical_synced_at' => (string) ($issue['optical_synced_at'] ?? ''),
+            ];
+        }
     }
 
     // Core/router dar boğazı yalnız ən azı üç son nümunənin orta yükü
@@ -12209,7 +12416,10 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             $ticket = app_mgs_network_create_ticket([
                 'dedup_key' => (string) ($alert['dedup_key'] ?? ''),
                 'subject' => 'Şəbəkə hadisəsi',
-                'customer_name' => 'NOC avtomatik',
+                'customer_account_id' => (int) ($alert['customer_account_id'] ?? 0),
+                'subscriber_code' => (string) ($alert['subscriber_code'] ?? ''),
+                'customer_name' => (string) ($alert['customer_name'] ?? 'NOC avtomatik'),
+                'phone' => (string) ($alert['phone'] ?? ''),
                 'area' => (string) ($alert['area'] ?? 'Sebeke'),
                 'address' => (string) ($alert['device_name'] ?? ''),
                 'message' => (string) ($alert['message'] ?? $alert['title'] ?? ''),
@@ -12239,11 +12449,16 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
 
     // Bu dövrdə artıq aktiv olmayan (siqnal/temperatur normaya qayıdan, ya da cihaz yenidən görünən)
     // əvvəlki qayda-yaratdığı biletləri avtomatik bağla — YALNIZ bu mühərrikin öz biletlərinə toxunur.
+    // Missing or stale optical telemetry is unknown, not a recovered line.
+    // Never auto-close optical tickets while any imported ONT snapshot in the
+    // scan is stale; device and core alarms retain their normal lifecycle.
+    $skipAutoClosePrefixes = $staleOpticalRows > 0 ? ['ont-optical:', 'pon-mass-optical:'] : [];
     $autoClose = app_mgs_auto_close_resolved_olt_tickets(
         array_column($alerts, 'dedup_key'),
         $db,
         $actor,
-        $testMode
+        $testMode,
+        $skipAutoClosePrefixes
     );
 
     app_mgs_record_operation_action([
@@ -12261,6 +12476,8 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
             'tickets_created' => $createdTickets,
             'tickets_duplicate' => $duplicateTickets,
             'tickets_auto_closed' => (int) ($autoClose['closed'] ?? 0),
+            'stale_optical_rows' => $staleOpticalRows,
+            'auto_close_skipped_prefixes' => $skipAutoClosePrefixes,
             'thresholds' => $thresholds,
             'results' => $results,
             'auto_close_results' => $autoClose['results'] ?? [],
@@ -12278,6 +12495,8 @@ function app_mgs_analyze_olt_ticket_rules(array $options = [], ?PDO $db = null, 
         'tickets_duplicate' => $duplicateTickets,
         'tickets_auto_closed' => (int) ($autoClose['closed'] ?? 0),
         'alarms_recorded' => $alarmsRecorded,
+        'stale_optical_rows' => $staleOpticalRows,
+        'auto_close_skipped_prefixes' => $skipAutoClosePrefixes,
         'groups' => array_values($groups),
         'results' => $results,
         'auto_close_results' => $autoClose['results'] ?? [],

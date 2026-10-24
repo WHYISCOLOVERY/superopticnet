@@ -1452,14 +1452,14 @@ function whatsapp_monitor_create_ticket(PDO $db, int $caseId, array $actor): arr
         return ['ok' => false, 'error' => 'customer_required'];
     }
     $subject = match ((string) ($case['case_type'] ?? 'unknown')) {
-        'technical' => 'Texniki destek',
+        'technical' => 'Texniki dəstək',
         'payment' => 'Odenis meselesi',
         'sales' => 'Satis muracieti',
         'complaint' => 'Sikayet',
-        default => 'Texniki destek',
+        default => 'Texniki dəstək',
     };
     if (!in_array($subject, app_portal_ticket_subjects(), true)) {
-        $subject = app_portal_ticket_subjects()[0] ?? 'Texniki destek';
+        $subject = 'Texniki dəstək';
     }
     $ticketNo = app_next_ticket_id();
     $ticket = [

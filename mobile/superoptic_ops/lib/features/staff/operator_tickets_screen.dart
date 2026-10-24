@@ -21,6 +21,14 @@ class _OperatorTicketsScreenState extends State<OperatorTicketsScreen> {
   String _status = 'active';
   List<dynamic> _tickets = [];
   List<dynamic> _employees = [];
+  List<dynamic> _areas = [];
+  static const _subjects = <String>[
+    'Qoşulma',
+    'Sürət problemi',
+    'Texniki dəstək',
+    'Şifrə dəyişdirilməsi',
+    'Qırmızı işıq yanır modemdə',
+  ];
 
   @override
   void initState() {
@@ -40,6 +48,7 @@ class _OperatorTicketsScreenState extends State<OperatorTicketsScreen> {
         setState(() {
           _tickets = data['tickets'] as List<dynamic>? ?? [];
           _employees = data['employees'] as List<dynamic>? ?? [];
+          _areas = data['areas'] as List<dynamic>? ?? [];
         });
       }
     } finally {
@@ -97,7 +106,7 @@ class _OperatorTicketsScreenState extends State<OperatorTicketsScreen> {
   }
 
   Future<void> _create() async {
-    final subject = TextEditingController();
+    String? selectedSubject = 'Qoşulma';
     final description = TextEditingController();
     final area = TextEditingController();
     final customer = TextEditingController();
@@ -125,12 +134,17 @@ class _OperatorTicketsScreenState extends State<OperatorTicketsScreen> {
                       labelText: 'Müştəri adı və ya kodu'),
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  controller: subject,
-                  validator: (value) => (value ?? '').trim().isEmpty
-                      ? 'Başlıq tələb olunur'
-                      : null,
+                DropdownButtonFormField<String>(
+                  value: selectedSubject,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Problem tipi'),
+                  items: _subjects
+                      .map((item) => DropdownMenuItem(
+                            value: item,
+                            child: Text(item),
+                          ))
+                      .toList(),
+                  onChanged: (value) => update(() => selectedSubject = value),
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -142,12 +156,22 @@ class _OperatorTicketsScreenState extends State<OperatorTicketsScreen> {
                   decoration: const InputDecoration(labelText: 'Müraciət'),
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  controller: area,
+                DropdownButtonFormField<String>(
+                  value: _areas.contains(area.text) ? area.text : null,
+                  isExpanded: true,
                   validator: (value) => (value ?? '').trim().isEmpty
                       ? 'Ərazi tələb olunur'
                       : null,
                   decoration: const InputDecoration(labelText: 'Ərazi'),
+                  items: _areas
+                      .map((item) => '$item')
+                      .where((item) => item.trim().isNotEmpty)
+                      .map((item) => DropdownMenuItem(
+                            value: item,
+                            child: Text(item),
+                          ))
+                      .toList(),
+                  onChanged: (value) => update(() => area.text = value ?? ''),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
@@ -190,7 +214,7 @@ class _OperatorTicketsScreenState extends State<OperatorTicketsScreen> {
       'customer_name': customer.text.trim().isEmpty
           ? 'Operator müraciəti'
           : customer.text.trim(),
-      'subject': subject.text.trim(),
+      'subject': selectedSubject ?? 'Texniki dəstək',
       'message': description.text.trim(),
       'area': area.text.trim(),
       'priority': 'normal',
