@@ -592,3 +592,10 @@ details[open] .acc-head .chev{transform:rotate(180deg)}
 :root[data-theme="light"] .site-footer,:root[data-theme="light"] .site-footer-detailed{background:linear-gradient(180deg,transparent,rgba(20,40,80,.03))}
 :root[data-theme="light"] .footer-socials a,:root[data-theme="light"] .feat .ic,:root[data-theme="light"] .contact-card .ic{background:#f3f7fe}
 :root[data-theme="light"] .pay-cyan,:root[data-theme="light"] .pay-red,:root[data-theme="light"] .pay-magenta,:root[data-theme="light"] .pay-blue,:root[data-theme="light"] .pay-light{box-shadow:0 8px 24px rgba(20,40,80,.12)}
+
+/* Dizayn düzəlişləri: menyu sətrə sınmasın, toxunma hədəfləri */
+.main-nav{gap:18px;white-space:nowrap}
+.header-link-stack strong{white-space:nowrap}
+@media(max-width:1280px){.header-link-stack small{display:none}}
+.footer-column a{padding:9px 0;margin-bottom:0}
+.contact-card a{display:inline-block;padding:11px 8px;min-height:44px}
