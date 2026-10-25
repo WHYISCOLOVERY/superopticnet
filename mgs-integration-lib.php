@@ -9507,6 +9507,20 @@ function app_mgs_snmp_decode_response(string $packet): array
 }
 
 /**
+ * Optional source binding keeps SNMP traffic on the dedicated management
+ * identity.  Some network-device ACLs permit that identity only, while the
+ * server also has application-network addresses for HTTP and database use.
+ */
+function app_mgs_snmp_socket_context()
+{
+    $sourceIp = trim((string) app_environment_secret('MGS_SNMP_SOURCE_IP'));
+    if (filter_var($sourceIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return null;
+    }
+    return stream_context_create(['socket' => ['bindto' => $sourceIp . ':0']]);
+}
+
+/**
  * Sends one raw SNMPv1 GETNEXT for $oid and decodes the single varbind that
  * comes back. No authorization check here -- this is the low-level UDP/BER
  * mechanic, mirroring how app_mgs_snmp_build_get_request() itself is
@@ -9529,7 +9543,8 @@ function app_mgs_snmp_getnext_raw(string $ip, string $community, int $port, stri
         $packet = app_mgs_snmp_build_getnext_request($community, $oid, $requestId, $candidateVersion);
         $errno = 0;
         $errstr = '';
-        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000));
+        $context = app_mgs_snmp_socket_context();
+        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000), STREAM_CLIENT_CONNECT, $context);
         if (!is_resource($socket)) {
             $lastError = $errstr !== '' ? $errstr : 'socket_open_failed';
             continue;
@@ -9762,7 +9777,8 @@ function app_mgs_snmp_get_raw(string $ip, string $community, int $port, string $
         $packet = app_mgs_snmp_build_get_request($community, $oid, $requestId, $candidateVersion);
         $errno = 0;
         $errstr = '';
-        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000));
+        $context = app_mgs_snmp_socket_context();
+        $socket = @stream_socket_client('udp://' . $ip . ':' . $port, $errno, $errstr, max(0.3, $timeoutMs / 1000), STREAM_CLIENT_CONNECT, $context);
         if (!is_resource($socket)) {
             $lastError = $errstr !== '' ? $errstr : 'socket_open_failed';
             continue;
