@@ -147,7 +147,7 @@ $page = $copy[$lang] ?? $copy['az'];
 
 page_render_header($lang, $page['title'], $page['description'], 'legal');
 ?>
-<main>
+<main id="main">
     <section class="section inner-page-hero">
         <div class="container inner-page-hero-content">
             <span class="eyebrow"><?= e($page['eyebrow']); ?></span>
@@ -157,9 +157,16 @@ page_render_header($lang, $page['title'], $page['description'], 'legal');
     </section>
 
     <section class="section">
-        <div class="container legal-layout">
-            <?php foreach ($page['sections'] as $section): ?>
-                <article class="policy-card">
+        <div class="container legal-wrap">
+            <nav class="legal-toc" aria-label="<?= e(['az' => 'Mündəricat', 'en' => 'Contents', 'ru' => 'Содержание'][$lang] ?? 'Contents'); ?>">
+                <strong><?= e(['az' => 'Mündəricat', 'en' => 'Contents', 'ru' => 'Содержание'][$lang] ?? 'Contents'); ?></strong>
+                <?php foreach ($page['sections'] as $si => $section): ?>
+                    <a href="#sec-<?= (int) $si; ?>"><?= e($section['title']); ?></a>
+                <?php endforeach; ?>
+            </nav>
+            <div class="legal-layout">
+            <?php foreach ($page['sections'] as $si => $section): ?>
+                <article class="policy-card" id="sec-<?= (int) $si; ?>">
                     <h2><?= e($section['title']); ?></h2>
                     <ul class="policy-list">
                         <?php foreach ($section['items'] as $item): ?>
@@ -198,7 +205,9 @@ page_render_header($lang, $page['title'], $page['description'], 'legal');
                     </table>
                 </div>
             </article>
+            </div>
         </div>
     </section>
 </main>
+<a class="to-top" href="#main" aria-label="Top">↑</a>
 <?php page_render_footer($lang); ?>

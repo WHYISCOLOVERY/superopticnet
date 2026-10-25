@@ -592,3 +592,57 @@ details[open] .acc-head .chev{transform:rotate(180deg)}
 :root[data-theme="light"] .site-footer,:root[data-theme="light"] .site-footer-detailed{background:linear-gradient(180deg,transparent,rgba(20,40,80,.03))}
 :root[data-theme="light"] .footer-socials a,:root[data-theme="light"] .feat .ic,:root[data-theme="light"] .contact-card .ic{background:#f3f7fe}
 :root[data-theme="light"] .pay-cyan,:root[data-theme="light"] .pay-red,:root[data-theme="light"] .pay-magenta,:root[data-theme="light"] .pay-blue,:root[data-theme="light"] .pay-light{box-shadow:0 8px 24px rgba(20,40,80,.12)}
+
+/* ============ UI/UX icmal düzəlişləri ============ */
+html{overflow-x:clip}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:100;padding:10px 16px;border-radius:10px;background:var(--cyan);color:#04121f;font-weight:700;transition:top .15s}
+.skip-link:focus{top:12px}
+.site-header{background:linear-gradient(180deg,rgba(5,7,14,.94),rgba(5,7,14,.78))}
+.header-link-stack strong{white-space:nowrap}
+.tv-showcase{display:flex;flex-direction:column;justify-content:center}
+.plan-speedbars span,.news-meta,.tv-chip-copy small,.stat-lab{font-size:max(.75rem,12px)}
+
+/* Daxili səhifə komponentləri (əvvəl üslubsuz idi) */
+.info-card-grid,.device-card-grid,.quality-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+.info-card,.device-card{margin-bottom:0;display:flex;flex-direction:column;gap:10px}
+.info-card-icon{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;color:var(--cyan);
+  background:rgba(46,230,224,.10);border:1px solid var(--border-str)}
+.info-card-icon .svgi{width:24px;height:24px}
+.info-card h2,.device-card h2{margin:0;font-size:1.15rem;color:var(--text);hyphens:manual}
+.info-card p,.device-card p{margin:0;color:var(--muted);line-height:1.65}
+.device-card strong{font-size:1.5rem;color:var(--cyan)}
+.device-card .featured-offer-tag{align-self:flex-start;padding:4px 12px;border-radius:999px;font-size:.75rem;font-weight:700;
+  background:rgba(46,230,224,.10);color:var(--cyan);border:1px solid var(--border-str)}
+.device-card .button{margin-top:auto;align-self:flex-start}
+.quality-card{text-align:center;margin-bottom:0}
+.quality-card b{display:block;font-size:2rem;color:var(--cyan);font-family:var(--mono,inherit)}
+.quality-card span{color:var(--muted);font-size:.9rem}
+.policy-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 26px;margin-bottom:16px;backdrop-filter:blur(8px)}
+.policy-card h2{margin:0 0 12px;font-size:1.15rem;color:var(--text)}
+.policy-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.policy-list li{position:relative;padding-left:22px;color:var(--muted);line-height:1.7;font-size:.95rem}
+.policy-list li::before{content:"";position:absolute;left:2px;top:.7em;width:7px;height:7px;border-radius:50%;background:var(--cyan)}
+.policy-note{margin:14px 0 0;color:var(--faint);font-size:.88rem}
+.policy-table-wrap{overflow-x:auto}
+.policy-table{width:100%;border-collapse:collapse;font-size:.88rem}
+.policy-table th,.policy-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;color:var(--muted);white-space:nowrap}
+.policy-table th{color:var(--text)}
+.legal-layout{max-width:none}
+.legal-wrap{display:grid;grid-template-columns:260px minmax(0,1fr);gap:28px;align-items:start}
+.legal-toc{position:sticky;top:90px}
+.legal-toc strong{display:block;margin-bottom:8px;color:var(--text)}
+.legal-toc a{border-radius:8px;padding:7px 8px}
+.cta-band{margin-top:34px;padding:26px 28px;border-radius:var(--r);border:1px solid var(--border-str);display:flex;flex-wrap:wrap;gap:16px;
+  align-items:center;justify-content:space-between;background:linear-gradient(135deg,rgba(46,230,224,.10),rgba(139,92,246,.10))}
+.cta-band h2{margin:0;font-size:1.25rem;color:var(--text)}
+.cta-band p{margin:4px 0 0;color:var(--muted)}
+.cta-actions{display:flex;flex-wrap:wrap;gap:10px}
+.footer-column strong{display:block;color:var(--text);font-size:.96rem;margin-bottom:14px}
+.to-top{position:fixed;left:16px;bottom:20px;z-index:50;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;
+  background:var(--surface);border:1px solid var(--border-str);color:var(--cyan);font-weight:700}
+@media(max-width:900px){.legal-wrap{grid-template-columns:1fr}.legal-toc{position:static}}
+@media(max-width:760px){
+  .pay-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pay-card{min-width:0;height:auto;min-height:74px;padding:10px 14px}
+  .pay-grid .pay-card:last-child:nth-child(odd){grid-column:1/-1}
+}

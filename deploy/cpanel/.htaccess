@@ -16,6 +16,9 @@ DirectoryIndex index.php
     # Preserve mobile API Bearer tokens when PHP runs behind CGI/FastCGI.
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    # Canonical host: www -> apex (canonical, sitemap and hreflang use https://superoptic.net).
+    RewriteCond %{HTTP_HOST} ^www\.superoptic\.net$ [NC]
+    RewriteRule ^ https://superoptic.net%{REQUEST_URI} [R=301,L]
     RewriteCond %{HTTPS} !=on
     RewriteCond %{HTTP:X-Forwarded-Proto} !https
     # Do not turn an arbitrary Host header into an open redirect. Extend this
