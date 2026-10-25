@@ -14,8 +14,9 @@ return [
             'device_interface_traffic_daily' => 'device_key',
         ];
         foreach ($canonical as $table => $requiredColumn) {
-            $exists = (int) $db->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table')
-                ->execute(['table' => $table]);
+            $existsStatement = $db->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table');
+            $existsStatement->execute(['table' => $table]);
+            $exists = (bool) $existsStatement->fetchColumn();
             $check = $db->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :table AND COLUMN_NAME = :column');
             $check->execute(['db' => $database, 'table' => $table, 'column' => $requiredColumn]);
             if ($check->fetchColumn() && $exists) {
@@ -54,3 +55,4 @@ return [
         // Preserved legacy data must not be removed automatically.
     },
 ];
+
