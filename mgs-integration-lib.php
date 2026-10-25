@@ -8342,6 +8342,44 @@ function app_mgs_hsgq_live_find_ont_by_query(string $query, ?PDO $db = null, int
         $reason = 'no_olt_profile';
         return null;
     }
+
+    // A full OLT inventory is refreshed periodically.  Use that index first
+    // for serial-number lookups so a technician's customer screen does not
+    // trigger a slow scan across every OLT/PON.  The live snapshot below is
+    // still authoritative and confirms the indexed location before returning.
+    if (strlen($needleCompact) >= 6) {
+        try {
+            $indexed = $db->prepare(
+                'SELECT device_key, pon, ont_id
+                   FROM live_olt_ont_inventory
+                  WHERE REPLACE(REPLACE(LOWER(serial_number), "-", ""), " ", "") LIKE :serial
+                  ORDER BY last_seen_at DESC
+                  LIMIT 1'
+            );
+            $indexed->execute(['serial' => '%' . $needleCompact . '%']);
+            $location = $indexed->fetch(PDO::FETCH_ASSOC);
+            if (is_array($location)) {
+                $indexedDevice = app_mgs_device_learning_profile_by_key((string) $location['device_key'], $db, $actor);
+                if (is_array($indexedDevice)) {
+                    $snapshot = app_mgs_hsgq_live_ont_snapshot(
+                        $indexedDevice,
+                        (string) $location['pon'],
+                        (string) $location['ont_id'],
+                        $actor,
+                        $db
+                    );
+                    if (!empty($snapshot['ok'])) {
+                        $snapshot['lookup_source'] = 'inventory_index';
+                        return $snapshot;
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // Older deployments may not have the optional index table yet.
+            // Preserve the live-scan fallback in that case.
+        }
+    }
+
     $credentialed = 0;
     $reachable = 0;
     foreach ($devices as $device) {
