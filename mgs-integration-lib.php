@@ -5972,7 +5972,17 @@ function app_mgs_find_python_binary(): ?string
     }
 
     $configuredPython = trim(app_config('mgs_python_binary', ''));
-    $candidates = array_values(array_filter([$configuredPython, 'python', 'py']));
+    // Server deployments commonly expose only python3.  Keep the explicit
+    // absolute path before PATH-based fallbacks so systemd/PHP-FPM contexts
+    // can run the HSGQ helper consistently.
+    $candidates = array_values(array_unique(array_filter([
+        $configuredPython,
+        '/usr/bin/python3',
+        '/usr/local/bin/python3',
+        'python3',
+        'python',
+        'py',
+    ])));
     foreach ($candidates as $candidate) {
         $output = [];
         $exitCode = 1;
