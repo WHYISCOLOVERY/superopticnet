@@ -200,6 +200,26 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
             UNIQUE KEY uq_device_access_override_key (device_key),
             KEY idx_device_access_override_updated (updated_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS live_olt_ont_inventory (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            device_key VARCHAR(128) NOT NULL,
+            pon VARCHAR(32) NOT NULL,
+            ont_id VARCHAR(32) NOT NULL,
+            serial_number VARCHAR(128) NOT NULL DEFAULT '',
+            ont_name VARCHAR(191) NOT NULL DEFAULT '',
+            status VARCHAR(32) NOT NULL DEFAULT 'unknown',
+            temperature VARCHAR(64) NOT NULL DEFAULT '',
+            ont_rx VARCHAR(64) NOT NULL DEFAULT '',
+            ont_tx VARCHAR(64) NOT NULL DEFAULT '',
+            olt_rx VARCHAR(64) NOT NULL DEFAULT '',
+            discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            raw_source VARCHAR(32) NOT NULL DEFAULT 'cli',
+            UNIQUE KEY uq_live_olt_ont_path (device_key, pon, ont_id),
+            KEY idx_live_olt_ont_serial (serial_number),
+            KEY idx_live_olt_ont_seen (last_seen_at),
+            KEY idx_live_olt_ont_status (device_key, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS monitor_map_nodes (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             map_key VARCHAR(64) NOT NULL DEFAULT 'noc-monitor',
