@@ -31,6 +31,12 @@ let isReady = false;
 let lastError = "";
 let readyAt = "";
 let lastQrAt = "";
+let providerNumber = "";
+let mainRestartInFlight = false;
+let mainInitializePromise = null;
+let mainRecoveryTimer = null;
+let mainRecoveryAttempt = 0;
+const qrDisplayTtlMs = Math.max(15000, Number.parseInt(process.env.WHATSAPP_QR_DISPLAY_TTL_MS || "60000", 10));
 const pairingSessions = new Map();
 
 const browserCandidates = [
@@ -114,12 +120,21 @@ function normalizeWhatsappNumber(value) {
 }
 
 function publicStatus() {
+  const activePairingSessions = [...pairingSessions.values()].filter((state) => state.ready).length;
+  const qrCreatedAt = lastQrAt === "" ? Number.NaN : Date.parse(lastQrAt);
+  const qrExpiresAtMs = Number.isFinite(qrCreatedAt) ? qrCreatedAt + qrDisplayTtlMs : Number.NaN;
+  const qrExpired = Number.isFinite(qrExpiresAtMs) && qrExpiresAtMs <= Date.now();
   return {
     ok: true,
     connected: isReady,
-    status: isReady ? "connected" : (qrCodeData !== "" ? "qr" : "loading"),
+    status: isReady ? "connected" : (mainRestartInFlight ? "refreshing" : (qrCodeData !== "" && !qrExpired ? "qr" : "loading")),
+    main_connected: isReady,
+    active_pairing_sessions: activePairingSessions,
+    provider_number: providerNumber,
     ready_at: readyAt,
     last_qr_at: lastQrAt,
+    qr_expires_at: Number.isFinite(qrExpiresAtMs) ? new Date(qrExpiresAtMs).toISOString() : "",
+    qr_expired: qrExpired,
     last_error: lastError,
   };
 }
@@ -132,6 +147,81 @@ const client = new Client({
   puppeteer: puppeteerOptions,
 });
 
+function clearMainRecoveryTimer() {
+  if (mainRecoveryTimer) {
+    clearTimeout(mainRecoveryTimer);
+    mainRecoveryTimer = null;
+  }
+}
+
+function initializeMainClient(source) {
+  if (mainInitializePromise) return mainInitializePromise;
+  const operation = client.initialize()
+    .catch((error) => {
+      lastError = error instanceof Error ? error.message : String(error);
+      console.error(`[whatsapp-bridge] ${source} initialize failed:`, lastError);
+      throw error;
+    })
+    .finally(() => {
+      if (mainInitializePromise === operation) mainInitializePromise = null;
+    });
+  mainInitializePromise = operation;
+  return operation;
+}
+
+async function waitForMainInitialization(timeoutMs = 30000) {
+  if (!mainInitializePromise) return;
+  let timeoutId;
+  try {
+    await Promise.race([
+      mainInitializePromise.catch(() => null),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("main_initialize_busy")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function restartMainClient(source) {
+  if (mainRestartInFlight) throw new Error("refresh_in_progress");
+  mainRestartInFlight = true;
+  clearMainRecoveryTimer();
+  try {
+    await waitForMainInitialization();
+    await client.destroy().catch(() => null);
+    await stopBrowsersForProfile("superoptic-main");
+    isReady = false;
+    qrCodeData = "";
+    readyAt = "";
+    lastQrAt = "";
+    providerNumber = "";
+    lastError = "";
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await initializeMainClient(source);
+  } finally {
+    mainRestartInFlight = false;
+  }
+}
+
+function scheduleMainRecovery() {
+  if (mainRestartInFlight || mainRecoveryTimer || isReady || qrCodeData !== "") return;
+  const delay = Math.min(60000, 5000 * (2 ** Math.min(mainRecoveryAttempt, 4)));
+  mainRecoveryTimer = setTimeout(() => {
+    mainRecoveryTimer = null;
+    void restartMainClient("automatic recovery")
+      .then(() => {
+        mainRecoveryAttempt = 0;
+      })
+      .catch((error) => {
+        mainRecoveryAttempt += 1;
+        lastError = error instanceof Error ? error.message : String(error);
+        scheduleMainRecovery();
+      });
+  }, delay);
+}
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "superoptic-whatsapp-bridge" });
 });
@@ -141,11 +231,12 @@ app.get("/api/status", requireApiKey, (_req, res) => {
 });
 
 app.get("/api/qr", requireApiKey, async (_req, res) => {
+  const status = publicStatus();
   if (isReady) {
-    return res.json({ ...publicStatus(), qr: "" });
+    return res.json({ ...status, qr: "" });
   }
-  if (qrCodeData === "") {
-    return res.json({ ...publicStatus(), qr: "" });
+  if (qrCodeData === "" || status.qr_expired) {
+    return res.json({ ...status, qr: "" });
   }
 
   try {
@@ -157,15 +248,30 @@ app.get("/api/qr", requireApiKey, async (_req, res) => {
   }
 });
 
+app.post("/api/refresh", requireApiKey, (_req, res) => {
+  if (mainRestartInFlight) {
+    return res.status(409).json({ ok: false, error: "refresh_in_progress" });
+  }
+
+  res.status(202).json({ ok: true, status: "refreshing" });
+  void restartMainClient("manual refresh")
+    .catch((error) => {
+      lastError = error instanceof Error ? error.message : String(error);
+      console.error("[whatsapp-bridge] manual refresh failed:", lastError);
+      scheduleMainRecovery();
+    });
+  return undefined;
+});
+
 app.post("/api/send", requireApiKey, async (req, res) => {
   const requestedSession = String(req.body?.session_key || "").trim();
   const paired = requestedSession !== "" ? pairingSessions.get(requestedSession) : null;
+  if (requestedSession !== "" && !paired?.ready) {
+    return res.status(503).json({ ok: false, error: "pairing_session_not_ready", session_key: requestedSession });
+  }
   const sendingClient = paired?.ready ? paired.client : client;
   if (sendingClient === client && !isReady) {
     return res.status(503).json({ ok: false, error: "whatsapp_not_ready", status: publicStatus() });
-  }
-  if (requestedSession !== "" && !paired?.ready) {
-    return res.status(503).json({ ok: false, error: "pairing_session_not_ready", session_key: requestedSession });
   }
 
   const number = normalizeWhatsappNumber(req.body?.number || req.body?.to || "");
@@ -189,6 +295,8 @@ app.post("/api/send", requireApiKey, async (req, res) => {
 });
 
 client.on("qr", (qr) => {
+  clearMainRecoveryTimer();
+  mainRecoveryAttempt = 0;
   qrCodeData = qr;
   isReady = false;
   lastQrAt = new Date().toISOString();
@@ -198,23 +306,30 @@ client.on("qr", (qr) => {
 });
 
 client.on("ready", () => {
+  clearMainRecoveryTimer();
+  mainRecoveryAttempt = 0;
   isReady = true;
   qrCodeData = "";
   readyAt = new Date().toISOString();
+  providerNumber = String(client.info?.wid?.user || "").replace(/\D/g, "");
   lastError = "";
   console.log("[whatsapp-bridge] WhatsApp session is ready.");
 });
 
 client.on("auth_failure", (message) => {
   isReady = false;
+  providerNumber = "";
   lastError = `auth_failure: ${message}`;
   console.error("[whatsapp-bridge]", lastError);
+  scheduleMainRecovery();
 });
 
 client.on("disconnected", (reason) => {
   isReady = false;
+  providerNumber = "";
   lastError = `disconnected: ${reason}`;
   console.warn("[whatsapp-bridge]", lastError);
+  scheduleMainRecovery();
 });
 
 async function pairingApi(path, options = {}) {
@@ -312,6 +427,8 @@ async function startPairingSession(item) {
   const sessionKey = String(item.session_key || "").trim();
   if (sessionKey === "" || pairingSessions.has(sessionKey)) return;
 
+  const initialStatus = String(item.pairing_status || "requested");
+
   const clientId = `pairing-${sessionKey.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80)}`;
   const pairingClient = new Client({
     authStrategy: new LocalAuth({ clientId }),
@@ -320,7 +437,12 @@ async function startPairingSession(item) {
     takeoverTimeoutMs: Number.parseInt(process.env.WHATSAPP_TAKEOVER_TIMEOUT_MS || "30000", 10),
     puppeteer: puppeteerOptions,
   });
-  const state = { client: pairingClient, ready: false, expiresAt: String(item.expires_at || ""), status: String(item.pairing_status || "requested") };
+  const state = {
+    client: pairingClient,
+    ready: false,
+    expiresAt: initialStatus === "connected" ? "" : String(item.expires_at || ""),
+    status: initialStatus,
+  };
   pairingSessions.set(sessionKey, state);
 
   pairingClient.on("qr", async (qrPayload) => {
@@ -388,7 +510,8 @@ async function pollPairingQueue() {
     const now = Date.now();
     for (const [sessionKey, state] of pairingSessions.entries()) {
       const expiresAt = state.expiresAt ? Date.parse(state.expiresAt.replace(" ", "T")) : Number.NaN;
-      if (!state.ready && Number.isFinite(expiresAt) && expiresAt <= now) {
+      const qrPending = ["requested", "qr_ready", "scanned"].includes(state.status);
+      if (!state.ready && qrPending && Number.isFinite(expiresAt) && expiresAt <= now) {
         await updatePairing(sessionKey, "expired", { failure_reason: "qr_timeout" });
         await stopPairingSession(sessionKey);
       }
@@ -398,10 +521,7 @@ async function pollPairingQueue() {
   }
 }
 
-client.initialize().catch((error) => {
-  lastError = error instanceof Error ? error.message : String(error);
-  console.error("[whatsapp-bridge] initialize failed:", lastError);
-});
+void initializeMainClient("startup").catch(() => scheduleMainRecovery());
 
 app.listen(port, host, () => {
   console.log(`[whatsapp-bridge] listening on http://${host}:${port}`);

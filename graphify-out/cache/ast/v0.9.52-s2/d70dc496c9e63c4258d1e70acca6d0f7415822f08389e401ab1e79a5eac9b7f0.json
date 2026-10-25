@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_db_migrations_20260729_120_audit_schema_alignment_php", "label": "20260729_120_audit_schema_alignment.php", "file_type": "code", "source_file": "db/migrations/20260729_120_audit_schema_alignment.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

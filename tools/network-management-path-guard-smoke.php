@@ -21,6 +21,7 @@ $previousExists = false;
 $maxActionId = (int) $db->query('SELECT COALESCE(MAX(id), 0) FROM mgs_operation_actions')->fetchColumn();
 $ticketBefore = (int) $db->query('SELECT COUNT(*) FROM portal_tickets')->fetchColumn();
 $messageBefore = (int) $db->query('SELECT COUNT(*) FROM communication_messages')->fetchColumn();
+$nocActor = app_noc_system_actor('olt-rule-worker');
 
 try {
     $statement = $db->prepare('SELECT setting_value FROM mgs_runtime_settings WHERE setting_key = :setting_key LIMIT 1');
@@ -42,7 +43,7 @@ try {
         'create_tickets' => true,
         'queue_messages' => true,
         'require_management_path' => true,
-    ], $db);
+    ], $db, $nocActor);
 
     $ticketAfter = (int) $db->query('SELECT COUNT(*) FROM portal_tickets')->fetchColumn();
     $messageAfter = (int) $db->query('SELECT COUNT(*) FROM communication_messages')->fetchColumn();

@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_db_migrations_20260729_200_legacy_ticket_knowledge_base_php", "label": "20260729_200_legacy_ticket_knowledge_base.php", "file_type": "code", "source_file": "db/migrations/20260729_200_legacy_ticket_knowledge_base.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

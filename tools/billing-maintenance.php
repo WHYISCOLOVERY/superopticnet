@@ -17,6 +17,8 @@ $options = getopt('', [
     'channel::',
     'sync-radius',
     'sync-limit::',
+    'apply-balances',
+    'fast',
     'range::',
     'help',
 ]);
@@ -24,15 +26,16 @@ $options = getopt('', [
 if (isset($options['help'])) {
     echo implode(PHP_EOL, [
         'Usage:',
-        '  php tools/billing-maintenance.php [--apply] [--limit=1000] [--sync-radius] [--range=1100000:1100040]',
+        '  php tools/billing-maintenance.php [--apply] [--limit=10000] [--apply-balances] [--sync-radius] [--range=1100000:1100040]',
         '  php tools/billing-maintenance.php --apply --queue-notices --channel=auto',
         '',
         'Default mode is dry-run: no account, payment or RADIUS table is changed.',
         '--apply       Run countdown refresh, expired suspension and optional RADIUS sync.',
-        '--limit       Max customer accounts to process for countdown refresh. Default: 1000.',
+        '--limit       Max customer accounts to process for countdown refresh. Default: 10000.',
         '--queue-notices Queue billing notice messages for expiring/expired services. Requires --apply.',
-        '--notice-limit Max accounts to scan for notice queues. Default: 500.',
+        '--notice-limit Max accounts to scan for notice queues. Default: 10000.',
         '--channel     Message channel: auto|whatsapp|app|telegram|sms. Default: auto.',
+        '--apply-balances Debit sufficient prepaid balance, activate service and sync RADIUS.',
         '--sync-radius Sync RADIUS SQL rows after maintenance.',
         '--sync-limit  Max customer accounts to sync to RADIUS in this run. Default: unlimited.',
         '--range       Optional RADIUS sync range start:end.',
@@ -51,29 +54,37 @@ $allowedChannels = ['auto', 'whatsapp', 'app', 'telegram', 'sms'];
 
 function billing_maintenance_fetch_notice_accounts(PDO $db, string $kind, int $limit): array
 {
-    $limit = max(1, min(5000, $limit));
+    $limit = max(1, min(100000, $limit));
     if ($kind === 'expiring_1d') {
-        $sql = "SELECT DISTINCT a.*
-                FROM billing_radius_services s
-                INNER JOIN portal_accounts a ON a.id = s.account_id
+        $sql = "SELECT a.*
+                FROM portal_accounts a
+                INNER JOIN (
+                    SELECT account_id, MIN(expires_at) AS next_expires_at
+                    FROM billing_radius_services
+                    WHERE status = 'active'
+                      AND expires_at IS NOT NULL
+                      AND expires_at >= NOW()
+                      AND expires_at <= DATE_ADD(NOW(), INTERVAL 1 DAY)
+                    GROUP BY account_id
+                ) s ON s.account_id = a.id
                 WHERE a.role = 'customer'
                   AND a.is_active = 1
-                  AND s.status = 'active'
-                  AND s.expires_at IS NOT NULL
-                  AND s.expires_at >= NOW()
-                  AND s.expires_at <= DATE_ADD(NOW(), INTERVAL 1 DAY)
-                ORDER BY s.expires_at ASC
+                ORDER BY s.next_expires_at ASC
                 LIMIT :limit";
     } elseif ($kind === 'expired') {
-        $sql = "SELECT DISTINCT a.*
-                FROM billing_radius_services s
-                INNER JOIN portal_accounts a ON a.id = s.account_id
+        $sql = "SELECT a.*
+                FROM portal_accounts a
+                INNER JOIN (
+                    SELECT account_id, MIN(expires_at) AS next_expires_at
+                    FROM billing_radius_services
+                    WHERE auto_suspend = 1
+                      AND status = 'active'
+                      AND expires_at IS NOT NULL
+                      AND expires_at < NOW()
+                    GROUP BY account_id
+                ) s ON s.account_id = a.id
                 WHERE a.role = 'customer'
-                  AND s.auto_suspend = 1
-                  AND s.status = 'active'
-                  AND s.expires_at IS NOT NULL
-                  AND s.expires_at < NOW()
-                ORDER BY s.expires_at ASC
+                ORDER BY s.next_expires_at ASC
                 LIMIT :limit";
     } else {
         return [];
@@ -204,8 +215,8 @@ function billing_maintenance_log_run(
 }
 
 $apply = isset($options['apply']);
-$limit = max(1, min(5000, (int) ($options['limit'] ?? 1000)));
-$noticeLimit = max(1, min(5000, (int) ($options['notice-limit'] ?? 500)));
+$limit = max(1, min(100000, (int) ($options['limit'] ?? 10000)));
+$noticeLimit = max(1, min(100000, (int) ($options['notice-limit'] ?? 10000)));
 $queueNotices = isset($options['queue-notices']);
 $channel = strtolower(trim((string) ($options['channel'] ?? 'auto')));
 if (!in_array($channel, $allowedChannels, true)) {
@@ -213,6 +224,8 @@ if (!in_array($channel, $allowedChannels, true)) {
     exit(3);
 }
 $syncRadius = isset($options['sync-radius']);
+$applyBalances = isset($options['apply-balances']);
+$fast = isset($options['fast']);
 $syncLimit = max(0, min(5000, (int) ($options['sync-limit'] ?? 0)));
 $startedAt = app_db_now();
 $startedFloat = microtime(true);
@@ -266,11 +279,15 @@ $result = [
     'suspension' => null,
     'notices' => null,
     'radius_sync' => null,
+    'balance_auto_charge' => null,
     'after' => null,
     'time' => date(DATE_ATOM),
 ];
 
 if ($apply) {
+    if ($applyBalances) {
+        $result['balance_auto_charge'] = app_billing_apply_available_balances($limit);
+    }
     if ($queueNotices) {
         $result['notices'] = [
             'expiring_1d' => billing_maintenance_queue_notice_set($expiringNoticeAccounts, 'service_expiring_1d', $channel),
@@ -278,8 +295,16 @@ if ($apply) {
         ];
     }
 
-    $result['countdown'] = app_billing_refresh_countdowns($limit, true);
-    $result['suspension'] = app_billing_process_due_suspensions();
+    // Fast mode is used by the frequent timer: payment credit and messages
+    // are handled without rewriting every customer record. Full countdown/
+    // suspension work remains available for the scheduled daily audit.
+    if (!$fast) {
+        $result['countdown'] = app_billing_refresh_countdowns($limit, true);
+        $result['suspension'] = app_billing_process_due_suspensions();
+    } else {
+        $result['countdown'] = ['checked' => 0, 'updated' => 0, 'expired' => 0, 'failed' => 0];
+        $result['suspension'] = ['suspended' => 0, 'failed' => 0];
+    }
 
     if ($syncRadius) {
         $result['radius_sync'] = app_billing_sync_radius_accounts($startCode, $endCode, $syncLimit);

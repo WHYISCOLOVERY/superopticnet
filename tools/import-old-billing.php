@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../legacy-customer-secret-lib.php';
 
 function old_billing_arg(string $name, ?string $default = null): ?string
 {
@@ -58,6 +59,14 @@ function old_billing_request(string $method, string $url, array $data = [], arra
         CURLOPT_USERAGENT => 'Mozilla/5.0 SuperOptic-Migration/1.0',
         CURLOPT_HTTPHEADER => $headers,
     ]);
+
+    $resolveIp = trim((string) getenv('OLD_BILLING_RESOLVE_IP'));
+    $urlHost = (string) (parse_url($url, PHP_URL_HOST) ?? '');
+    $urlScheme = strtolower((string) (parse_url($url, PHP_URL_SCHEME) ?? 'https'));
+    if ($resolveIp !== '' && filter_var($resolveIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false && $urlHost !== '') {
+        $resolvePort = $urlScheme === 'http' ? 80 : 443;
+        curl_setopt($ch, CURLOPT_RESOLVE, [$urlHost . ':' . $resolvePort . ':' . $resolveIp]);
+    }
 
     if (strtoupper($method) === 'POST') {
         curl_setopt($ch, CURLOPT_POST, true);
@@ -172,7 +181,174 @@ function old_billing_guess_service_type(array $edit): string
     return str_contains($service, 'ipoe') ? 'ipoe' : 'pppoe';
 }
 
-function old_billing_map_customer(array $tableRow, array $edit): array
+function old_billing_redact_sensitive_payload(array $payload): array
+{
+    foreach ($payload as $key => $value) {
+        $keyName = strtolower((string) $key);
+        if (preg_match('/pass|password|secret|token|private|stabil|^login$/', $keyName) === 1) {
+            $payload[$key] = $value === '' || $value === null ? $value : '[redacted]';
+            continue;
+        }
+        if (is_array($value)) {
+            $payload[$key] = old_billing_redact_sensitive_payload($value);
+        }
+    }
+
+    return $payload;
+}
+
+function old_billing_mask_phone(string $phone): string
+{
+    $digits = preg_replace('/\D+/', '', $phone) ?? '';
+    if (strlen($digits) < 4) {
+        return '';
+    }
+
+    return str_repeat('*', max(0, strlen($digits) - 4)) . substr($digits, -4);
+}
+
+function old_billing_normalize_expiry(string $date, string $hour = ''): string
+{
+    $date = trim($date);
+    if ($date === '') {
+        return '';
+    }
+
+    $hour = preg_replace('/\D+/', '', trim($hour)) ?? '';
+    $hour = $hour !== '' ? str_pad((string) min(23, (int) $hour), 2, '0', STR_PAD_LEFT) : '23';
+    foreach (['!d-m-Y', '!d.m.Y', '!Y-m-d', '!d/m/Y'] as $format) {
+        $parsed = DateTimeImmutable::createFromFormat($format, $date, new DateTimeZone(app_timezone()));
+        $errors = DateTimeImmutable::getLastErrors();
+        if ($parsed instanceof DateTimeImmutable
+            && ($errors === false || ((int) $errors['warning_count'] === 0 && (int) $errors['error_count'] === 0))) {
+            return $parsed->setTime((int) $hour, 0)->format('Y-m-d H:i:s');
+        }
+    }
+
+    return '';
+}
+
+function old_billing_extract_asset_hints(string $note): array
+{
+    $hints = [
+        'cable_lengths_m' => [],
+        'modem_brands' => [],
+        'serial_numbers' => [],
+        'mac_addresses' => [],
+    ];
+    if (trim($note) === '') {
+        return $hints;
+    }
+
+    if (preg_match_all(
+        '/\b(?:kabel|cable)\D{0,24}(\d+(?:[.,]\d+)?)\s*(?:m|metr|meter)\b/iu',
+        $note,
+        $matches
+    )) {
+        foreach ($matches[1] as $value) {
+            $hints['cable_lengths_m'][] = (float) str_replace(',', '.', (string) $value);
+        }
+    }
+    if (preg_match_all(
+        '/\b(\d+(?:[.,]\d+)?)\s*(?:m|metr|meter)\D{0,16}(?:kabel|cable)\b/iu',
+        $note,
+        $matches
+    )) {
+        foreach ($matches[1] as $value) {
+            $hints['cable_lengths_m'][] = (float) str_replace(',', '.', (string) $value);
+        }
+    }
+
+    $brands = ['Huawei', 'ZTE', 'TP-Link', 'Tenda', 'MikroTik', 'Mercusys', 'Nokia', 'FiberHome', 'Netis', 'D-Link'];
+    foreach ($brands as $brand) {
+        if (preg_match('/\b' . preg_quote($brand, '/') . '\b/iu', $note) === 1) {
+            $hints['modem_brands'][] = $brand;
+        }
+    }
+
+    if (preg_match_all('/\b(?:sn|s\/n|serial)\s*[:#=-]?\s*([A-Z0-9][A-Z0-9._-]{4,63})/iu', $note, $matches)) {
+        $hints['serial_numbers'] = array_map('strval', $matches[1]);
+    }
+    if (preg_match_all('/\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/iu', $note, $matches)) {
+        $hints['mac_addresses'] = array_map(
+            static fn(string $mac): string => strtoupper(str_replace('-', ':', $mac)),
+            $matches[0]
+        );
+    }
+    if (preg_match_all('/\b[0-9A-F]{12}\b/iu', $note, $matches)) {
+        foreach ($matches[0] as $mac) {
+            $normalized = strtoupper(implode(':', str_split((string) $mac, 2)));
+            $hints['mac_addresses'][] = $normalized;
+        }
+    }
+
+    foreach ($hints as $key => $values) {
+        $hints[$key] = array_values(array_unique($values, SORT_REGULAR));
+    }
+
+    return $hints;
+}
+
+function old_billing_location_key(string $value): string
+{
+    $value = mb_strtolower(trim($value), 'UTF-8');
+    $value = strtr($value, [
+        'ə' => 'e',
+        'ı' => 'i',
+        'ö' => 'o',
+        'ü' => 'u',
+        'ğ' => 'g',
+        'ş' => 's',
+        'ç' => 'c',
+    ]);
+    return preg_replace('/[^a-z0-9]+/u', ' ', $value) ?? '';
+}
+
+function old_billing_infer_area_from_address(string $address, array $areaNamesByZoneId): string
+{
+    $addressKey = trim(old_billing_location_key($address));
+    if ($addressKey === '') {
+        return '';
+    }
+
+    $canonical = [
+        'astara' => 'Astara',
+        'lenkeran' => 'Lənkəran',
+        'sahagaci' => 'Şahağacı',
+        'bileceri' => 'Biləcəri',
+        'pirsagi' => 'Pirşağı',
+        'zabrat' => 'Zabrat',
+        'neftcala' => 'Neftçala',
+        'masalli' => 'Masallı',
+        'qaracuxur' => 'Qaraçuxur',
+        'kurdexani' => 'Kürdəxanı',
+    ];
+    foreach ($canonical as $needle => $area) {
+        if (preg_match('/(?:^|\s)' . preg_quote($needle, '/') . '(?:\s|$)/', $addressKey) === 1) {
+            return $area;
+        }
+    }
+
+    foreach ($areaNamesByZoneId as $zoneName) {
+        $zoneName = trim((string) $zoneName);
+        $zoneKey = trim(old_billing_location_key($zoneName));
+        if ($zoneKey !== '' && (
+            str_contains(' ' . $addressKey . ' ', ' ' . $zoneKey . ' ')
+            || str_contains(' ' . $zoneKey . ' ', ' ' . $addressKey . ' ')
+        )) {
+            return $zoneName;
+        }
+    }
+
+    return '';
+}
+
+function old_billing_map_customer(
+    array $tableRow,
+    array $edit,
+    array $poolNamesByZoneId = [],
+    array $areaNamesByZoneId = []
+): array
 {
     $subscriberCode = old_billing_extract_profile_code((string) ($tableRow['ad'] ?? ''));
     $subscriberCode = $subscriberCode !== '' ? $subscriberCode : trim((string) ($tableRow['id'] ?? $edit['login'] ?? ''));
@@ -184,27 +360,44 @@ function old_billing_map_customer(array $tableRow, array $edit): array
 
     $pppoeUsername = $subscriberCode;
     $rawPppoePassword = (string) ($edit['pass'] ?? '');
-    $rawLegacyPanelPasswordHash = (string) ($edit['login'] ?? '');
     $rawPanelPassword = (string) ($edit['stabil'] ?? $edit['panel_pass'] ?? '');
     $pppoePassword = trim($rawPppoePassword);
-    $legacyPanelPasswordHash = trim($rawLegacyPanelPasswordHash);
     $panelPassword = trim($rawPanelPassword);
     $serviceType = old_billing_guess_service_type($edit);
     $tariff = old_billing_html_text((string) ($tableRow['paket'] ?? ($edit['profile'] ?? '')));
-    $statusText = old_billing_html_text((string) ($tableRow['status'] ?? ($edit['stat'] ?? '')));
-    $isActive = !preg_match('/deaktiv|ləğv|legv|passiv/i', $statusText . ' ' . $fullName);
-    $expiresAt = trim((string) ($edit['day'] ?? ''));
+    $statusText = old_billing_html_text((string) ($tableRow['status'] ?? ''));
+    $legacyStatus = trim((string) ($edit['stat'] ?? ''));
+    $isActive = in_array($legacyStatus, ['0', '1'], true)
+        ? $legacyStatus === '1'
+        : !preg_match('/deaktiv|ləğv|legv|passiv/i', $statusText . ' ' . $fullName);
+    $expiresAtRaw = trim((string) ($edit['day'] ?? ''));
+    $expiresAt = old_billing_normalize_expiry($expiresAtRaw, (string) ($edit['saat'] ?? ''));
     $ip = trim((string) ($edit['ip'] ?? ''));
+    $ipType = strtolower(trim((string) ($edit['ip_type'] ?? 'local')));
+    $poolZoneId = trim((string) ($edit['pool_zone_id'] ?? ''));
+    $poolName = trim((string) ($poolNamesByZoneId[$poolZoneId] ?? ''));
+    $isStaticIp = $ip !== '' && (str_contains($ipType, 'static') || app_ip_is_public_unicast($ip));
+    if ($isStaticIp && $poolName !== '' && !str_starts_with(strtolower($poolName), 'static ')) {
+        $poolName = 'Static ' . $poolName;
+    }
     $rawPhone = (string) ($edit['telefon'] ?? old_billing_html_text((string) ($tableRow['telefon'] ?? '')));
     $phone = trim($rawPhone);
     $address = trim((string) ($edit['adress'] ?? old_billing_html_text((string) ($tableRow['unvan'] ?? ''))));
+    $areaZoneId = trim((string) ($edit['zone_id'] ?? ''));
+    $area = trim((string) ($areaNamesByZoneId[$areaZoneId] ?? $edit['zone_name'] ?? ''));
+    $areaSource = $area !== '' ? 'zone_catalog' : '';
+    if ($area === '') {
+        $area = old_billing_infer_area_from_address($address, $areaNamesByZoneId);
+        $areaSource = $area !== '' ? 'address_exact_match' : 'unavailable';
+    }
     $fin = trim((string) ($edit['fin'] ?? old_billing_html_text((string) ($tableRow['fin'] ?? ''))));
     $sv = trim((string) ($edit['sv'] ?? ''));
     $balance = old_billing_clean_amount((string) ($edit['balance'] ?? old_billing_html_text((string) ($tableRow['balans'] ?? ''))));
     $debtMonth = trim((string) ($edit['borc_mounth'] ?? ''));
     $debtAmount = old_billing_clean_amount((string) ($edit['borc_amount'] ?? old_billing_html_text((string) ($tableRow['borc'] ?? ''))));
-    $rawComment = (string) ($edit['comment'] ?? '');
+    $rawComment = (string) ($edit['comment'] ?? old_billing_html_text((string) ($tableRow['qeyd'] ?? '')));
     $comment = trim($rawComment);
+    $assetHints = old_billing_extract_asset_hints($rawComment);
     $remainingDaysRaw = old_billing_html_text((string) ($tableRow['day'] ?? ''));
 
     $payload = [
@@ -213,7 +406,11 @@ function old_billing_map_customer(array $tableRow, array $edit): array
             'subscriber_code' => $subscriberCode,
             'contract_no' => $subscriberCode,
             'phone' => $phone,
+            'area' => $area,
             'address' => $address,
+            'street_address' => $address,
+            'area_zone_id' => $areaZoneId,
+            'area_source' => $areaSource,
             'fin' => $fin,
             'document_serial' => $sv,
             'plan' => $tariff,
@@ -224,9 +421,6 @@ function old_billing_map_customer(array $tableRow, array $edit): array
         'billing' => [
             'service_type' => $serviceType,
             'pppoe_username' => $pppoeUsername,
-            'pppoe_password' => $pppoePassword,
-            'panel_password' => $panelPassword,
-            'legacy_panel_password_hash' => $legacyPanelPasswordHash,
             'customer_code' => $subscriberCode,
             'tariff' => $tariff,
             'balance' => $balance,
@@ -235,58 +429,74 @@ function old_billing_map_customer(array $tableRow, array $edit): array
             'status' => $isActive ? 'Aktiv' : 'Deaktiv',
             'radius_status' => $isActive ? 'Aktiv' : 'Deaktiv',
             'ip_address' => $ip,
-            'expires_at_raw' => $expiresAt,
+            'assigned_ip' => $isStaticIp ? '' : $ip,
+            'static_ip' => $isStaticIp ? $ip : '',
+            'pool' => $poolName,
+            'pool_zone_id' => $poolZoneId,
+            'ip_assignment_mode' => $ip !== '' ? 'manual' : 'pool',
+            'expires_at' => $expiresAt,
+            'expires_at_raw' => $expiresAtRaw,
             'remaining_days_raw' => $remainingDaysRaw,
         ],
         'credentials' => [
             'source' => 'old_billing',
-            'pppoe_username' => $pppoeUsername,
-            'pppoe_password' => $pppoePassword,
-            'customer_portal_password' => $panelPassword,
-            'legacy_customer_portal_password_hash' => $legacyPanelPasswordHash,
             'imported_at' => date('c'),
+            'plaintext_stored' => false,
         ],
         'internet_services' => [[
             'service_type' => $serviceType,
             'username' => $pppoeUsername,
-            'password' => $pppoePassword,
             'tariff' => $tariff,
-            'ip_address' => $ip,
-            'static_ip' => '',
+            'pool' => $poolName,
+            'pool_zone_id' => $poolZoneId,
+            'ip_assignment_mode' => $ip !== '' ? 'manual' : 'pool',
+            'ip_address' => $isStaticIp ? '' : $ip,
+            'assigned_ip' => $isStaticIp ? '' : $ip,
+            'static_ip' => $isStaticIp ? $ip : '',
             'status' => $isActive ? 'active' : 'disabled',
-            'expires_at_raw' => $expiresAt,
+            'expires_at' => $expiresAt,
+            'expires_at_raw' => $expiresAtRaw,
         ]],
         'notes' => $comment !== '' ? [[
             'source' => 'old_billing',
             'note' => $rawComment,
             'imported_at' => date('c'),
         ]] : [],
+        'legacy_asset_hints' => $assetHints,
         'legacy_exact_fields' => [
             'phone' => $rawPhone,
+            'area_zone_id' => $areaZoneId,
+            'area' => $area,
+            'area_source' => $areaSource,
+            'street_address' => $address,
             'note' => $rawComment,
-            'pppoe_password' => $rawPppoePassword,
-            'customer_portal_password' => $rawPanelPassword,
-            'legacy_customer_portal_password_hash' => $rawLegacyPanelPasswordHash,
         ],
         'old_billing' => [
             'table_row' => $tableRow,
-            'edit_json' => $edit,
+            'edit_json' => old_billing_redact_sensitive_payload($edit),
             'imported_at' => date('c'),
         ],
     ];
 
+    $externalId = 'old-billing:' . $subscriberCode;
+    if (strlen($externalId) > 64) {
+        $externalId = 'old-billing:sha256:' . substr(hash('sha256', $subscriberCode), 0, 43);
+    }
+
     return [
-        'external_id' => 'old-billing:' . (string) ($tableRow['id'] ?? $subscriberCode),
+        'external_id' => $externalId,
         'login' => $subscriberCode,
-        'password' => $panelPassword !== '' ? $panelPassword : ($pppoePassword !== '' ? $pppoePassword : bin2hex(random_bytes(4))),
+        'password' => $panelPassword !== '' ? $panelPassword : $pppoePassword,
         'role' => 'customer',
         'account_type' => 'customer',
         'full_name' => $fullName,
         'subscriber_code' => $subscriberCode,
         'contract_no' => $subscriberCode,
+        'fin_code' => $fin,
+        'document_no' => $sv,
         'phone' => $phone,
         'category' => 'customer',
-        'area' => '',
+        'area' => $area,
         'address' => $address,
         'plan' => $tariff,
         'status' => $isActive ? 'Aktiv' : 'Deaktiv',
@@ -311,7 +521,7 @@ function old_billing_login(string $baseUrl, string $email, string $password, arr
     }
 }
 
-function old_billing_fetch_users(string $baseUrl, array &$cookies, int $start, int $length): array
+function old_billing_fetch_users(string $baseUrl, array &$cookies, int $start, int $length, string $subscriber = ''): array
 {
     $payload = [
         'draw' => 1,
@@ -321,7 +531,7 @@ function old_billing_fetch_users(string $baseUrl, array &$cookies, int $start, i
         'user_status' => '',
         'internet_status' => '',
         'internet_paket' => '',
-        'personal_search' => '',
+        'personal_search' => $subscriber,
         'personal_a_search' => '',
         'personal_ip_search' => '',
         'user_borc' => '',
@@ -469,7 +679,17 @@ function old_billing_extract_payment_user(string $html): array
 {
     $subscriberCode = '';
     if (preg_match('/ppp_user_profile\.php\?id=([^"\']+)/i', $html, $match)) {
-        $subscriberCode = trim(rawurldecode($match[1]));
+        $candidate = trim(rawurldecode($match[1]));
+        if (preg_match('/^[A-Za-z0-9._-]{1,64}$/', $candidate) === 1) {
+            $subscriberCode = $candidate;
+        } else {
+            $candidateText = preg_replace('/<[^>]*>/', ' ', $candidate) ?? $candidate;
+            $candidateText = html_entity_decode($candidateText, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $candidateText = preg_replace('/\s+/u', ' ', $candidateText) ?? $candidateText;
+            if (preg_match_all('/\b\d{5,10}\b/', $candidateText, $codeMatches)) {
+                $subscriberCode = (string) end($codeMatches[0]);
+            }
+        }
     }
     $name = '';
     if (preg_match('/class=["\']pay_name["\'][^>]*>(.*?)<\/span>/is', $html, $match)) {
@@ -501,6 +721,427 @@ function old_billing_extract_terminal(string $html): string
     return old_billing_html_text($html);
 }
 
+function old_billing_record_reject(PDO $db, string $sourceType, string $sourceKey, string $reason, array $row): void
+{
+    $sourceKey = trim($sourceKey);
+    if ($sourceKey === '') {
+        $sourceKey = 'sha256:' . hash('sha256', app_db_json_encode($row));
+    }
+    $statement = $db->prepare(
+        'INSERT INTO legacy_import_rejects (
+            source_type, source_key, rejection_reason, raw_payload_json
+         ) VALUES (
+            :source_type, :source_key, :rejection_reason, :raw_payload_json
+         )
+         ON DUPLICATE KEY UPDATE
+            rejection_reason = VALUES(rejection_reason),
+            raw_payload_json = VALUES(raw_payload_json),
+            last_seen_at = NOW()'
+    );
+    $statement->execute([
+        'source_type' => mb_substr(trim($sourceType), 0, 64, 'UTF-8'),
+        'source_key' => mb_substr($sourceKey, 0, 191, 'UTF-8'),
+        'rejection_reason' => mb_substr(trim($reason), 0, 128, 'UTF-8'),
+        'raw_payload_json' => app_db_json_encode(old_billing_redact_sensitive_payload($row)),
+    ]);
+}
+
+function old_billing_split_ip_range(string $range): array
+{
+    $parts = array_map('trim', explode('-', $range, 2));
+    if (count($parts) !== 2
+        || !filter_var($parts[0], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+        || !filter_var($parts[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+        || (app_ip_to_num($parts[0]) ?? 0) > (app_ip_to_num($parts[1]) ?? 0)) {
+        return ['', ''];
+    }
+
+    return [$parts[0], $parts[1]];
+}
+
+function old_billing_infer_netmask(string $startIp, string $endIp): string
+{
+    $start = explode('.', $startIp);
+    $end = explode('.', $endIp);
+    if (count($start) !== 4 || count($end) !== 4) {
+        return '';
+    }
+    if ($start[0] === $end[0] && $start[1] === $end[1] && $start[2] === $end[2]) {
+        return '255.255.255.0';
+    }
+    if ($start[0] === $end[0] && $start[1] === $end[1]) {
+        return '255.255.0.0';
+    }
+
+    return '255.0.0.0';
+}
+
+function old_billing_fetch_pool_catalog(string $baseUrl, array &$cookies): array
+{
+    $response = old_billing_json_request('POST', rtrim($baseUrl, '/') . '/backend/ppp_pool.php', [
+        'action' => 'get_pool_data',
+    ], $cookies);
+    $pools = [];
+    $zoneMap = [];
+    $blacklist = [];
+
+    foreach ($response as $key => $pool) {
+        if (preg_match('/^pool\d+$/', (string) $key) !== 1 || !is_array($pool)) {
+            continue;
+        }
+        $poolId = trim((string) ($pool['id'] ?? ''));
+        $baseName = trim((string) ($pool['name'] ?? 'Pool ' . $poolId));
+        $zones = $poolId !== '' ? old_billing_json_request('POST', rtrim($baseUrl, '/') . '/backend/ppp_pool.php', [
+            'action' => 'get_zones',
+            'pool_id' => $poolId,
+        ], $cookies) : [];
+        $zoneNames = [];
+        foreach ((array) ($zones['zones'] ?? []) as $zone) {
+            if (!is_array($zone)) {
+                continue;
+            }
+            $zoneId = trim((string) ($zone['id'] ?? ''));
+            $zoneName = trim((string) ($zone['zone_name'] ?? ''));
+            if ($zoneId === '') {
+                continue;
+            }
+            $resolvedName = $baseName . ($zoneName !== '' ? ' - ' . $zoneName : '');
+            $zoneMap[$zoneId] = $resolvedName;
+            $zoneNames[] = $resolvedName;
+        }
+        if ($zoneNames === []) {
+            $zoneNames[] = $baseName;
+        }
+
+        [$localStart, $localEnd] = old_billing_split_ip_range((string) ($pool['local_ip_range'] ?? ''));
+        [$staticStart, $staticEnd] = old_billing_split_ip_range((string) ($pool['static_ip_range'] ?? ''));
+        foreach ($zoneNames as $resolvedName) {
+            if ($localStart !== '') {
+                $pools[] = [
+                    'name' => $resolvedName,
+                    'service_type' => 'pppoe',
+                    'pool_type' => 'dynamic',
+                    'range_start' => $localStart,
+                    'range_end' => $localEnd,
+                    'gateway' => '',
+                    'netmask' => old_billing_infer_netmask($localStart, $localEnd),
+                ];
+            }
+            if ($staticStart !== '') {
+                $pools[] = [
+                    'name' => 'Static ' . $resolvedName,
+                    'service_type' => 'pppoe',
+                    'pool_type' => 'static',
+                    'range_start' => $staticStart,
+                    'range_end' => $staticEnd,
+                    'gateway' => '',
+                    'netmask' => old_billing_infer_netmask($staticStart, $staticEnd),
+                ];
+            }
+        }
+
+        foreach (preg_split('/[\s,;]+/', (string) ($pool['blacklist_ips'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $blacklist[] = $ip;
+            }
+        }
+    }
+
+    return [
+        'pools' => $pools,
+        'zone_map' => $zoneMap,
+        'blacklist_ips' => array_values(array_unique($blacklist)),
+    ];
+}
+
+function old_billing_fetch_area_catalog(string $baseUrl, array &$cookies): array
+{
+    $response = old_billing_json_request('POST', rtrim($baseUrl, '/') . '/backend/zone.php', [
+        'action' => 'get_zones',
+    ], $cookies);
+    if (($response['success'] ?? false) !== true || !is_array($response['zones'] ?? null)) {
+        throw new RuntimeException('Old billing area catalog could not be loaded.');
+    }
+
+    $areas = [];
+    foreach ($response['zones'] as $zone) {
+        if (!is_array($zone)) {
+            continue;
+        }
+        $zoneId = trim((string) ($zone['id'] ?? ''));
+        $zoneName = trim((string) ($zone['zone_name'] ?? ''));
+        if ($zoneId !== '' && $zoneName !== '') {
+            $areas[$zoneId] = $zoneName;
+        }
+    }
+
+    return $areas;
+}
+
+function old_billing_import_pools(PDO $db, array $catalog, bool $apply): array
+{
+    $processed = 0;
+    $created = 0;
+    $updated = 0;
+    $select = $db->prepare('SELECT id FROM billing_ip_pools WHERE name = :name LIMIT 1');
+    $upsert = $db->prepare(
+        'INSERT INTO billing_ip_pools (name, service_type, pool_type, range_start, range_end, gateway, netmask, status)
+         VALUES (:name, :service_type, :pool_type, :range_start, :range_end, :gateway, :netmask, "active")
+         ON DUPLICATE KEY UPDATE
+            service_type = VALUES(service_type),
+            pool_type = VALUES(pool_type),
+            range_start = VALUES(range_start),
+            range_end = VALUES(range_end),
+            gateway = VALUES(gateway),
+            netmask = VALUES(netmask),
+            status = "active"'
+    );
+
+    foreach ((array) ($catalog['pools'] ?? []) as $pool) {
+        if (!is_array($pool) || trim((string) ($pool['name'] ?? '')) === '') {
+            continue;
+        }
+        if ($apply) {
+            $select->execute(['name' => (string) $pool['name']]);
+            $exists = $select->fetchColumn() !== false;
+            $upsert->execute([
+                'name' => (string) $pool['name'],
+                'service_type' => (string) ($pool['service_type'] ?? 'pppoe'),
+                'pool_type' => (string) ($pool['pool_type'] ?? 'dynamic'),
+                'range_start' => (string) ($pool['range_start'] ?? ''),
+                'range_end' => (string) ($pool['range_end'] ?? ''),
+                'gateway' => (string) ($pool['gateway'] ?? ''),
+                'netmask' => (string) ($pool['netmask'] ?? ''),
+            ]);
+            $exists ? $updated++ : $created++;
+        }
+        $processed++;
+    }
+
+    if ($apply) {
+        app_ip_sync_legacy_pools($db);
+        foreach ((array) ($catalog['blacklist_ips'] ?? []) as $ip) {
+            app_ip_mark_address($db, (string) $ip, 'blacklist', null, '', 'Old billing blacklist');
+        }
+    }
+
+    return [
+        'processed' => $processed,
+        'created' => $created,
+        'updated' => $updated,
+        'blacklist_count' => count((array) ($catalog['blacklist_ips'] ?? [])),
+    ];
+}
+
+function old_billing_upsert_service_snapshot(PDO $db, array $account, array $mapped): array
+{
+    $payload = is_array($mapped['payload'] ?? null) ? $mapped['payload'] : [];
+    $billing = is_array($payload['billing'] ?? null) ? $payload['billing'] : [];
+    $services = is_array($payload['internet_services'] ?? null) ? $payload['internet_services'] : [];
+    $service = is_array($services[0] ?? null) ? $services[0] : [];
+    $accountId = (int) ($account['id'] ?? 0);
+    $username = trim((string) ($service['username'] ?? $billing['pppoe_username'] ?? ''));
+    if ($accountId <= 0 || $username === '') {
+        return ['written' => 0, 'ip_written' => 0, 'ip_conflict' => 0];
+    }
+
+    $serviceType = (string) ($service['service_type'] ?? 'pppoe');
+    $plan = trim((string) ($service['tariff'] ?? $mapped['plan'] ?? ''));
+    $poolName = trim((string) ($service['pool'] ?? ''));
+    $assignedIp = trim((string) ($service['assigned_ip'] ?? $service['ip_address'] ?? ''));
+    $staticIp = trim((string) ($service['static_ip'] ?? ''));
+    $expiresAt = trim((string) ($service['expires_at'] ?? ''));
+    $active = !empty($mapped['is_active']);
+    $expired = $expiresAt !== '' && strtotime($expiresAt) !== false && strtotime($expiresAt) < time();
+    $status = $active && !$expired ? 'active' : ($expired ? 'expired' : 'suspended');
+
+    $tariffId = null;
+    if ($plan !== '') {
+        $statement = $db->prepare('SELECT id FROM billing_tariffs WHERE name = :name AND service_type = :service_type LIMIT 1');
+        $statement->execute(['name' => $plan, 'service_type' => $serviceType]);
+        $value = $statement->fetchColumn();
+        $tariffId = $value !== false ? (int) $value : null;
+    }
+
+    $poolId = null;
+    if ($poolName !== '') {
+        $statement = $db->prepare('SELECT id FROM billing_ip_pools WHERE name = :name AND service_type = :service_type LIMIT 1');
+        $statement->execute(['name' => $poolName, 'service_type' => $serviceType]);
+        $value = $statement->fetchColumn();
+        $poolId = $value !== false ? (int) $value : null;
+    }
+    if ($poolId === null && ($assignedIp !== '' || $staticIp !== '')) {
+        $candidate = $assignedIp !== '' ? $assignedIp : $staticIp;
+        $candidateNum = app_ip_to_num($candidate);
+        if ($candidateNum !== null) {
+            $statement = $db->prepare(
+                'SELECT id FROM billing_ip_pools
+                 WHERE service_type = :service_type
+                   AND INET_ATON(range_start) <= :ip_num
+                   AND INET_ATON(range_end) >= :ip_num
+                 ORDER BY (pool_type = "static") DESC, id LIMIT 1'
+            );
+            $statement->execute(['service_type' => $serviceType, 'ip_num' => $candidateNum]);
+            $value = $statement->fetchColumn();
+            $poolId = $value !== false ? (int) $value : null;
+        }
+    }
+
+    $upsert = $db->prepare(
+        'INSERT INTO billing_radius_services (
+            account_id, username, service_type, tariff_id, ip_pool_id,
+            assigned_ip, nat_public_ip, static_ip, status, expires_at, last_radius_sync_at
+         ) VALUES (
+            :account_id, :username, :service_type, :tariff_id, :ip_pool_id,
+            :assigned_ip, NULL, :static_ip, :status, :expires_at, NULL
+         )
+         ON DUPLICATE KEY UPDATE
+            account_id = VALUES(account_id),
+            service_type = VALUES(service_type),
+            tariff_id = VALUES(tariff_id),
+            ip_pool_id = VALUES(ip_pool_id),
+            assigned_ip = VALUES(assigned_ip),
+            static_ip = VALUES(static_ip),
+            status = VALUES(status),
+            expires_at = VALUES(expires_at)'
+    );
+    $upsert->execute([
+        'account_id' => $accountId,
+        'username' => $username,
+        'service_type' => $serviceType,
+        'tariff_id' => $tariffId,
+        'ip_pool_id' => $poolId,
+        'assigned_ip' => $assignedIp !== '' ? $assignedIp : null,
+        'static_ip' => $staticIp !== '' ? $staticIp : null,
+        'status' => $status,
+        'expires_at' => $expiresAt !== '' ? $expiresAt : null,
+    ]);
+
+    $ip = $assignedIp !== '' ? $assignedIp : $staticIp;
+    if ($ip === '') {
+        return ['written' => 1, 'ip_written' => 0, 'ip_conflict' => 0];
+    }
+
+    $conflict = $db->prepare(
+        'SELECT COUNT(*) FROM billing_radius_services
+         WHERE account_id <> :account_id
+           AND status = "active"
+           AND (assigned_ip = :ip OR static_ip = :ip OR nat_public_ip = :ip)'
+    );
+    $conflict->execute(['account_id' => $accountId, 'ip' => $ip]);
+    $hasConflict = (int) $conflict->fetchColumn() > 0;
+
+    $current = $db->prepare(
+        'SELECT * FROM customer_ip_assignments
+         WHERE customer_id = :customer_id AND service_username = :service_username AND active = 1
+         ORDER BY id DESC LIMIT 1'
+    );
+    $current->execute(['customer_id' => $accountId, 'service_username' => $username]);
+    $previous = $current->fetch(PDO::FETCH_ASSOC);
+    $localIp = $staticIp === '' ? $assignedIp : '';
+    $same = is_array($previous)
+        && trim((string) ($previous['local_ip'] ?? '')) === $localIp
+        && trim((string) ($previous['static_ip'] ?? '')) === $staticIp
+        && trim((string) ($previous['nat_public_ip'] ?? '')) === '';
+    if ($same) {
+        $update = $db->prepare(
+            'UPDATE customer_ip_assignments
+             SET radius_synced = 0, metadata_json = :metadata_json
+             WHERE id = :id'
+        );
+        $update->execute([
+            'id' => (int) $previous['id'],
+            'metadata_json' => app_db_json_encode(['reason' => 'old_billing_import', 'ip_conflict' => $hasConflict]),
+        ]);
+    } else {
+        if (is_array($previous)) {
+            $db->prepare('UPDATE customer_ip_assignments SET active = 0, released_at = NOW() WHERE id = :id')
+                ->execute(['id' => (int) $previous['id']]);
+        }
+        $insert = $db->prepare(
+            'INSERT INTO customer_ip_assignments (
+                customer_id, service_username, local_ip, nat_public_ip, static_ip,
+                assignment_type, radius_synced, active, metadata_json
+             ) VALUES (
+                :customer_id, :service_username, :local_ip, NULL, :static_ip,
+                :assignment_type, 0, 1, :metadata_json
+             )'
+        );
+        $insert->execute([
+            'customer_id' => $accountId,
+            'service_username' => $username,
+            'local_ip' => $localIp !== '' ? $localIp : null,
+            'static_ip' => $staticIp !== '' ? $staticIp : null,
+            'assignment_type' => $staticIp !== '' ? 'static' : 'dynamic',
+            'metadata_json' => app_db_json_encode(['reason' => 'old_billing_import', 'ip_conflict' => $hasConflict]),
+        ]);
+    }
+
+    if (!$hasConflict) {
+        app_ip_mark_address(
+            $db,
+            $ip,
+            'used',
+            $accountId,
+            $username,
+            'Old billing import',
+            $staticIp !== '' ? 'static_public' : 'local'
+        );
+    }
+
+    return ['written' => 1, 'ip_written' => 1, 'ip_conflict' => $hasConflict ? 1 : 0];
+}
+
+function old_billing_probe_account_failure(PDO $db, array $mapped): string
+{
+    if ($db->inTransaction()) {
+        return 'probe_skipped_active_transaction';
+    }
+
+    $db->beginTransaction();
+    try {
+        $statement = $db->prepare(
+            'INSERT INTO portal_accounts (
+                external_id, login, password_hash, role, account_type, employee_role, job_title, full_name,
+                subscriber_code, contract_no, fin_code, document_no, email, phone, category, area, address,
+                plan, status, is_active, payload_json
+             ) VALUES (
+                :external_id, :login, :password_hash, :role, :account_type, :employee_role, NULL, :full_name,
+                :subscriber_code, :contract_no, :fin_code, :document_no, NULL, :phone, :category, :area, :address,
+                :plan, :status, :is_active, :payload_json
+             )'
+        );
+        $statement->execute([
+            'external_id' => (string) ($mapped['external_id'] ?? ''),
+            'login' => (string) ($mapped['login'] ?? ''),
+            'password_hash' => password_hash((string) ($mapped['password'] ?? ''), PASSWORD_DEFAULT),
+            'role' => 'customer',
+            'account_type' => 'customer',
+            'employee_role' => '',
+            'full_name' => (string) ($mapped['full_name'] ?? ''),
+            'subscriber_code' => (string) ($mapped['subscriber_code'] ?? ''),
+            'contract_no' => (string) ($mapped['contract_no'] ?? ''),
+            'fin_code' => trim((string) ($mapped['fin_code'] ?? '')) ?: null,
+            'document_no' => trim((string) ($mapped['document_no'] ?? '')) ?: null,
+            'phone' => trim((string) ($mapped['phone'] ?? '')) ?: null,
+            'category' => trim((string) ($mapped['category'] ?? '')) ?: null,
+            'area' => trim((string) ($mapped['area'] ?? '')) ?: null,
+            'address' => trim((string) ($mapped['address'] ?? '')) ?: null,
+            'plan' => trim((string) ($mapped['plan'] ?? '')) ?: null,
+            'status' => trim((string) ($mapped['status'] ?? 'Aktiv')) ?: null,
+            'is_active' => !empty($mapped['is_active']) ? 1 : 0,
+            'payload_json' => app_db_json_encode((array) ($mapped['payload'] ?? [])),
+        ]);
+        $db->rollBack();
+        return 'direct_insert_succeeded';
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return get_class($exception) . ': ' . $exception->getMessage();
+    }
+}
+
 function old_billing_import_packages(PDO $db, string $baseUrl, array &$cookies, bool $apply): array
 {
     $first = old_billing_fetch_packages($baseUrl, $cookies, 0, 500);
@@ -509,20 +1150,8 @@ function old_billing_import_packages(PDO $db, string $baseUrl, array &$cookies, 
     $created = 0;
     $updated = 0;
     $processed = 0;
-
-    $select = $db->prepare('SELECT id FROM billing_tariffs WHERE external_id = :external_id OR (name = :name AND service_type = "pppoe") LIMIT 1');
-    $insert = $db->prepare(
-        'INSERT INTO billing_tariffs (external_id, name, service_type, download_mbps, upload_mbps, monthly_fee, radius_group, status, metadata_json)
-         VALUES (:external_id, :name, "pppoe", :download_mbps, :upload_mbps, :monthly_fee, :radius_group, "active", :metadata_json)
-         ON DUPLICATE KEY UPDATE
-            name = VALUES(name),
-            download_mbps = VALUES(download_mbps),
-            upload_mbps = VALUES(upload_mbps),
-            monthly_fee = VALUES(monthly_fee),
-            radius_group = VALUES(radius_group),
-            status = "active",
-            metadata_json = VALUES(metadata_json)'
-    );
+    $prepared = [];
+    $nameGroups = [];
 
     foreach ($rows as $row) {
         if (!is_array($row)) {
@@ -536,34 +1165,78 @@ function old_billing_import_packages(PDO $db, string $baseUrl, array &$cookies, 
             $name = old_billing_html_text((string) ($row['ad'] ?? ''));
             $name = preg_replace('/^\d+\s*/', '', $name) ?? $name;
         }
-        $rateText = trim((string) ($edit['rate'] ?? old_billing_html_text((string) ($row['rate'] ?? ''))));
-        $priceText = trim((string) ($edit['price'] ?? old_billing_html_text((string) ($row['qiymet'] ?? ''))));
-        $speed = old_billing_first_int($rateText);
-        $price = old_billing_amount_float($priceText);
+        if ($name === '' || $oldId === '') {
+            continue;
+        }
+        $key = mb_strtolower($name, 'UTF-8');
+        $prepared[] = [
+            'old_id' => $oldId,
+            'source_name' => $name,
+            'name_key' => $key,
+            'speed' => old_billing_first_int((string) ($edit['rate'] ?? old_billing_html_text((string) ($row['rate'] ?? '')))),
+            'price' => old_billing_amount_float((string) ($edit['price'] ?? old_billing_html_text((string) ($row['qiymet'] ?? '')))),
+            'row' => $row,
+            'edit' => $edit,
+        ];
+        $nameGroups[$key][] = $oldId;
+    }
+
+    $canonicalIds = [];
+    foreach ($nameGroups as $key => $ids) {
+        usort($ids, static function (string $left, string $right): int {
+            if (ctype_digit($left) && ctype_digit($right)) {
+                return (int) $right <=> (int) $left;
+            }
+            return strnatcasecmp($right, $left);
+        });
+        $canonicalIds[$key] = (string) ($ids[0] ?? '');
+    }
+
+    $select = $db->prepare('SELECT id FROM billing_tariffs WHERE external_id = :external_id OR (name = :name AND service_type = "pppoe") LIMIT 1');
+    $insert = $db->prepare(
+        'INSERT INTO billing_tariffs (external_id, name, service_type, download_mbps, upload_mbps, monthly_fee, radius_group, status, metadata_json)
+         VALUES (:external_id, :name, "pppoe", :download_mbps, :upload_mbps, :monthly_fee, :radius_group, "active", :metadata_json)
+         ON DUPLICATE KEY UPDATE
+            external_id = VALUES(external_id),
+            name = VALUES(name),
+            download_mbps = VALUES(download_mbps),
+            upload_mbps = VALUES(upload_mbps),
+            monthly_fee = VALUES(monthly_fee),
+            radius_group = VALUES(radius_group),
+            status = "active",
+            metadata_json = VALUES(metadata_json)'
+    );
+
+    foreach ($prepared as $package) {
+        $oldId = (string) $package['old_id'];
+        $sourceName = (string) $package['source_name'];
+        $nameKey = (string) $package['name_key'];
+        $isCanonical = hash_equals((string) ($canonicalIds[$nameKey] ?? ''), $oldId);
+        $name = $isCanonical ? $sourceName : $sourceName . ' [legacy ' . $oldId . ']';
         $externalId = 'old-billing-package:' . $oldId;
         $radiusGroup = 'old_' . preg_replace('/[^a-zA-Z0-9_]+/', '_', strtolower($name));
         $radiusGroup = trim($radiusGroup, '_') ?: ('old_package_' . $oldId);
         $metadata = app_db_json_encode([
             'old_billing' => [
                 'id' => $oldId,
-                'row' => $row,
-                'edit_json' => $edit,
+                'source_name' => $sourceName,
+                'duplicate_name' => count($nameGroups[$nameKey] ?? []) > 1,
+                'canonical' => $isCanonical,
+                'row' => $package['row'],
+                'edit_json' => $package['edit'],
                 'imported_at' => date('c'),
             ],
         ]);
 
-        if ($name === '') {
-            continue;
-        }
         if ($apply) {
             $select->execute(['external_id' => $externalId, 'name' => $name]);
             $exists = $select->fetchColumn() !== false;
             $insert->execute([
                 'external_id' => $externalId,
                 'name' => $name,
-                'download_mbps' => $speed,
-                'upload_mbps' => $speed,
-                'monthly_fee' => $price,
+                'download_mbps' => (int) $package['speed'],
+                'upload_mbps' => (int) $package['speed'],
+                'monthly_fee' => (float) $package['price'],
                 'radius_group' => $radiusGroup,
                 'metadata_json' => $metadata,
             ]);
@@ -575,7 +1248,16 @@ function old_billing_import_packages(PDO $db, string $baseUrl, array &$cookies, 
     return ['total' => $total, 'processed' => $processed, 'created' => $created, 'updated' => $updated];
 }
 
-function old_billing_import_payments(PDO $db, string $baseUrl, array &$cookies, bool $apply, int $offset, int $limit, int $batch): array
+function old_billing_import_payments(
+    PDO $db,
+    string $baseUrl,
+    array &$cookies,
+    bool $apply,
+    int $offset,
+    int $limit,
+    int $batch,
+    bool $skipExisting
+): array
 {
     $first = old_billing_fetch_payments($baseUrl, $cookies, $offset, $batch);
     $total = (int) ($first['iTotalRecords'] ?? $first['recordsTotal'] ?? 0);
@@ -587,6 +1269,9 @@ function old_billing_import_payments(PDO $db, string $baseUrl, array &$cookies, 
 
     $accountByCode = $db->prepare('SELECT id FROM portal_accounts WHERE subscriber_code = :code OR login = :code LIMIT 1');
     $paymentExists = $db->prepare('SELECT id FROM billing_payments WHERE external_id = :external_id LIMIT 1');
+    $deleteResolvedReject = $db->prepare(
+        'DELETE FROM legacy_import_rejects WHERE source_type = "payment" AND source_key = :source_key'
+    );
     $upsert = $db->prepare(
         'INSERT INTO billing_payments (external_id, account_id, subscriber_code, amount, payment_method, transaction_id, note, metadata_json, created_at)
          VALUES (:external_id, :account_id, :subscriber_code, :amount, :payment_method, :transaction_id, :note, :metadata_json, :created_at)
@@ -623,6 +1308,16 @@ function old_billing_import_payments(PDO $db, string $baseUrl, array &$cookies, 
 
             if ($subscriberCode === '' || $oldId === '') {
                 $skipped++;
+                if ($apply) {
+                    $reason = $subscriberCode === '' ? 'missing_subscriber_code' : 'missing_payment_id';
+                    old_billing_record_reject(
+                        $db,
+                        'payment',
+                        $oldId !== '' ? ('old-billing-payment:' . $oldId) : '',
+                        $reason,
+                        $row
+                    );
+                }
                 continue;
             }
             $accountByCode->execute(['code' => $subscriberCode]);
@@ -661,11 +1356,27 @@ function old_billing_import_payments(PDO $db, string $baseUrl, array &$cookies, 
             }
             if ($accountId <= 0) {
                 $skipped++;
+                if ($apply) {
+                    old_billing_record_reject(
+                        $db,
+                        'payment',
+                        'old-billing-payment:' . $oldId,
+                        'customer_account_unresolved',
+                        $row
+                    );
+                }
                 continue;
             }
             if ($apply) {
                 $paymentExists->execute(['external_id' => $externalId]);
                 $exists = $paymentExists->fetchColumn() !== false;
+                if ($exists && $skipExisting) {
+                    $updated++;
+                    if ($processed % 1000 === 0) {
+                        old_billing_log('Payments processed ' . $processed . '/' . $target . ' skipped=' . $skipped);
+                    }
+                    continue;
+                }
                 $upsert->execute([
                     'external_id' => $externalId,
                     'account_id' => $accountId,
@@ -684,6 +1395,7 @@ function old_billing_import_payments(PDO $db, string $baseUrl, array &$cookies, 
                     ]),
                     'created_at' => $createdAt,
                 ]);
+                $deleteResolvedReject->execute(['source_key' => $externalId]);
                 $exists ? $updated++ : $created++;
             }
             if ($processed % 1000 === 0) {
@@ -824,16 +1536,28 @@ $paymentLimit = max(0, (int) old_billing_arg('payment-limit', '0'));
 $paymentOffset = max(0, (int) old_billing_arg('payment-offset', '0'));
 $profileLimit = max(0, (int) old_billing_arg('profile-limit', '0'));
 $profileOffset = max(0, (int) old_billing_arg('profile-offset', '0'));
+$subscriber = trim((string) old_billing_arg('subscriber', ''));
 $batch = max(1, min(5000, (int) old_billing_arg('batch', '500')));
 $apply = old_billing_has_flag('apply');
 $syncRadius = !old_billing_has_flag('no-radius-sync');
 $skipUsers = old_billing_has_flag('skip-users');
+$importPools = old_billing_has_flag('import-pools');
 $importPackages = old_billing_has_flag('import-packages');
 $importPayments = old_billing_has_flag('import-payments');
+$skipExistingPayments = old_billing_has_flag('skip-existing-payments');
 $importProfiles = old_billing_has_flag('import-profiles');
+$hydrateServices = old_billing_has_flag('hydrate-services');
 
 if ($email === '' || $password === '') {
-    fwrite(STDERR, "Usage: OLD_BILLING_EMAIL=... OLD_BILLING_PASSWORD=... php tools/import-old-billing.php [--apply] [--limit=100] [--offset=0] [--batch=500] [--import-packages] [--import-payments] [--import-profiles] [--payment-limit=1000] [--profile-limit=1000] [--skip-users]\n");
+    fwrite(STDERR, "Usage: OLD_BILLING_EMAIL=... OLD_BILLING_PASSWORD=... php tools/import-old-billing.php [--apply] [--subscriber=2320025] [--limit=100] [--offset=0] [--batch=500] [--import-pools] [--import-packages] [--hydrate-services] [--import-payments] [--skip-existing-payments] [--import-profiles] [--payment-limit=1000] [--profile-limit=1000] [--skip-users] [--no-radius-sync]\n");
+    exit(2);
+}
+if ($subscriber !== '' && preg_match('/^[A-Za-z0-9._-]{1,64}$/', $subscriber) !== 1) {
+    fwrite(STDERR, "Subscriber filter is invalid.\n");
+    exit(2);
+}
+if ($hydrateServices && $syncRadius) {
+    fwrite(STDERR, "--hydrate-services requires --no-radius-sync so live RADIUS tables are not modified.\n");
     exit(2);
 }
 
@@ -849,19 +1573,48 @@ $updated = 0;
 $failed = 0;
 $processed = 0;
 $preview = [];
+$serviceStats = ['written' => 0, 'ip_written' => 0, 'ip_conflict' => 0, 'fin_conflict' => 0];
+$secretStats = ['written' => 0, 'missing' => 0];
 
 old_billing_log('Logging in to old billing...');
 old_billing_login($baseUrl, $email, $password, $cookies);
+$areaCatalog = [];
+if (!$skipUsers) {
+    if ($apply) {
+        app_legacy_customer_secret_key();
+    }
+    old_billing_log('Fetching old billing area catalog...');
+    $areaCatalog = old_billing_fetch_area_catalog($baseUrl, $cookies);
+    old_billing_log('Area catalog loaded: ' . count($areaCatalog));
+}
+$poolCatalog = ['pools' => [], 'zone_map' => [], 'blacklist_ips' => []];
+if ($importPools || $hydrateServices) {
+    old_billing_log('Fetching old billing pools and zones...');
+    $poolCatalog = old_billing_fetch_pool_catalog($baseUrl, $cookies);
+}
+if ($importPools) {
+    $poolResult = old_billing_import_pools($db, $poolCatalog, $apply);
+    old_billing_log('Pools done: ' . json_encode($poolResult, JSON_UNESCAPED_UNICODE));
+}
+if ($importPackages) {
+    old_billing_log('Importing PPPoE packages before customer services...');
+    $packageResult = old_billing_import_packages($db, $baseUrl, $cookies, $apply);
+    old_billing_log('Packages done: ' . json_encode($packageResult, JSON_UNESCAPED_UNICODE));
+    $importPackages = false;
+}
 old_billing_log('Login OK. Fetching PPPoE users...');
 
 if (!$skipUsers) {
-    $first = old_billing_fetch_users($baseUrl, $cookies, $offset, $batch);
+    $first = old_billing_fetch_users($baseUrl, $cookies, $offset, $subscriber !== '' ? 10 : $batch, $subscriber);
     $total = (int) ($first['recordsTotal'] ?? $first['recordsFiltered'] ?? $first['iTotalRecords'] ?? $first['iTotalDisplayRecords'] ?? count((array) ($first['data'] ?? $first['aaData'] ?? [])));
-    $target = $limit > 0 ? min($limit, max(0, $total - $offset)) : max(0, $total - $offset);
+    $firstRows = is_array($first['data'] ?? null) ? $first['data'] : (is_array($first['aaData'] ?? null) ? $first['aaData'] : []);
+    $target = $subscriber !== ''
+        ? count($firstRows)
+        : ($limit > 0 ? min($limit, max(0, $total - $offset)) : max(0, $total - $offset));
     old_billing_log('Old billing reports ' . $total . ' users. Offset: ' . $offset . '. Target: ' . $target . '. Mode: ' . ($apply ? 'APPLY' : 'DRY-RUN'));
 
     for ($start = $offset; $start < $offset + $target; $start += $batch) {
-        $list = $start === $offset ? $first : old_billing_fetch_users($baseUrl, $cookies, $start, min($batch, $offset + $target - $start));
+        $list = $start === $offset ? $first : old_billing_fetch_users($baseUrl, $cookies, $start, min($batch, $offset + $target - $start), $subscriber);
         $rows = is_array($list['data'] ?? null) ? $list['data'] : (is_array($list['aaData'] ?? null) ? $list['aaData'] : []);
         foreach ($rows as $row) {
             if ($processed >= $target) {
@@ -876,24 +1629,77 @@ if (!$skipUsers) {
                     throw new RuntimeException('Missing old row id.');
                 }
                 $edit = old_billing_fetch_edit($baseUrl, $cookies, $oldId);
-                $mapped = old_billing_map_customer($row, $edit);
+                $mapped = old_billing_map_customer(
+                    $row,
+                    $edit,
+                    (array) ($poolCatalog['zone_map'] ?? []),
+                    $areaCatalog
+                );
+                if ($subscriber !== '' && !hash_equals($subscriber, (string) $mapped['subscriber_code'])) {
+                    continue;
+                }
                 $preview[] = [
                     'subscriber_code' => $mapped['subscriber_code'],
-                    'full_name' => $mapped['full_name'],
                     'username' => $mapped['payload']['billing']['pppoe_username'] ?? '',
-                    'phone' => $mapped['phone'],
+                    'phone_masked' => old_billing_mask_phone((string) ($mapped['phone'] ?? '')),
+                    'area' => (string) ($mapped['area'] ?? ''),
+                    'street_address_present' => trim((string) ($mapped['address'] ?? '')) !== '',
+                    'note_present' => trim((string) ($mapped['payload']['legacy_exact_fields']['note'] ?? '')) !== '',
+                    'asset_hint_count' => array_sum(array_map(
+                        'count',
+                        (array) ($mapped['payload']['legacy_asset_hints'] ?? [])
+                    )),
+                    'ip_present' => trim((string) ($mapped['payload']['billing']['ip_address'] ?? '')) !== '',
+                    'expiry_normalized' => trim((string) ($mapped['payload']['billing']['expires_at'] ?? '')) !== '',
                     'status' => $mapped['status'],
                 ];
                 if ($apply) {
                     $existing = app_db_account_by_subscriber_code((string) $mapped['subscriber_code']) ?? app_db_account_by_login((string) $mapped['login']);
+                    if (is_array($existing)) {
+                        $existingPayload = app_db_account_payload($existing);
+                        $mapped['payload'] = array_replace_recursive(
+                            is_array($existingPayload) ? $existingPayload : [],
+                            (array) ($mapped['payload'] ?? [])
+                        );
+                    }
                     $radiusPassword = (string) ($mapped['radius_password'] ?? '');
                     unset($mapped['radius_password']);
+                    if ($existing === null && trim((string) ($mapped['password'] ?? '')) === '') {
+                        $mapped['password'] = bin2hex(random_bytes(24)) . 'Aa1!';
+                    }
                     $saved = app_db_upsert_account($mapped, false);
+                    if ($saved === null && trim((string) ($mapped['fin_code'] ?? '')) !== '') {
+                        $mapped['fin_code'] = '';
+                        $saved = app_db_upsert_account($mapped, false);
+                        if ($saved !== null) {
+                            $serviceStats['fin_conflict']++;
+                        }
+                    }
                     if ($saved === null) {
+                        if ((string) getenv('OLD_BILLING_DEBUG_SAVE') === '1') {
+                            old_billing_log('Account save probe: ' . old_billing_probe_account_failure($db, $mapped));
+                        }
                         throw new RuntimeException('Local account save failed.');
+                    }
+                    if ($radiusPassword !== '') {
+                        app_legacy_customer_secret_store(
+                            $db,
+                            (int) ($saved['id'] ?? 0),
+                            'pppoe_password',
+                            $radiusPassword
+                        );
+                        $secretStats['written']++;
+                    } else {
+                        $secretStats['missing']++;
                     }
                     if ($syncRadius && !app_billing_sync_radius_account($saved, $radiusPassword !== '' ? $radiusPassword : null)) {
                         throw new RuntimeException('Radius sync failed.');
+                    }
+                    if ($hydrateServices) {
+                        $snapshot = old_billing_upsert_service_snapshot($db, $saved, $mapped);
+                        foreach ($serviceStats as $key => $value) {
+                            $serviceStats[$key] = $value + (int) ($snapshot[$key] ?? 0);
+                        }
                     }
                     $existing === null ? $created++ : $updated++;
                 }
@@ -909,7 +1715,18 @@ if (!$skipUsers) {
     }
 
     $preview = array_slice($preview, 0, 5);
-    old_billing_log('Users done. processed=' . $processed . ' created=' . $created . ' updated=' . $updated . ' failed=' . $failed);
+    old_billing_log(
+        'Users done. processed=' . $processed
+        . ' created=' . $created
+        . ' updated=' . $updated
+        . ' failed=' . $failed
+        . ' services=' . $serviceStats['written']
+        . ' ips=' . $serviceStats['ip_written']
+        . ' ip_conflicts=' . $serviceStats['ip_conflict']
+        . ' fin_conflicts=' . $serviceStats['fin_conflict']
+        . ' encrypted_secrets=' . $secretStats['written']
+        . ' missing_secrets=' . $secretStats['missing']
+    );
     if (!$apply) {
         old_billing_log('Dry-run preview:');
         fwrite(STDOUT, json_encode($preview, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL);
@@ -925,7 +1742,16 @@ if ($importPackages) {
 
 if ($importPayments) {
     old_billing_log('Importing payments...');
-    $paymentResult = old_billing_import_payments($db, $baseUrl, $cookies, $apply, $paymentOffset, $paymentLimit, $batch);
+    $paymentResult = old_billing_import_payments(
+        $db,
+        $baseUrl,
+        $cookies,
+        $apply,
+        $paymentOffset,
+        $paymentLimit,
+        $batch,
+        $skipExistingPayments
+    );
     old_billing_log('Payments done: ' . json_encode($paymentResult, JSON_UNESCAPED_UNICODE));
     if ($apply) {
         old_billing_log('Refreshing customer payment summaries...');

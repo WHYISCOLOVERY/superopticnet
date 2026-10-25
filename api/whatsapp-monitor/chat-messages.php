@@ -5,6 +5,10 @@ require dirname(__DIR__, 2) . '/whatsapp-monitor-lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
 $user = billing_require_employee(false, 'whatsapp_monitor');
+// Read-only poller: release the session lock so polling cannot block page navigation.
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
 $db = app_db();
 if (!$db instanceof PDO) {
     http_response_code(500);

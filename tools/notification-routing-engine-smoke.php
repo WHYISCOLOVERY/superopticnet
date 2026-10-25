@@ -65,7 +65,7 @@ try {
         'human_problem' => 'This is network-only and must not go to customer request group.',
         'recommendation' => 'NOC yoxlasin.',
         'telegram_bot_key' => 'customer',
-    ], true, true);
+    ], true, true, app_noc_system_actor('olt-rule-worker'), $db);
     if (empty($wrongBotAlarm['ok'])) {
         $failures[] = 'wrong_bot_alarm_not_recorded';
     }

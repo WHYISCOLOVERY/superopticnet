@@ -1218,6 +1218,7 @@ button {
 
 .coverage-map {
     position: relative;
+    overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 28px;
     padding: 14px;
@@ -1262,6 +1263,11 @@ button {
 .coverage-point:hover span,
 .coverage-point:focus-visible span {
     opacity: 1;
+}
+
+.coverage-point-flip span {
+    left: auto;
+    right: calc(100% + 8px);
 }
 
 .coverage-note,

@@ -66,18 +66,46 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $endIp = clean_text((string) ($_POST['end_ip'] ?? ''));
         $startNum = app_ip_to_num($startIp);
         $endNum = app_ip_to_num($endIp);
-        if ($name === '' || !in_array($type, ['local', 'nat_public', 'static_public'], true) || $startNum === null || $endNum === null || $endNum < $startNum) {
+        if ($name === '' || !in_array($type, ['local', 'nat_public', 'static_public'], true)
+            || !in_array($serviceType, ['pppoe', 'ipoe'], true)
+            || $startNum === null || $endNum === null || $endNum < $startNum) {
             $flash = ['type' => 'error', 'message' => 'Pool adi, tipi ve IP araligi duzgun olmalidir.'];
         } else {
-            $statement = $db->prepare(
+            $db->beginTransaction();
+            try {
+                $billingPool = $db->prepare(
+                    'INSERT INTO billing_ip_pools
+                        (name, service_type, pool_type, range_start, range_end, gateway, netmask, status)
+                     VALUES
+                        (:name, :service_type, :pool_type, :range_start, :range_end, :gateway, :netmask, "active")
+                     ON DUPLICATE KEY UPDATE
+                        service_type=VALUES(service_type), pool_type=VALUES(pool_type),
+                        range_start=VALUES(range_start), range_end=VALUES(range_end), gateway=VALUES(gateway),
+                        netmask=VALUES(netmask), status="active"'
+                );
+                $billingPool->execute([
+                    'name' => $name,
+                    'service_type' => $serviceType,
+                    'pool_type' => $type === 'static_public' ? 'static' : 'dynamic',
+                    'range_start' => $startIp,
+                    'range_end' => $endIp,
+                    'gateway' => clean_text((string) ($_POST['gateway'] ?? '')),
+                    'netmask' => clean_text((string) ($_POST['netmask'] ?? '')),
+                ]);
+                $billingPoolLookup = $db->prepare('SELECT id FROM billing_ip_pools WHERE name=:name LIMIT 1');
+                $billingPoolLookup->execute(['name' => $name]);
+                $billingPoolId = (int) ($billingPoolLookup->fetchColumn() ?: 0);
+
+                $statement = $db->prepare(
                 'INSERT INTO ip_pools (
-                    name, type, service_type, start_ip, end_ip, start_ip_num, end_ip_num,
+                    legacy_billing_pool_id, name, type, service_type, start_ip, end_ip, start_ip_num, end_ip_num,
                     gateway, netmask, zone_name, branch_name, status, metadata_json
                  ) VALUES (
-                    :name, :type, :service_type, :start_ip, :end_ip, :start_ip_num, :end_ip_num,
+                    :legacy_billing_pool_id, :name, :type, :service_type, :start_ip, :end_ip, :start_ip_num, :end_ip_num,
                     :gateway, :netmask, :zone_name, :branch_name, "active", :metadata_json
                  )
                  ON DUPLICATE KEY UPDATE
+                    legacy_billing_pool_id = VALUES(legacy_billing_pool_id),
                     type = VALUES(type),
                     service_type = VALUES(service_type),
                     start_ip = VALUES(start_ip),
@@ -92,9 +120,10 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     metadata_json = VALUES(metadata_json)'
             );
             $statement->execute([
+                'legacy_billing_pool_id' => $billingPoolId > 0 ? $billingPoolId : null,
                 'name' => $name,
                 'type' => $type,
-                'service_type' => in_array($serviceType, ['pppoe', 'ipoe', 'both'], true) ? $serviceType : 'pppoe',
+                'service_type' => $serviceType,
                 'start_ip' => $startIp,
                 'end_ip' => $endIp,
                 'start_ip_num' => $startNum,
@@ -111,8 +140,15 @@ if ($db instanceof PDO && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $poolLookup->execute(['name' => $name]);
                 $poolId = (int) ($poolLookup->fetchColumn() ?: 0);
             }
+            $db->commit();
             $generated = $poolId > 0 ? app_ip_ensure_pool_addresses($db, $poolId) : 0;
             $flash = ['type' => 'success', 'message' => 'IP pool saxlandi. Kicik araliq ucun yaradilan IP: ' . $generated];
+            } catch (Throwable $exception) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                $flash = ['type' => 'error', 'message' => 'IP pool saxlanmadi; RADIUS ve IP kataloqu birlikde geri qaytarildi.'];
+            }
         }
     } elseif ($action === 'generate_addresses') {
         $poolId = (int) ($_POST['pool_id'] ?? 0);
@@ -222,7 +258,7 @@ foreach ($pools as $pool) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IP Pool idarÉ™etmÉ™si</title>
+    <title>IP Pool idarəetməsi</title>
     <link rel="stylesheet" href="css/fontawesome-lite.css">
     <link rel="stylesheet" href="<?= e(app_asset('css/portal.css')); ?>">
     <style>
@@ -239,7 +275,7 @@ foreach ($pools as $pool) {
     </style>
 </head>
 <body class="portal-body">
-    <?php billing_render_header('IP Pool idarÉ™etmÉ™si', 'ip-pools', $lang); ?>
+    <?php billing_render_header('IP Pool idarəetməsi', 'ip-pools', $lang); ?>
 
     <main class="portal-layout">
         <?php if ($flash !== null): ?>
@@ -252,8 +288,8 @@ foreach ($pools as $pool) {
         <section class="mgs-command-hero portal-reveal">
             <div>
                 <span class="portal-kicker">RADIUS IP engine</span>
-                <h1>Local, NAT public vÉ™ Static IP pool idarÉ™etmÉ™si</h1>
-                <p>Bu sÉ™hifÉ™ mÃ¼ÅŸtÉ™ri IP-lÉ™rini billingdÉ™n idarÉ™ etmÉ™k, boÅŸ/reserved/blacklist IP-lÉ™ri gÃ¶rmÉ™k vÉ™ RADIUS cavablarÄ±na hazÄ±r saxlamaq Ã¼Ã§Ã¼ndÃ¼r.</p>
+                <h1>Local, NAT public və Static IP pool idarəetməsi</h1>
+                <p>Bu səhifə müştəri IP-lərini billingdən idarə etmək, boş/reserved/blacklist IP-ləri görmək və RADIUS cavablarına hazır saxlamaq üçündür.</p>
                 <div class="mgs-command-actions">
                     <a class="portal-primary-btn portal-inline-link" href="#create-pool">Pool yarat</a>
                     <a class="portal-ghost-btn portal-inline-link" href="radius-billing.php<?= $lang !== 'az' ? '?lang=' . rawurlencode($lang) : ''; ?>#pools">Legacy poollar</a>
@@ -280,7 +316,7 @@ foreach ($pools as $pool) {
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card" id="create-pool">
-                <div class="portal-card-head"><h2>Yeni IP pool</h2><small>Local, NAT public vÉ™ Static public pool yarat.</small></div>
+                <div class="portal-card-head"><h2>Yeni IP pool</h2><small>Local, NAT public və Static public pool yarat.</small></div>
                 <form class="portal-stacked-form" method="post">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <input type="hidden" name="action" value="create_pool">
@@ -296,7 +332,6 @@ foreach ($pools as $pool) {
                         <select name="service_type">
                             <option value="pppoe">PPPoE</option>
                             <option value="ipoe">IPoE</option>
-                            <option value="both">PPPoE + IPoE</option>
                         </select>
                         <input type="text" name="zone_name" placeholder="Zona">
                     </div>
@@ -316,7 +351,7 @@ foreach ($pools as $pool) {
             </article>
 
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Manual IP statusu</h2><small>Reserved/blacklist/free statusunu operativ dÉ™yiÅŸ.</small></div>
+                <div class="portal-card-head"><h2>Manual IP statusu</h2><small>Reserved/blacklist/free statusunu operativ dəyiş.</small></div>
                 <form class="portal-stacked-form" method="post">
                     <input type="hidden" name="csrf_token" value="<?= e(app_csrf_token()); ?>">
                     <input type="hidden" name="action" value="mark_ip">
@@ -440,7 +475,7 @@ foreach ($pools as $pool) {
 
         <section class="portal-grid portal-grid-2 portal-reveal">
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Bos IP-lÉ™r</h2><small>Dropdown-lar ucun ilk 50 bos IP.</small></div>
+                <div class="portal-card-head"><h2>Bos IP-lər</h2><small>Dropdown-lar ucun ilk 50 bos IP.</small></div>
                 <?php if ($available === []): ?>
                     <?php billing_render_empty_state('Bos IP siyahisi yoxdur', 'Pool IP setirlerini yarat ve ya araliq cox boyukdurse manual secim et.', 'fa-network-wired'); ?>
                 <?php else: ?>
@@ -463,7 +498,7 @@ foreach ($pools as $pool) {
             </article>
 
             <article class="portal-card">
-                <div class="portal-card-head"><h2>Aktiv assignment</h2><small>MÃ¼ÅŸtÉ™riyÉ™ baÄŸlÄ± cari IP-lÉ™r.</small></div>
+                <div class="portal-card-head"><h2>Aktiv assignment</h2><small>Müştəriyə bağlı cari IP-lər.</small></div>
                 <?php if ($assignments === []): ?>
                     <?php billing_render_empty_state('Assignment yoxdur', 'RADIUS sync veya profil IP deyisikliyi etdikde burada gorunecek.', 'fa-plug-circle-xmark'); ?>
                 <?php else: ?>
@@ -489,5 +524,6 @@ foreach ($pools as $pool) {
     </main>
 
     <script src="<?= e(app_asset('script/portal.js')); ?>"></script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>

@@ -25,7 +25,8 @@ $status = $databaseOk ? 'ok' : 'degraded';
 http_response_code($databaseOk ? 200 : 503);
 
 $clientIp = app_client_ip();
-$detailAllowed = in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
+$detailEnabled = in_array(strtolower(trim((string) app_setting('health_detail_enabled', '0'))), ['1', 'true', 'yes', 'on'], true);
+$detailAllowed = $detailEnabled && in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
     || str_starts_with($clientIp, '10.')
     || str_starts_with($clientIp, '172.16.')
     || str_starts_with($clientIp, '172.17.')
@@ -48,7 +49,7 @@ $detailAllowed = in_array($clientIp, ['127.0.0.1', '::1', 'localhost'], true)
 $payload = [
     'success' => $databaseOk,
     'status' => $status,
-    'service' => 'superoptic-mgs',
+    'service' => 'superoptic-portal',
     'time' => date(DATE_ATOM),
 ];
 

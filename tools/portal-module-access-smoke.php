@@ -12,7 +12,7 @@ $expect = static function (bool $condition, string $message) use (&$errors): voi
     }
 };
 
-$expectedModules = ['finance', 'hr', 'inventory', 'billing', 'ai', 'messaging', 'whatsapp_monitor', 'statistics', 'network'];
+$expectedModules = ['finance', 'hr', 'inventory', 'billing', 'crm', 'ai', 'messaging', 'whatsapp_monitor', 'statistics', 'network'];
 $catalog = function_exists('app_portal_module_catalog') ? app_portal_module_catalog('az') : [];
 $expect(array_keys($catalog) === $expectedModules, 'module_catalog_mismatch');
 
@@ -21,13 +21,13 @@ $roleMatrix = [
     'finance' => ['finance', 'billing', 'statistics'],
     'warehouse' => ['inventory'],
     'hr' => ['hr', 'statistics'],
-    'operator' => ['billing', 'messaging', 'whatsapp_monitor', 'statistics'],
-    'night_operator' => ['billing', 'messaging', 'whatsapp_monitor', 'statistics'],
-    'support' => ['billing', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
+    'operator' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
+    'night_operator' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
+    'support' => ['billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
     'technician' => ['inventory', 'network', 'whatsapp_monitor'],
     'engineer' => ['inventory', 'network', 'whatsapp_monitor'],
-    'noc' => ['messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
-    'sales' => ['finance', 'billing', 'messaging', 'whatsapp_monitor', 'statistics'],
+    'noc' => ['crm', 'messaging', 'whatsapp_monitor', 'statistics', 'network', 'ai'],
+    'sales' => ['finance', 'billing', 'crm', 'messaging', 'whatsapp_monitor', 'statistics'],
     '' => [],
 ];
 
@@ -57,6 +57,8 @@ $requestCases = [
     [['operations-center.php', ['section' => 'hr']], 'hr'],
     [['operations-center.php', ['section' => 'inventory']], 'inventory'],
     [['billing-dashboard.php', []], 'billing'],
+    [['crm.php', []], 'crm'],
+    [['problem-statistics.php', []], 'crm'],
     [['message-center.php', []], 'messaging'],
     [['whatsapp-monitor.php', []], 'whatsapp_monitor'],
     [['billing-statistics.php', []], 'billing'],
@@ -139,7 +141,7 @@ $expect(str_contains($adminSource, '<option value="hr"'), 'hr_employee_role_opti
 
 $operationsSource = (string) file_get_contents(__DIR__ . '/../operations-center.php');
 foreach ([
-    "'finance' => 'Maliyye'",
+    "'finance' => 'Maliyyə'",
     "'hr' => 'HR'",
     "'inventory' => 'Anbar'",
     "'noc' => 'Sebeke'",

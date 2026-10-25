@@ -53,3 +53,7 @@ Track the path from the current working PHP/MySQL platform to the full AI-powere
 ## Current Rule
 
 Move incrementally. Protect working functionality. Test before release. Do not cut over production DNS, RADIUS or router integration until evidence and rollback are ready.
+
+## Active initiative: retire the separate Node "SuperOptic MGS" app
+
+There is a second, fully separate Node.js program (`D:\xampp\htdocs\oltidareetme`) with its own MySQL database (`olt_control_center`) holding real network telemetry, alarms and tickets. It auto-started alongside superopticnet and bridged users out via SSO. The direction is to consolidate everything into superopticnet (one system, module by module) instead of running two programs side by side. See `docs/39_MGS_NODE_CONSOLIDATION.md` for the gap analysis and phased plan. Phase 0 (stop local auto-start) is done; Phase 1 (native telemetry/alarm tables) is next.

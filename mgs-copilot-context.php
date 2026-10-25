@@ -54,7 +54,7 @@ if (!$db instanceof PDO) {
 }
 
 if ($wantsJson) {
-    $context = app_mgs_copilot_context($db);
+    $context = app_mgs_copilot_context($db, $user);
     $context['requested_by'] = [
         'account_id' => (int) ($user['id'] ?? 0),
         'role' => (string) ($user['role'] ?? ''),
@@ -67,7 +67,7 @@ if ($wantsJson) {
     exit;
 }
 
-$summary = app_mgs_summary($db, false);
+$summary = app_mgs_summary($db, false, $user);
 $bridge = app_mgs_bridge_status();
 $managementPathReady = app_mgs_management_path_ready();
 $context = [

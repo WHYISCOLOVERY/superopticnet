@@ -17,9 +17,9 @@ $rangeOptions = [
 ?>
 <section class="statistics-center portal-reveal" data-statistics-module>
     <header class="statistics-head">
-        <span class="portal-kicker">Statistika</span>
-        <h1>Statistika mərkəzi</h1>
-        <p>Göstərici və tarix dəyişən kimi nəticələr avtomatik yenilənir.</p>
+        <span class="portal-kicker">Şirkət statistikası</span>
+        <h1>Bütün şöbələrin ümumi analitikası</h1>
+        <p>Maliyyə, müştəri, mesaj, HR və şəbəkə göstəriciləri seçilən tarix üzrə avtomatik yenilənir.</p>
     </header>
     <form class="statistics-filters" method="get" action="statistics-center.php" data-statistics-filter>
         <div class="statistics-field">

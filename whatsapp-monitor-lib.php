@@ -3,8 +3,53 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/billing-ui.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
+require_once __DIR__ . '/workspace-lib.php';
+
+function whatsapp_monitor_schema_ready(PDO $db): bool
+{
+    $tables = [
+        'whatsapp_employee_numbers',
+        'whatsapp_monitor_devices',
+        'whatsapp_monitor_cases',
+        'whatsapp_monitor_screenshots',
+        'whatsapp_monitor_pairings',
+        'whatsapp_monitor_messages',
+        'whatsapp_monitor_settings',
+        'whatsapp_monitor_events',
+        'whatsapp_monitor_audit_logs',
+    ];
+    $placeholders = implode(',', array_fill(0, count($tables), '?'));
+    $statement = $db->prepare(
+        'SELECT COUNT(*)
+           FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME IN (' . $placeholders . ')'
+    );
+    $statement->execute($tables);
+    if ((int) $statement->fetchColumn() !== count($tables)) {
+        return false;
+    }
+
+    foreach (['qr_status', 'qr_session_key', 'qr_last_requested_at', 'qr_connected_at', 'qr_last_seen_at', 'qr_last_error'] as $column) {
+        if (!app_db_column_exists($db, 'whatsapp_employee_numbers', $column)) {
+            return false;
+        }
+    }
+    return app_db_index_exists($db, 'whatsapp_employee_numbers', 'idx_whatsapp_numbers_qr_status');
+}
 
 function whatsapp_monitor_ensure_schema(PDO $db): void
+{
+    if (!whatsapp_monitor_schema_ready($db)) {
+        throw new RuntimeException('whatsapp_monitor_schema_not_migrated');
+    }
+}
+
+/**
+ * Legacy installer retained for explicit maintenance only. HTTP entrypoints use
+ * whatsapp_monitor_ensure_schema(), which is read-only.
+ */
+function whatsapp_monitor_install_schema_legacy(PDO $db): void
 {
     $db->exec(
         "CREATE TABLE IF NOT EXISTS whatsapp_employee_numbers (
@@ -249,6 +294,8 @@ function whatsapp_monitor_seed_settings(PDO $db): void
         'require_reason_for_screenshot' => ['1', 'bool', 'Screenshot ucun sebeb mecburidir'],
         'pairing_qr_ttl_seconds' => ['600', 'int', 'QR baglanti sessiyasinin aktiv qalma muddeti'],
         'worker_api_token' => ['', 'string', 'WhatsApp worker API token'],
+        'heartbeat_stale_minutes' => ['10', 'int', 'Heartbeat bu qeder kohnedirse status online sayilmir'],
+        'sync_stale_minutes' => ['30', 'int', 'Sinxronizasiya bu qeder gecikirse status offline sayilir'],
     ];
     $statement = $db->prepare(
         'INSERT IGNORE INTO whatsapp_monitor_settings (setting_key, setting_value, value_type, description)
@@ -264,8 +311,48 @@ function whatsapp_monitor_seed_settings(PDO $db): void
     }
 }
 
-function whatsapp_monitor_tabs(): array
+function whatsapp_monitor_stage4_enabled(PDO $db, array $actor = []): bool
 {
+    if (!function_exists('app_feature_flag_enabled')) {
+        return false;
+    }
+    try {
+        return app_feature_flag_enabled($db, 'stage4_message_center', $actor, false);
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+/**
+ * Resolve the default WhatsApp monitor view.
+ *
+ * Audit section 7.1: under Stage 4 the primary view for a normal user is the
+ * Live Monitor (canonical number status cards), not the KPI overview.
+ */
+function whatsapp_monitor_default_view(PDO $db, array $actor = []): string
+{
+    return whatsapp_monitor_stage4_enabled($db, $actor) ? 'live-monitor' : 'overview';
+}
+
+function whatsapp_monitor_tabs(?PDO $db = null, array $actor = []): array
+{
+    $stage4 = $db instanceof PDO && whatsapp_monitor_stage4_enabled($db, $actor);
+    if ($stage4) {
+        // Audit 7.1: Live Monitor is the primary view; the video screen wall
+        // stays reachable by direct URL but leaves the menu.
+        return [
+            'live-monitor' => 'Canli Monitor',
+            'chats' => 'Catlar',
+            'cases' => 'Cavabsiz mesajlar',
+            'numbers' => 'Isci nomreleri',
+            'pairing' => 'QR baglantisi',
+            'devices' => 'Cihazlar',
+            'performance' => 'Performans',
+            'settings' => 'Qaydalar',
+            'audit' => 'Audit log',
+        ];
+    }
+
     return [
         'overview' => 'Umumi baxis',
         'screen-wall' => 'Canli monitor',
@@ -277,6 +364,20 @@ function whatsapp_monitor_tabs(): array
         'performance' => 'Performans',
         'settings' => 'Qaydalar',
         'audit' => 'Audit log',
+    ];
+}
+
+/**
+ * All view keys that are reachable by direct URL (aliases), even if the flag
+ * removes them from the menu. Used to validate the requested `view` param.
+ *
+ * @return list<string>
+ */
+function whatsapp_monitor_all_view_keys(): array
+{
+    return [
+        'overview', 'live-monitor', 'screen-wall', 'numbers', 'pairing',
+        'devices', 'chats', 'cases', 'performance', 'settings', 'audit',
     ];
 }
 
@@ -765,12 +866,145 @@ function whatsapp_monitor_worker_ingest_message(PDO $db, array $payload): array
     return ['ok' => true, 'id' => (int) $db->lastInsertId(), 'direction' => $direction];
 }
 
-function whatsapp_monitor_chat_rows(PDO $db, array $actor): array
+/**
+ * Canonical per-number status contract (audit section 7.3).
+ *
+ * The frontend never derives status itself: this function is the single
+ * source of `online|sync_delayed|offline|disabled` plus a human reason.
+ * Stale thresholds come from whatsapp_monitor_settings.
+ */
+function whatsapp_monitor_number_status(array $number, array $settings, ?DateTimeImmutable $now = null): array
+{
+    $now = $now ?? new DateTimeImmutable('now');
+    $heartbeatStale = max(1, (int) whatsapp_monitor_setting_value($settings, 'heartbeat_stale_minutes', '10'));
+    $syncStale = max($heartbeatStale, (int) whatsapp_monitor_setting_value($settings, 'sync_stale_minutes', '30'));
+
+    $lastSyncAt = trim((string) ($number['qr_last_seen_at'] ?? ''));
+    $lastActivityAt = trim((string) ($number['last_message_at'] ?? ''));
+    $qrStatus = trim((string) ($number['qr_status'] ?? 'not_connected'));
+    $numberStatus = trim((string) ($number['number_status'] ?? $number['status'] ?? 'active'));
+    $lastError = trim((string) ($number['qr_last_error'] ?? ''));
+
+    $payload = static function (string $status, string $reason) use ($lastSyncAt, $lastActivityAt, $number): array {
+        return [
+            'status' => $status,
+            'status_reason' => $reason,
+            'last_activity_at' => $lastActivityAt !== '' ? $lastActivityAt : null,
+            'last_sync_at' => $lastSyncAt !== '' ? $lastSyncAt : null,
+            'unread_count' => max(0, (int) ($number['unread_count'] ?? $number['unanswered_chats'] ?? 0)),
+        ];
+    };
+
+    if ($numberStatus !== 'active') {
+        return $payload('disabled', 'Nomre deaktiv edilib');
+    }
+    if (in_array($qrStatus, ['not_connected', 'revoked', ''], true)) {
+        return $payload('disabled', 'QR sessiyasi qosulmayib');
+    }
+    if (in_array($qrStatus, ['requested', 'qr_requested', 'qr_ready', 'scanned'], true)) {
+        return $payload('sync_delayed', 'QR baglantisi gozlenilir');
+    }
+    if (in_array($qrStatus, ['expired', 'failed'], true)) {
+        return $payload('offline', $lastError !== '' ? 'Sessiya xetasi: ' . $lastError : 'Sessiya bitib ve ya xeta var');
+    }
+
+    if ($lastSyncAt === '') {
+        return $payload('sync_delayed', 'Heartbeat hele alinmayib');
+    }
+    try {
+        $syncTime = new DateTimeImmutable($lastSyncAt);
+    } catch (Throwable) {
+        return $payload('sync_delayed', 'Heartbeat vaxti oxuna bilmedi');
+    }
+    $ageMinutes = max(0, (int) floor(($now->getTimestamp() - $syncTime->getTimestamp()) / 60));
+    if ($ageMinutes <= $heartbeatStale) {
+        return $payload('online', 'Sessiya aktivdir');
+    }
+    if ($ageMinutes <= $syncStale) {
+        return $payload('sync_delayed', 'Sinxronizasiya gecikir (' . $ageMinutes . ' deq)');
+    }
+    return $payload('offline', 'Heartbeat kesilib (' . $ageMinutes . ' deq)');
+}
+
+/**
+ * Number cards with the canonical status payload for the live monitor.
+ *
+ * @return list<array<string,mixed>>
+ */
+function whatsapp_monitor_number_status_cards(PDO $db, array $actor, bool $withChats = true): array
+{
+    $settings = whatsapp_monitor_settings($db);
+    $groups = whatsapp_monitor_chat_number_groups($db, $actor);
+
+    $unanswered = [];
+    $unansweredRows = $db->query(
+        'SELECT t.number_id, COUNT(*) AS unanswered_chats
+           FROM (
+                SELECT m.number_id, m.chat_id,
+                       SUBSTRING_INDEX(GROUP_CONCAT(m.direction ORDER BY m.occurred_at DESC, m.id DESC), ",", 1) AS last_direction
+                  FROM whatsapp_monitor_messages m
+                 GROUP BY m.number_id, m.chat_id
+           ) t
+          WHERE t.last_direction = "inbound"
+          GROUP BY t.number_id'
+    )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($unansweredRows as $row) {
+        $unanswered[(int) $row['number_id']] = (int) $row['unanswered_chats'];
+    }
+
+    $cards = [];
+    foreach ($groups as $group) {
+        $numberId = (int) ($group['number_id'] ?? 0);
+        $group['unanswered_chats'] = $unanswered[$numberId] ?? 0;
+        $cards[] = [
+            'number_id' => $numberId,
+            'company_number' => (string) ($group['company_number'] ?? ''),
+            'employee_name' => (string) ($group['employee_name'] ?? ''),
+            'chat_count' => (int) ($group['chat_count'] ?? 0),
+            'message_count' => (int) ($group['message_count'] ?? 0),
+            'recent_chats' => ($withChats && $numberId > 0)
+                ? array_slice(whatsapp_monitor_chat_rows($db, $actor, $numberId), 0, 6)
+                : [],
+        ] + whatsapp_monitor_number_status($group, $settings);
+    }
+    return $cards;
+}
+
+function whatsapp_monitor_chat_number_groups(PDO $db, array $actor): array
+{
+    $where = ['n.status = "active"'];
+    $params = [];
+    if (!whatsapp_monitor_can_view_all($actor)) {
+        $where[] = 'n.employee_id = :employee_id';
+        $params['employee_id'] = (int) ($actor['id'] ?? 0);
+    }
+
+    $statement = $db->prepare(
+        'SELECT n.id AS number_id, n.phone_number AS company_number, n.normalized_phone,
+                n.qr_status, n.qr_last_seen_at, n.qr_last_error, n.status AS number_status, e.full_name AS employee_name,
+                COUNT(DISTINCT m.chat_id) AS chat_count, COUNT(m.id) AS message_count,
+                MAX(m.occurred_at) AS last_message_at
+         FROM whatsapp_employee_numbers n
+         LEFT JOIN portal_accounts e ON e.id = n.employee_id
+         LEFT JOIN whatsapp_monitor_messages m ON m.number_id = n.id
+         WHERE ' . implode(' AND ', $where) . '
+         GROUP BY n.id, n.phone_number, n.normalized_phone, n.qr_status, n.qr_last_seen_at, n.qr_last_error, n.status, e.full_name
+         ORDER BY (COUNT(DISTINCT m.chat_id) > 0) DESC, MAX(m.occurred_at) DESC, e.full_name ASC, n.id ASC'
+    );
+    $statement->execute($params);
+    return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function whatsapp_monitor_chat_rows(PDO $db, array $actor, int $numberId = 0): array
 {
     $where = '1=1';
     $params = [];
+    if ($numberId > 0) {
+        $where .= ' AND m.number_id = :number_id';
+        $params['number_id'] = $numberId;
+    }
     if (!whatsapp_monitor_can_view_all($actor)) {
-        $where = 'm.employee_id = :employee_id';
+        $where .= ' AND m.employee_id = :employee_id';
         $params['employee_id'] = (int) ($actor['id'] ?? 0);
     }
     $statement = $db->prepare(
@@ -1218,14 +1452,14 @@ function whatsapp_monitor_create_ticket(PDO $db, int $caseId, array $actor): arr
         return ['ok' => false, 'error' => 'customer_required'];
     }
     $subject = match ((string) ($case['case_type'] ?? 'unknown')) {
-        'technical' => 'Texniki destek',
+        'technical' => 'Texniki dəstək',
         'payment' => 'Odenis meselesi',
         'sales' => 'Satis muracieti',
         'complaint' => 'Sikayet',
-        default => 'Texniki destek',
+        default => 'Texniki dəstək',
     };
     if (!in_array($subject, app_portal_ticket_subjects(), true)) {
-        $subject = app_portal_ticket_subjects()[0] ?? 'Texniki destek';
+        $subject = 'Texniki dəstək';
     }
     $ticketNo = app_next_ticket_id();
     $ticket = [
@@ -1321,9 +1555,16 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
 {
     whatsapp_monitor_ensure_schema($db);
     $settings = whatsapp_monitor_settings($db);
-    $chatRows = $view === 'chats' ? whatsapp_monitor_chat_rows($db, $actor) : [];
+    $chatNumberGroups = $view === 'chats' ? whatsapp_monitor_chat_number_groups($db, $actor) : [];
     $selectedChatId = clean_text((string) ($_GET['chat_id'] ?? ''));
     $selectedNumberId = max(0, (int) ($_GET['number_id'] ?? 0));
+    $allowedNumberIds = array_map(static fn (array $row): int => (int) ($row['number_id'] ?? 0), $chatNumberGroups);
+    if ($selectedNumberId <= 0 || !in_array($selectedNumberId, $allowedNumberIds, true)) {
+        $selectedNumberId = (int) ($chatNumberGroups[0]['number_id'] ?? 0);
+    }
+    $chatRows = $view === 'chats' && $selectedNumberId > 0
+        ? whatsapp_monitor_chat_rows($db, $actor, $selectedNumberId)
+        : [];
     $chatSelectionExplicit = $selectedChatId !== '' && $selectedNumberId > 0;
     $selectedChat = null;
     foreach ($chatRows as $chatRow) {
@@ -1338,9 +1579,20 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
         $selectedChatId = (string) ($selectedChat['chat_id'] ?? '');
         $selectedNumberId = (int) ($selectedChat['number_id'] ?? 0);
     }
+    $menuTabs = whatsapp_monitor_tabs($db, $actor);
+    if (!whatsapp_monitor_stage4_enabled($db, $actor)
+        && function_exists('app_stage3_workspaces_enabled')
+        && app_stage3_workspaces_enabled($db, $actor)) {
+        // Stage 3: screen-wall stays reachable by direct URL but leaves the menu.
+        unset($menuTabs['screen-wall']);
+    }
     return [
         'view' => $view,
-        'tabs' => whatsapp_monitor_tabs(),
+        'tabs' => $menuTabs,
+        'stage4' => whatsapp_monitor_stage4_enabled($db, $actor),
+        'number_status_cards' => in_array($view, ['live-monitor', 'overview'], true)
+            ? whatsapp_monitor_number_status_cards($db, $actor)
+            : [],
         'lang' => $lang,
         'settings' => $settings,
         'can_manage' => whatsapp_monitor_can_manage($actor),
@@ -1350,6 +1602,7 @@ function whatsapp_monitor_context(PDO $db, array $actor, string $view, string $l
         'pairings' => whatsapp_monitor_pairings($db, $actor, $_GET),
         'devices' => whatsapp_monitor_devices($db, $actor, $_GET),
         'cases' => whatsapp_monitor_cases($db, $actor, $_GET),
+        'chat_number_groups' => $chatNumberGroups,
         'chat_rows' => $chatRows,
         'selected_number_id' => $selectedNumberId,
         'selected_chat_id' => $selectedChatId,

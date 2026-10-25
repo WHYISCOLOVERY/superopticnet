@@ -3,22 +3,37 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/finance-operations-lib.php';
+require_once __DIR__ . '/finance-budget-lib.php';
+require_once __DIR__ . '/finance-invoice-lib.php';
+require_once __DIR__ . '/finance-reconciliation-lib.php';
+require_once __DIR__ . '/finance-ai-bot-lib.php';
 require_once __DIR__ . '/finance-bonus-lib.php';
+require_once __DIR__ . '/reporting-period-lib.php';
+// Payroll/tax was moved from HR to Finance; reuse the HR payroll data loaders.
+require_once __DIR__ . '/hr-module-lib.php';
+// Revenue-for-period must match Billing's own dashboard exactly; reuse its
+// canonical sum instead of keeping a second copy of the same query here.
+require_once __DIR__ . '/billing-module-lib.php';
+// Finance views call app_ui_status()/app_ui_term(); ensure available on both the
+// full-page and AJAX-partial render paths.
+require_once __DIR__ . '/ui-language-lib.php';
 
 function app_finance_tabs(): array
 {
     return [
-        'overview' => 'Umumi baxis',
-        'invoices' => 'Qaimeler',
-        'payments' => 'Odenisler',
-        'income' => 'Gelirler',
-        'companies' => 'Sirketler',
-        'expenses' => 'Xercler',
-        'cash-bank' => 'Kassa ve bank',
-        'reconciliation' => 'Uzlasdirma',
-        'assets' => 'Esas vesaitler',
-        'employee-bonuses' => 'Emekdas Bonuslari',
+        'overview' => 'Ümumi baxış',
+        'invoices' => 'Qaimələr',
+        'payments' => 'Ödənişlər',
+        'income' => 'Gəlirlər',
+        'companies' => 'Şirkətlər',
+        'expenses' => 'Xərclər',
+        'cash-bank' => 'Kassa və bank',
+        'reconciliation' => 'Uzlaşdırma',
+        'assets' => 'Əsas vəsaitlər',
+        'employee-bonuses' => 'Əməkdaş bonusları',
+        'payroll' => 'Maaş və vergilər',
         'statistics' => 'Statistika',
+        'ai-assistant' => 'AI köməkçisi',
     ];
 }
 
@@ -42,44 +57,14 @@ function app_finance_pagination(array $query, string $pageKey = 'page'): array
 
 function app_finance_date_value(mixed $value, string $fallback): string
 {
-    $date = clean_text((string) $value);
-    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-        return $fallback;
-    }
-
-    $timestamp = strtotime($date);
-    return $timestamp === false ? $fallback : date('Y-m-d', $timestamp);
+    $timezone = new DateTimeZone(app_timezone());
+    $date = app_reporting_strict_local_date($value, $timezone);
+    return $date instanceof DateTimeImmutable ? $date->format('Y-m-d') : $fallback;
 }
 
 function app_finance_date_range(array $query): array
 {
-    $today = new DateTimeImmutable('today');
-    $range = clean_text((string) ($query['range'] ?? 'month'));
-    if (!in_array($range, ['today', 'yesterday', 'week', 'month', 'year', 'custom'], true)) {
-        $range = 'month';
-    }
-
-    $start = $today->modify('-29 days')->format('Y-m-d');
-    $end = $today->format('Y-m-d');
-    if ($range === 'today') {
-        $start = $end;
-    } elseif ($range === 'yesterday') {
-        $start = $today->modify('-1 day')->format('Y-m-d');
-        $end = $start;
-    } elseif ($range === 'week') {
-        $start = $today->modify('-6 days')->format('Y-m-d');
-    } elseif ($range === 'year') {
-        $start = $today->modify('first day of this month')->modify('-11 months')->format('Y-m-d');
-    } elseif ($range === 'custom') {
-        $start = app_finance_date_value($query['start_date'] ?? '', $start);
-        $end = app_finance_date_value($query['end_date'] ?? '', $end);
-    }
-
-    if (strtotime($start) > strtotime($end)) {
-        [$start, $end] = [$end, $start];
-    }
-
-    return ['range' => $range, 'start_date' => $start, 'end_date' => $end];
+    return app_reporting_period($query);
 }
 
 function app_finance_query_page(
@@ -205,6 +190,43 @@ function app_finance_invoice_page(PDO $db, array $query): array
     );
 }
 
+function app_finance_invoice_generated_page(PDO $db, array $query): array
+{
+    app_finance_invoice_require_schema($db);
+    $where = ' WHERE 1=1';
+    $params = [];
+    $where .= app_finance_search_filter($query, ['invoice_no', 'counterparty_name', 'description'], $params);
+    $status = clean_text((string) ($query['invoice_status'] ?? ''));
+    if ($status !== '' && $status !== 'all') {
+        $where .= ' AND status = :status';
+        $params['status'] = $status;
+    }
+
+    return app_finance_query_page(
+        $db,
+        'SELECT COUNT(*) FROM finance_invoices' . $where,
+        'SELECT * FROM finance_invoices' . $where . ' ORDER BY id DESC',
+        $params,
+        $query
+    );
+}
+
+function app_finance_cash_reconciliation_page(PDO $db, array $query): array
+{
+    app_finance_reconciliation_require_schema($db);
+    $where = ' WHERE 1=1';
+    $params = [];
+    $where .= app_finance_search_filter($query, ['source_label', 'note'], $params);
+
+    return app_finance_query_page(
+        $db,
+        'SELECT COUNT(*) FROM finance_cash_reconciliations' . $where,
+        'SELECT * FROM finance_cash_reconciliations' . $where . ' ORDER BY id DESC',
+        $params,
+        $query
+    );
+}
+
 function app_finance_company_page(PDO $db, array $query): array
 {
     if (function_exists('app_finance_counterparty_page')) {
@@ -231,27 +253,25 @@ function app_finance_company_page(PDO $db, array $query): array
 
 function app_finance_expense_page(PDO $db, array $query): array
 {
-    $where = " WHERE entity_type = 'finance'
-                 AND LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.entryType')), ''))
-                     IN ('expense','xerc','cost','outcome')";
+    $where = ' WHERE e.entry_type = "expense"';
     $params = [];
     $where .= app_finance_search_filter($query, [
-        'summary',
-        "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.title'))",
-        "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.category'))",
+        'e.title',
+        'e.category',
+        'e.reference_no',
+        'e.created_by_name',
     ], $params);
 
+    $from = ' FROM finance_entries e
+              LEFT JOIN portal_accounts a ON a.id = e.employee_account_id' . $where;
     return app_finance_query_page(
         $db,
-        'SELECT COUNT(*) FROM mgs_operation_actions' . $where,
-        "SELECT id, action_type, status, actor_name, summary, created_at,
-                JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.category')) AS category,
-                JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.title')) AS title,
-                CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.amount')), '0') AS DECIMAL(12,2)) AS amount,
-                JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.branchId')) AS branch_id,
-                JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.noteText')) AS note_text
-           FROM mgs_operation_actions" . $where . '
-          ORDER BY created_at DESC, id DESC',
+        'SELECT COUNT(*)' . $from,
+        'SELECT e.id,e.entry_type,e.title,e.category,e.amount,e.currency,e.transaction_date,
+                e.branch_id,e.employee_account_id,e.payment_source,e.reference_no,e.note AS note_text,
+                e.status,e.source_type,e.source_id,e.correlation_id,e.created_by_name AS actor_name,
+                e.created_at,a.full_name AS responsible_employee_name' . $from . '
+          ORDER BY e.transaction_date DESC,e.id DESC',
         $params,
         $query
     );
@@ -392,9 +412,18 @@ function app_finance_dataset(PDO $db, string $sql, array $params, string $labelK
 function app_finance_statistics_context(PDO $db, array $query): array
 {
     $dates = app_finance_date_range($query);
+    if (empty($dates['valid'])) {
+        return $dates + [
+            'report_type' => clean_text((string) ($query['report_type'] ?? 'overview')) ?: 'overview',
+            'kpis' => [],
+            'datasets' => [],
+            'data_quality' => [],
+        ];
+    }
+    $dateContractEnabled = app_stage1_feature_enabled($db, 'stage1_statistics_date_contract');
     $params = [
-        'start_at' => $dates['start_date'] . ' 00:00:00',
-        'end_at' => date('Y-m-d 00:00:00', strtotime($dates['end_date'] . ' +1 day')),
+        'start_at' => $dates['start_at'],
+        'end_at' => $dateContractEnabled ? $dates['operational_end_at_exclusive'] : $dates['end_at_exclusive'],
     ];
     $reportType = clean_text((string) ($query['report_type'] ?? 'overview')) ?: 'overview';
     $dateBucket = $dates['range'] === 'year'
@@ -424,22 +453,26 @@ function app_finance_statistics_context(PDO $db, array $query): array
         ['start_date' => $dates['start_date'], 'end_date' => $dates['end_date']],
         'label', 'amount_total', 'row_count'
     );
-    foreach ($manualIncome as $row) {
-        $row['label'] = 'Manual ' . (string) ($row['label'] ?? '');
-        $income[] = $row;
+    $incomeByLabel = [];
+    foreach (array_merge($income, $manualIncome) as $row) {
+        $label = (string) ($row['label'] ?? '-');
+        if (!isset($incomeByLabel[$label])) {
+            $incomeByLabel[$label] = ['label' => $label, 'value' => 0.0, 'count' => 0];
+        }
+        $incomeByLabel[$label]['value'] += (float) ($row['value'] ?? 0);
+        $incomeByLabel[$label]['count'] += (int) ($row['count'] ?? 0);
     }
+    ksort($incomeByLabel);
+    $income = array_values($incomeByLabel);
     $expenses = app_finance_dataset(
         $db,
-        "SELECT " . $dateBucket . " AS label,
-                COALESCE(SUM(CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.amount')), '0') AS DECIMAL(12,2))),0) AS amount_total,
-                COUNT(*) AS row_count
-           FROM mgs_operation_actions
-          WHERE entity_type = 'finance'
-            AND LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.entryType')), '')) IN ('expense','xerc','cost','outcome')
-            AND created_at >= :start_at AND created_at < :end_at
-          GROUP BY " . $dateBucket . "
-          ORDER BY label",
-        $params,
+        'SELECT ' . ($dates['bucket'] === 'month' ? 'DATE_FORMAT(transaction_date, "%Y-%m")' : 'transaction_date') . ' AS label,
+                COALESCE(SUM(amount),0) AS amount_total,COUNT(*) AS row_count
+           FROM finance_entries
+          WHERE entry_type = "expense" AND status = "posted" AND currency = "AZN"
+            AND transaction_date >= :start_date AND transaction_date <= :end_date
+          GROUP BY label ORDER BY label',
+        ['start_date' => $dates['start_date'], 'end_date' => $dates['end_date']],
         'label',
         'amount_total',
         'row_count'
@@ -475,8 +508,7 @@ function app_finance_statistics_context(PDO $db, array $query): array
            FROM billing_payments
           WHERE created_at >= :start_at AND created_at < :end_at
           GROUP BY COALESCE(NULLIF(payment_method,""),"manual")
-          ORDER BY amount_total DESC
-          LIMIT 12',
+          ORDER BY amount_total DESC',
         $params,
         'label',
         'amount_total',
@@ -488,8 +520,7 @@ function app_finance_statistics_context(PDO $db, array $query): array
            FROM finance_debt_ledger
           WHERE status IN ("open","partial")
           GROUP BY counterparty_name
-          ORDER BY amount_total DESC
-          LIMIT 12',
+          ORDER BY amount_total DESC',
         [],
         'label',
         'amount_total',
@@ -512,6 +543,15 @@ function app_finance_statistics_context(PDO $db, array $query): array
         }
     }
 
+    $futurePayments = 0;
+    try {
+        $future = $db->prepare('SELECT COUNT(*) FROM billing_payments WHERE created_at >= :future_cutoff_at');
+        $future->execute(['future_cutoff_at' => $dates['future_cutoff_at']]);
+        $futurePayments = (int) $future->fetchColumn();
+    } catch (Throwable) {
+        $futurePayments = 0;
+    }
+
     return $dates + [
         'report_type' => $reportType,
         'kpis' => [
@@ -530,15 +570,23 @@ function app_finance_statistics_context(PDO $db, array $query): array
             'payment_methods' => ['title' => 'Kassa ve bank menbeleri', 'kind' => 'money', 'rows' => $methods],
             'counterparties' => ['title' => 'Qarsi terefler', 'kind' => 'money', 'rows' => $counterparties],
         ],
+        'data_quality' => [
+            'future_billing_payment_rows' => $futurePayments,
+            'future_rows_excluded' => $dateContractEnabled,
+        ],
     ];
 }
 
 function app_finance_overview_kpis(PDO $db, array $query): array
 {
     $dates = app_finance_date_range($query);
+    if (empty($dates['valid'])) {
+        return [];
+    }
+    $dateContractEnabled = app_stage1_feature_enabled($db, 'stage1_statistics_date_contract');
     $params = [
-        'start_at' => $dates['start_date'] . ' 00:00:00',
-        'end_at' => date('Y-m-d 00:00:00', strtotime($dates['end_date'] . ' +1 day')),
+        'start_at' => $dates['start_at'],
+        'end_at' => $dateContractEnabled ? $dates['operational_end_at_exclusive'] : $dates['end_at_exclusive'],
     ];
     $scalar = static function (string $sql, array $bindings = []) use ($db): float {
         try {
@@ -550,18 +598,13 @@ function app_finance_overview_kpis(PDO $db, array $query): array
         }
     };
 
-    $income = $scalar(
-        'SELECT COALESCE(SUM(amount),0) FROM billing_payments WHERE created_at >= :start_at AND created_at < :end_at',
-        $params
-    );
+    $income = app_billing_period_revenue_total($db, (string) $params['start_at'], (string) $params['end_at']);
     $income += app_finance_manual_income_total($db, $dates['start_date'], $dates['end_date']);
     $expenses = $scalar(
-        "SELECT COALESCE(SUM(CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.amount')), '0') AS DECIMAL(12,2))),0)
-           FROM mgs_operation_actions
-          WHERE entity_type = 'finance'
-            AND LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.entryType')), '')) IN ('expense','xerc','cost','outcome')
-            AND created_at >= :start_at AND created_at < :end_at",
-        $params
+        'SELECT COALESCE(SUM(amount),0) FROM finance_entries
+          WHERE entry_type = "expense" AND status = "posted" AND currency = "AZN"
+            AND transaction_date >= :start_date AND transaction_date <= :end_date',
+        ['start_date' => $dates['start_date'], 'end_date' => $dates['end_date']]
     );
     $receivable = $scalar('SELECT COALESCE(SUM(amount_open),0) FROM finance_debt_ledger WHERE ledger_type = "receivable" AND status IN ("open","partial")');
     $payable = $scalar('SELECT COALESCE(SUM(amount_open),0) FROM finance_debt_ledger WHERE ledger_type = "payable" AND status IN ("open","partial")');
@@ -592,7 +635,6 @@ function app_finance_url(string $tab, array $params = [], string $lang = 'az'): 
 
 function app_finance_build_context(PDO $db, array $user, array $query): array
 {
-    app_mgs_ensure_schema($db);
     app_finance_ensure_operational_schema($db);
     app_bonus_ensure_schema($db);
     $tab = app_finance_tab($query);
@@ -612,7 +654,21 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
             'overdue_debts' => app_finance_debt_page($db, ['page' => 1, 'limit' => 5, 'status' => 'open']),
         ];
     } elseif ($tab === 'invoices') {
-        $context['data']['page'] = app_finance_invoice_page($db, $query);
+        $invoiceView = clean_text((string) ($query['invoice_view'] ?? 'imports'));
+        $invoiceView = in_array($invoiceView, ['imports', 'issued'], true) ? $invoiceView : 'imports';
+        $context['data']['invoice_view'] = $invoiceView;
+        if ($invoiceView === 'issued') {
+            $context['data']['page'] = app_finance_invoice_generated_page($db, $query);
+            $context['data']['recent_payments_for_invoice'] = app_finance_query_page(
+                $db,
+                'SELECT COUNT(*) FROM billing_payments',
+                'SELECT id, subscriber_code, amount, created_at FROM billing_payments ORDER BY created_at DESC, id DESC',
+                [],
+                ['page' => 1, 'limit' => 15]
+            )['rows'];
+        } else {
+            $context['data']['page'] = app_finance_invoice_page($db, $query);
+        }
     } elseif ($tab === 'payments') {
         $context['data']['page'] = app_finance_payment_page($db, $query);
     } elseif ($tab === 'income') {
@@ -639,6 +695,8 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         $context['data']['page'] = app_finance_debt_page($db, $query);
         $context['data']['open_debts'] = app_mgs_finance_debt_rows($db, 'all', 50);
         $context['data']['payments'] = app_finance_debt_payment_page($db, ['page' => 1, 'limit' => 8]);
+        $context['data']['pending_debt_writeoffs'] = app_mgs_finance_debt_writeoff_requests($db, 'pending');
+        $context['data']['cash_reconciliation'] = app_finance_cash_reconciliation_page($db, ['page' => 1, 'limit' => 10]);
     } elseif ($tab === 'assets') {
         $context['data']['page'] = app_finance_asset_page($db, $query);
         $context['data']['assets'] = app_mgs_finance_printable_inventory_rows($db, 50);
@@ -653,9 +711,50 @@ function app_finance_build_context(PDO $db, array $user, array $query): array
         $context['data']['bonus'] = app_bonus_context($db, $user, $query);
     } elseif ($tab === 'statistics') {
         $context['data']['statistics'] = app_finance_statistics_context($db, $query);
+        if (app_portal_is_admin($user)) {
+            $budgetPeriodMonth = app_finance_budget_normalize_period_month($query['budget_month'] ?? '');
+            // Budget-vs-actual needs a migration (finance_budgets) that may not
+            // have run yet on a given environment; the rest of the statistics
+            // tab must still render, so this panel just goes empty instead of
+            // taking the whole page down.
+            try {
+                $context['data']['budget_vs_actual'] = app_finance_budget_vs_actual($db, $budgetPeriodMonth);
+            } catch (RuntimeException $exception) {
+                $context['data']['budget_vs_actual'] = [];
+            }
+            $context['data']['cashflow_forecast'] = app_finance_cashflow_forecast($db);
+        }
+    } elseif ($tab === 'payroll') {
+        // Payroll/tax is a finance responsibility (moved from HR). Reuse the HR
+        // payroll data loaders; the finance payroll view mirrors the HR one.
+        $legalProfile = function_exists('app_mgs_hr_default_legal_profile') ? app_mgs_hr_default_legal_profile() : [];
+        $employees = $db->query('SELECT id, full_name, login, employee_role, job_title, is_active FROM portal_accounts a WHERE a.role = "employee" AND ' . app_hr_operational_sql('a') . ' ORDER BY a.full_name, a.id LIMIT 1000')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $context['data']['page'] = app_hr_payroll_page($db, $query);
+        $context['data']['employees'] = $employees;
+        $context['data']['legal_profile'] = $legalProfile;
+        $context['data']['preview'] = function_exists('app_mgs_hr_payroll_preview') ? app_mgs_hr_payroll_preview([
+            'gross_salary' => max(0, (float) ($query['payroll_gross_salary'] ?? 1000)),
+            'leave_days' => max(0, (float) ($query['payroll_leave_days'] ?? 0)),
+            'leave_daily_rate' => max(0, (float) ($query['payroll_leave_daily_rate'] ?? 0)),
+            'travel_days' => max(0, (float) ($query['payroll_travel_days'] ?? 0)),
+            'travel_daily_rate' => max(0, (float) ($query['payroll_travel_daily_rate'] ?? 0)),
+            'taxable_travel_amount' => max(0, (float) ($query['payroll_taxable_travel_amount'] ?? 0)),
+        ], $legalProfile) : [];
+        $context['data']['cost_rows'] = function_exists('app_mgs_hr_cost_report_rows') ? app_mgs_hr_cost_report_rows($db, 12) : [];
+    } elseif ($tab === 'ai-assistant') {
+        // Same fail-soft rationale as the statistics tab above: the AI bot
+        // tables may not be migrated yet on a given environment.
+        try {
+            $context['data']['pending_ai_suggestions'] = app_finance_ai_bot_pending_suggestions($db, 20);
+            $context['data']['recent_ai_conversations'] = app_finance_ai_bot_recent_conversations($db, 10);
+        } catch (RuntimeException $exception) {
+            $context['data']['pending_ai_suggestions'] = [];
+            $context['data']['recent_ai_conversations'] = [];
+        }
     }
 
     $context['data']['can_write'] = app_finance_actor_can_write($user);
+    $context['data']['can_confirm_maker_checker'] = app_portal_is_admin($user);
 
     return $context;
 }

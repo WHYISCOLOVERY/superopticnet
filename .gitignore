@@ -17,6 +17,8 @@ tmp/
 .tools/
 *.log
 *.pid
+__pycache__/
+*.pyc
 
 # Runtime data that must not enter source control
 data/area-interest-log.jsonl
@@ -25,10 +27,12 @@ data/portal-tickets.json
 data/portal-users.json
 data/rate-limits.json
 data/security-events.jsonl
+data/system-settings.json
 data/test-pppoe-users-*.csv
 data/legacy-billing-chunk-test/
 data/legacy-billing-profiles-sample/
 data/legacy-billing-test/
+data/private/
 
 # Stray command output files
 /0

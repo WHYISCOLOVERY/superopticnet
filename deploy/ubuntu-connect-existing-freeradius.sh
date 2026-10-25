@@ -16,6 +16,7 @@ LAB_CLIENT_CIDR="${LAB_CLIENT_CIDR:-}"
 INSTALL_PACKAGES="${INSTALL_PACKAGES:-1}"
 CREATE_SCHEMA="${CREATE_SCHEMA:-1}"
 CREATE_TEST_USERS="${CREATE_TEST_USERS:-0}"
+RADIUS_TEST_PASSWORD="${RADIUS_TEST_PASSWORD:-}"
 FREERADIUS_DIR="${FREERADIUS_DIR:-/etc/freeradius/3.0}"
 
 log() {
@@ -173,7 +174,7 @@ CREATE TABLE IF NOT EXISTS nas (
     shortname VARCHAR(32) DEFAULT NULL,
     type VARCHAR(30) DEFAULT 'other',
     ports INT DEFAULT NULL,
-    secret VARCHAR(60) NOT NULL DEFAULT 'secret',
+    secret VARCHAR(60) NOT NULL DEFAULT '',
     server VARCHAR(64) DEFAULT NULL,
     community VARCHAR(50) DEFAULT NULL,
     description VARCHAR(200) DEFAULT NULL,
@@ -183,14 +184,17 @@ SQL
 fi
 
 if [[ "${CREATE_TEST_USERS}" == "1" ]]; then
+    [[ -n "${RADIUS_TEST_PASSWORD}" ]] || fail "RADIUS_TEST_PASSWORD is required when CREATE_TEST_USERS=1"
+    TEST_PASSWORD_ESCAPED="${RADIUS_TEST_PASSWORD//\\/\\\\}"
+    TEST_PASSWORD_ESCAPED="${TEST_PASSWORD_ESCAPED//\'/\\\'}"
     log "Creating optional test RADIUS users"
-    mysql_radius <<'SQL'
+    mysql_radius <<SQL
 DELETE FROM radcheck WHERE username IN ('1100000', '1200000');
 DELETE FROM radreply WHERE username IN ('1100000', '1200000');
 DELETE FROM radusergroup WHERE username IN ('1100000', '1200000');
 
 INSERT INTO radcheck (username, attribute, op, value)
-VALUES ('1100000', 'Cleartext-Password', ':=', 'UCuvsbLA2b');
+VALUES ('1100000', 'Cleartext-Password', ':=', '${TEST_PASSWORD_ESCAPED}');
 
 INSERT INTO radreply (username, attribute, op, value)
 VALUES
@@ -304,8 +308,8 @@ ss -lunp | grep -E '1812|1813|3799' || true
 
 if [[ "${CREATE_TEST_USERS}" == "1" ]]; then
     log "Running local auth tests"
-    radtest 1100000 UCuvsbLA2b 127.0.0.1 0 "${RADIUS_SECRET}"
-    radtest 1200000 any-test-password 127.0.0.1 0 "${RADIUS_SECRET}"
+    radtest 1100000 "${RADIUS_TEST_PASSWORD}" 127.0.0.1 0 "${RADIUS_SECRET}"
+    radtest 1200000 "${RADIUS_TEST_PASSWORD}" 127.0.0.1 0 "${RADIUS_SECRET}"
 else
     log "Test users skipped. To test later: CREATE_TEST_USERS=1 sudo -E bash ubuntu-connect-existing-freeradius.sh"
 fi

@@ -8,6 +8,65 @@ function app_communication_queue_message_metadata(array $message): array
     return app_db_json_decode((string) ($message['metadata_json'] ?? ''), []);
 }
 
+function app_communication_queue_external_id(array $message): string
+{
+    $metadata = app_communication_queue_message_metadata($message);
+    $configured = trim((string) ($metadata['idempotency_key'] ?? ''));
+    if ($configured !== '') {
+        return mb_substr($configured, 0, 100);
+    }
+
+    $messageId = (int) ($message['id'] ?? 0);
+    return $messageId > 0 ? 'communication-message-' . $messageId : '';
+}
+
+function app_communication_queue_claim_name(int $messageId): string
+{
+    return 'communication-message-' . $messageId;
+}
+
+function app_communication_queue_claim(PDO $db, int $messageId): bool
+{
+    if ($messageId <= 0) {
+        return false;
+    }
+
+    try {
+        $statement = $db->prepare('SELECT GET_LOCK(:lock_name, 0)');
+        $statement->execute(['lock_name' => app_communication_queue_claim_name($messageId)]);
+        return (int) $statement->fetchColumn() === 1;
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+function app_communication_queue_release_claim(PDO $db, int $messageId): void
+{
+    if ($messageId <= 0) {
+        return;
+    }
+
+    try {
+        $statement = $db->prepare('SELECT RELEASE_LOCK(:lock_name)');
+        $statement->execute(['lock_name' => app_communication_queue_claim_name($messageId)]);
+    } catch (Throwable) {
+    }
+}
+
+function app_communication_queue_refresh_claimed_message(PDO $db, int $messageId): ?array
+{
+    $statement = $db->prepare(
+        'SELECT *
+         FROM communication_messages
+         WHERE id = :id AND status = "queued"
+         LIMIT 1'
+    );
+    $statement->execute(['id' => $messageId]);
+    $message = $statement->fetch();
+
+    return is_array($message) ? $message : null;
+}
+
 function app_communication_queue_standard_provider(string $preferredChannel, string $destination): array
 {
     $preferredChannel = strtolower(trim($preferredChannel));
@@ -86,6 +145,19 @@ function app_communication_queue_send_provider_for_message(array $message, array
     $channel = strtolower((string) ($provider['channel'] ?? $message['channel'] ?? ''));
     $body = trim((string) ($message['message_body'] ?? ''));
 
+    if ($channel !== 'app'
+        && in_array($channel, ['telegram', 'sms', 'whatsapp'], true)
+        && !app_communication_external_delivery_enabled()) {
+        return [
+            'ok' => false,
+            'provider_message_id' => null,
+            'response' => null,
+            'reason' => 'external_delivery_paused',
+            'delivery' => (string) ($provider['delivery'] ?? $channel),
+            'provider_status' => 'pending',
+        ];
+    }
+
     if (($provider['delivery'] ?? '') === 'telegram_bot') {
         if (empty($provider['configured'])) {
             return [
@@ -127,6 +199,6 @@ function app_communication_queue_send_provider_for_message(array $message, array
         $channel,
         (string) ($provider['destination'] ?? ''),
         $body,
-        (string) ($message['id'] ?? '')
+        app_communication_queue_external_id($message)
     );
 }

@@ -93,6 +93,7 @@
     const thread = document.querySelector('[data-wa-chat-thread]');
     const messages = thread?.querySelector('[data-wa-chat-messages]');
     const numberId = thread?.dataset.numberId || '';
+    const selectedMonitorNumberId = chatMonitor?.dataset.selectedNumberId || numberId;
     const chatId = thread?.dataset.chatId || '';
     const liveStatus = chatMonitor?.querySelector('[data-wa-live-status]');
     const LIVE_STATUS_LABELS = {live: 'Canlı', refreshing: 'Yenilənir', weak: 'Bağlantı zəifdir'};
@@ -223,7 +224,7 @@
         listTimer = window.setInterval(refreshFn, interval);
     };
 
-    if (chatList) {
+    if (chatList && selectedMonitorNumberId) {
         const buildChatHref = (rowNumberId, rowChatId) => {
             const url = new URL('whatsapp-monitor.php', window.location.href);
             url.searchParams.set('view', 'chats');
@@ -292,10 +293,16 @@
             chatListInFlight = true;
             try {
                 const endpoint = new URL('api/whatsapp-monitor/chat-list.php', window.location.href);
+                endpoint.searchParams.set('number_id', selectedMonitorNumberId);
                 const response = await fetch(endpoint, {headers: {'X-Requested-With': 'XMLHttpRequest'}, cache: 'no-store'});
                 if (!response.ok) return;
                 const payload = await response.json();
                 const rows = payload.rows || [];
+                const serverKeys = new Set(rows.map(row => `${Number(row.number_id || 0)}:${String(row.chat_id || '')}`));
+                chatList.querySelectorAll('[data-wa-chat-search-item]').forEach(item => {
+                    const itemKey = `${Number(item.dataset.numberId || 0)}:${String(item.dataset.chatId || '')}`;
+                    if (!serverKeys.has(itemKey)) item.remove();
+                });
                 if (rows.length > 0) {
                     const emptyState = chatList.querySelector('.mgs-empty-state');
                     if (emptyState) emptyState.remove();
@@ -307,6 +314,15 @@
                     updateChatItem(item, row);
                     chatList.appendChild(item);
                 });
+                let liveEmpty = chatList.querySelector('[data-wa-chat-empty-live]');
+                if (!liveEmpty) {
+                    liveEmpty = document.createElement('p');
+                    liveEmpty.className = 'wa-chat-empty-filter';
+                    liveEmpty.dataset.waChatEmptyLive = '';
+                    liveEmpty.textContent = 'Bu nömrə üzrə hələ mesaj yoxdur.';
+                    chatList.appendChild(liveEmpty);
+                }
+                liveEmpty.hidden = rows.length !== 0;
                 if (emptyFilter) chatList.appendChild(emptyFilter);
                 applyChatSearchFilter();
                 updateChatCountTotal(rows.length);

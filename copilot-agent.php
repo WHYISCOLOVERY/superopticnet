@@ -2,9 +2,13 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/copilot-engine.php';
+require_once __DIR__ . '/ai-provider-lib.php';
 require_once __DIR__ . '/mgs-integration-lib.php';
 require_once __DIR__ . '/security-anomaly-lib.php';
 require_once __DIR__ . '/customer-intelligence-lib.php';
+require_once __DIR__ . '/agent-workspace-lib.php';
+require_once __DIR__ . '/advisor-agent-lib.php';
+require_once __DIR__ . '/ai-local-lib.php';
 
 function app_copilot_agent_norm(string $value): string
 {
@@ -19,7 +23,10 @@ function app_copilot_agent_norm(string $value): string
     $map += [
         'ə' => 'e', 'ı' => 'i', 'ö' => 'o', 'ü' => 'u', 'ğ' => 'g', 'ş' => 's', 'ç' => 'c',
     ];
-    return trim(strtr($value, $map));
+    $value = mb_strtolower(strtr($value, $map), 'UTF-8');
+    // Drop combining diacritical marks (e.g. the dot above from İ -> i̇).
+    $value = preg_replace('/[\x{0300}-\x{036f}]/u', '', $value) ?? $value;
+    return trim($value);
 }
 
 function app_copilot_agent_has_any(string $text, array $needles): bool
@@ -131,6 +138,26 @@ function app_copilot_agent_pending_action(array $payload, array $actor, ?PDO $db
             'text' => 'Bu Superpilot emeliyyati ucun rol icazesi yoxdur: ' . $kind,
         ];
     }
+
+    // Stage 5 canonical gate (audit 10.1/10.2): allowlist, go-live blocker,
+    // module permission, prompt-injection and duplicate-retry guard. Runs on
+    // the resolved employee account for defense-in-depth alongside the role
+    // check above.
+    $gateActor = is_array($permission['account'] ?? null) ? $permission['account'] : $actor;
+    $prepared = app_agent_prepare_action($kind, $payload, $gateActor, $db);
+    if (empty($prepared['ok'])) {
+        $reason = (string) ($prepared['reason'] ?? 'agent_gate_denied');
+        $text = match ($reason) {
+            'go_live_blocker_not_agent_writable' => 'Bu əməliyyat go-live blocker-dir və agentə yazma üçün açıq deyil: ' . $kind,
+            'prompt_injection_blocked' => 'Girişdə təhlükəsizlik pozuntusu aşkarlandı; əməliyyat bloklandı.',
+            'duplicate_action' => 'Eyni əməliyyat artıq mövcuddur: #' . (int) ($prepared['duplicate_id'] ?? 0),
+            'module_permission_denied' => 'Bu modul üçün service icazəniz yoxdur: ' . $kind,
+            'action_not_in_allowlist' => 'Bu əməliyyat agent allowlist-ində deyil: ' . $kind,
+            default => 'Agent gate imtina etdi: ' . $reason,
+        };
+        return ['ok' => false, 'reason' => $reason, 'text' => $text, 'duplicate_id' => (int) ($prepared['duplicate_id'] ?? 0)];
+    }
+    $payload['agent_preview'] = $prepared['preview'] ?? [];
     $entityType = clean_text((string) ($payload['entity_type'] ?? $kind));
     $entityId = clean_text((string) ($payload['entity_id'] ?? ''));
     $summary = mb_substr(clean_text((string) ($payload['summary'] ?? 'Superpilot action')), 0, 255);
@@ -272,6 +299,9 @@ function app_copilot_agent_cancel_action(int $id, array $actor, ?PDO $db = null)
 function app_copilot_agent_execute_payload(array $payload, array $actor, PDO $db): array
 {
     $kind = (string) ($payload['kind'] ?? '');
+    if ($kind === 'create_customer') {
+        return app_copilot_agent_execute_create_customer($payload, $actor, $db);
+    }
     if ($kind === 'create_ticket') {
         return app_copilot_agent_execute_create_ticket($payload, $actor, $db);
     }
@@ -301,6 +331,54 @@ function app_copilot_agent_execute_payload(array $payload, array $actor, PDO $db
     }
 
     return ['ok' => false, 'reason' => 'unsupported_action_kind'];
+}
+
+function app_copilot_agent_execute_create_customer(array $payload, array $actor, PDO $db): array
+{
+    if (!function_exists('app_billing_upsert_customer_with_identity')) {
+        require_once __DIR__ . '/billing-customer-identity-lib.php';
+    }
+    $fullName = trim((string) ($payload['full_name'] ?? ''));
+    $phone = trim((string) ($payload['phone'] ?? ''));
+    $subscriberCode = trim((string) ($payload['subscriber_code'] ?? '')) ?: ('SP-' . date('ymd') . random_int(100, 999));
+
+    $accountPayload = [
+        'login' => $subscriberCode,
+        'role' => 'customer',
+        'full_name' => $fullName,
+        'subscriber_code' => $subscriberCode,
+        'phone' => $phone,
+        'area' => (string) ($payload['area'] ?? ''),
+        'address' => (string) ($payload['address'] ?? ''),
+        'status' => 'Aktiv',
+        'is_active' => 1,
+    ];
+    $identityInput = [
+        'fin_code' => (string) ($payload['fin_code'] ?? ''),
+        'document_no' => (string) ($payload['document_no'] ?? ''),
+        'phone' => $phone,
+        'address' => (string) ($payload['address'] ?? ''),
+    ];
+
+    $result = app_billing_upsert_customer_with_identity($db, $accountPayload, $identityInput, $actor);
+    if (empty($result['ok'])) {
+        $error = (string) ($result['error'] ?? 'customer_create_failed');
+        $fieldNote = is_array($result['fields'] ?? null) && $result['fields'] !== []
+            ? (' Çatışmayan/yanlış sahə: ' . implode(', ', array_map('strval', $result['fields'])))
+            : '';
+        return [
+            'ok' => false,
+            'reason' => $error,
+            'summary' => 'Müştəri yaradılmadı: ' . $error . $fieldNote,
+        ];
+    }
+    $account = is_array($result['account'] ?? null) ? $result['account'] : [];
+    return [
+        'ok' => true,
+        'summary' => 'Müştəri yaradıldı: ' . $fullName . ' / ' . (string) ($account['subscriber_code'] ?? $subscriberCode),
+        'subscriber_code' => (string) ($account['subscriber_code'] ?? $subscriberCode),
+        'account_id' => (int) ($account['id'] ?? 0),
+    ];
 }
 
 function app_copilot_agent_execute_create_ticket(array $payload, array $actor, PDO $db): array
@@ -409,7 +487,7 @@ function app_copilot_agent_execute_ont_control_request(array $payload, array $ac
         return ['ok' => false, 'reason' => 'missing_ont_control_target'];
     }
 
-    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db);
+    $device = app_mgs_device_learning_profile_by_key($deviceKey, $db, $actor);
     if (!is_array($device)) {
         return ['ok' => false, 'reason' => 'device_profile_not_found'];
     }
@@ -447,7 +525,7 @@ function app_copilot_agent_execute_radius_refresh(array $payload, array $actor, 
         $statement = $db->prepare(
             'SELECT username, framedipaddress, nasipaddress, nasportid, callingstationid
              FROM radacct
-             WHERE username = :username AND acctstoptime IS NULL
+             WHERE username = :username AND acctstoptime IS NULL AND COALESCE(acctupdatetime, acctstarttime) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
              ORDER BY COALESCE(acctupdatetime, acctstarttime) DESC, radacctid DESC
              LIMIT 1'
         );
@@ -834,6 +912,345 @@ function app_copilot_agent_traffic_monetization_answer(PDO $db): array
     ];
 }
 
+/**
+ * Typo-tolerant intent family classifier. Returns the best-guess capability
+ * family and the stems that matched, so the agent can guide instead of failing.
+ *
+ * @return array{intent:string,score:int,matched:list<string>}
+ */
+function app_copilot_agent_classify_intent(string $text): array
+{
+    $norm = app_copilot_agent_norm($text);
+    $families = [
+        'customer_create' => ['musteri yarat', 'musteri yarad', 'musteri ac', 'muster yarat', 'musder yarat', 'mustri yarat', 'mstr yarat', 'yeni musteri', 'yeni abuneci', 'yeni abunec', 'yeni client', 'yeni klient', 'yeni internet qos', 'abuneci ac', 'client elave', 'musteri elave', 'musteri qeydiyyat'],
+        'customer_show' => ['musteri melumat', 'musteri goster', 'kimdir', 'profil goster', 'borcunu goster', 'borc goster', 'borcunu', 'odenis tarixce', 'odenis tarix', 'aktiv xidmet', 'muqavile goster', 'muqavile', 'tarixce goster'],
+        'customer_edit' => ['musteri redakte', 'musterini deyis', 'paket deyis', 'tarif deyis', 'musterini deaktiv', 'deaktiv et'],
+        'inventory' => ['mal ver', 'medaxil', 'mexaric', 'anbara', 'anbardan', 'tehvil ver', 'geri al', 'transfer', 'stok', 'qaliq', 'barkod', 'seriya', 'inventar', ' ver'],
+        'ticket' => ['bilet ac', 'ticket ac', 'tapsiriq yarat', 'tapsiriq ver', 'muraciet yarat', 'is yarat', 'problem ac'],
+        'report' => ['hesabat', 'gunluk hesabat', 'ayliq hesabat', 'hefteli hesabat', 'illik hesabat', 'statistika'],
+        'performance' => ['performans', 'en cox isleyen', 'en az isleyen', 'geciken isci', 'orta icra', 'en yaxsi texnik'],
+        'analytics' => ['hansi avadanliq', 'hansi rayon', 'hansi texnik', 'riskli musteri', 'hansi mehsul', 'hansi tarif', 'hansi xidmet'],
+    ];
+    // Longest matched stem wins; customer_create breaks ties (most specific write).
+    $best = 'unknown';
+    $bestLen = 0;
+    $matched = [];
+    foreach ($families as $intent => $stems) {
+        foreach ($stems as $stem) {
+            $needle = app_copilot_agent_norm($stem);
+            if ($needle !== '' && str_contains($norm, $needle)) {
+                $matched[] = $stem;
+                $len = strlen($needle);
+                if ($len > $bestLen || ($len === $bestLen && $intent === 'customer_create')) {
+                    $best = $intent;
+                    $bestLen = $len;
+                }
+            }
+        }
+    }
+    return ['intent' => $best, 'score' => $bestLen, 'matched' => array_values(array_unique($matched))];
+}
+
+/**
+ * Match a service area name inside free text (typo/suffix tolerant).
+ */
+function app_copilot_agent_extract_area(string $text): string
+{
+    $norm = app_copilot_agent_norm($text);
+    $areas = function_exists('app_coverage_points') ? app_coverage_points() : [];
+    foreach ($areas as $area) {
+        $name = is_array($area) ? (string) ($area['name'] ?? '') : (string) $area;
+        $needle = app_copilot_agent_norm($name);
+        if ($needle !== '' && strlen($needle) >= 4 && str_contains($norm, $needle)) {
+            return $name;
+        }
+    }
+    return '';
+}
+
+/**
+ * Extract labelled customer fields from a free-text create request.
+ *
+ * @return array<string,string>
+ */
+function app_copilot_agent_parse_customer_fields(string $text): array
+{
+    $fields = [];
+    $area = app_copilot_agent_extract_area($text);
+    if ($area !== '') {
+        $fields['area'] = $area;
+    }
+    $digitsOnly = preg_replace('/[\s\-]/', '', $text) ?? $text;
+    if (preg_match('/(?<!\d)(0\d{9}|\+994\d{9})(?!\d)/', $digitsOnly, $m) === 1) {
+        $fields['phone'] = $m[1];
+    }
+    if (preg_match('/\bfin[:\s]*([A-Za-z0-9]{7})\b/iu', $text, $m) === 1) {
+        $fields['fin_code'] = strtoupper($m[1]);
+    }
+    if (preg_match('/\b(?:sened|sənəd|document|vesiqe)[:\s№]*([A-Za-z]{1,3}\d{6,8})\b/iu', $text, $m) === 1) {
+        $fields['document_no'] = strtoupper($m[1]);
+    }
+    if (preg_match('/\b(?:unvan|ünvan|address|adres)[:\s]*([^,]{4,80})/iu', $text, $m) === 1) {
+        $fields['address'] = trim($m[1]);
+    }
+    if (preg_match('/\b(?:ad soyad|ad|name)[:\s]+([A-Za-zƏəÇçĞğİıÖöŞşÜü]+\s+[A-Za-zƏəÇçĞğİıÖöŞşÜü]+)/u', $text, $m) === 1) {
+        $fields['full_name'] = trim($m[1]);
+    } elseif (preg_match('/(?:musteri|müştəri|mustəri)\s*:?\s*([A-Za-zƏəÇçĞğİıÖöŞşÜü]+\s+[A-Za-zƏəÇçĞğİıÖöŞşÜü]+)/u', $text, $m) === 1) {
+        $fields['full_name'] = trim($m[1]);
+    }
+    return $fields;
+}
+
+/**
+ * Guided customer-create flow (audit-friendly, never a generic error).
+ * Recognises the intent, extracts what it can, and either stages a
+ * confirmation-gated pending action or asks specifically for the missing
+ * identity fields.
+ */
+function app_copilot_agent_customer_create_flow(string $text, array $actor, PDO $db): array
+{
+    $fields = app_copilot_agent_parse_customer_fields($text);
+    $required = ['full_name', 'phone', 'fin_code', 'document_no', 'address'];
+    $missing = array_values(array_filter($required, static fn (string $key): bool => trim((string) ($fields[$key] ?? '')) === ''));
+    $areaNote = isset($fields['area']) ? (' (' . $fields['area'] . ' rayonu)') : '';
+
+    if ($missing !== []) {
+        $labels = [
+            'full_name' => 'ad soyad',
+            'phone' => 'telefon',
+            'fin_code' => 'FIN',
+            'document_no' => 'sənəd №',
+            'address' => 'ünvan',
+        ];
+        $missingLabels = array_map(static fn (string $k): string => $labels[$k] ?? $k, $missing);
+        return [
+            'ok' => true,
+            'kind' => 'customer_create_guided',
+            'text' => 'Yeni müştəri yaradıram' . $areaNote . '. Davam etmək üçün bunlar lazımdır: '
+                . implode(', ', $missingLabels) . ".\n"
+                . "Nümunə: Yeni müştəri: Əli Vəliyev, telefon 0501234567, FIN 1ABC2DE, sənəd AA1234567, ünvan "
+                . ($fields['area'] ?? 'Astara') . " ş. Heydər Əliyev 10, tarif 100Mbit",
+            'collected' => $fields,
+        ];
+    }
+
+    $subscriberCode = 'SP-' . date('ymd') . random_int(100, 999);
+    return app_copilot_agent_pending_action([
+        'kind' => 'create_customer',
+        'entity_type' => 'customer',
+        'entity_id' => $subscriberCode,
+        'subscriber_code' => $subscriberCode,
+        'full_name' => (string) $fields['full_name'],
+        'phone' => (string) $fields['phone'],
+        'fin_code' => (string) $fields['fin_code'],
+        'document_no' => (string) $fields['document_no'],
+        'address' => (string) $fields['address'],
+        'area' => (string) ($fields['area'] ?? ''),
+        'summary' => 'Yeni müştəri yaradılsın: ' . (string) $fields['full_name'] . ' / ' . (string) $fields['phone'] . $areaNote,
+    ], $actor, $db);
+}
+
+/**
+ * Warehouse intake (mədaxil): RECEIVE goods into stock. Unlike issue/return,
+ * this does not require the item to pre-exist — it creates/increments stock.
+ * Extracts quantity, item name, unit price and supplier from free text.
+ */
+/**
+ * Deterministic answer to "what are my permissions / role" (spec: role, modules,
+ * what the actor can do). Never routed to the LLM.
+ */
+function app_copilot_agent_permissions_answer(array $actor, PDO $db): array
+{
+    $account = app_copilot_agent_actor_account($actor, $db);
+    $account = is_array($account) ? $account : $actor;
+    $isAdmin = function_exists('app_portal_is_admin') && app_portal_is_admin($account);
+    $role = trim((string) ($account['employee_role'] ?? $account['account_type'] ?? 'employee'));
+    if ($role === '') {
+        $role = 'employee';
+    }
+    $modules = function_exists('app_portal_employee_module_keys') ? app_portal_employee_module_keys($account) : [];
+    $catalog = function_exists('app_portal_module_catalog') ? app_portal_module_catalog('az') : [];
+    $labels = [];
+    foreach ($modules as $moduleKey) {
+        $labels[] = (string) ($catalog[$moduleKey]['label'] ?? $moduleKey);
+    }
+
+    $name = trim((string) ($account['full_name'] ?? $actor['full_name'] ?? ''));
+    $lines = [];
+    $lines[] = ($name !== '' ? $name . ', ' : '') . 'rolunuz: ' . ($isAdmin ? 'Admin (tam icazə)' : $role);
+    $lines[] = $labels === []
+        ? 'Modul icazəniz təyin olunmayıb — admin ilə əlaqə saxlayın.'
+        : ('Giriş icazəniz olan modullar: ' . implode(', ', $labels));
+    $lines[] = 'Agent vasitəsilə: müştəri sorğu/analiz/yaratma, bilet, anbar mədaxil/təhvil, RADIUS/ONT — yalnız icazəniz olan modullarda. Pul, silmə və kritik əməliyyatlar təsdiq tələb edir.';
+
+    return ['ok' => true, 'kind' => 'permissions', 'text' => implode("\n", $lines)];
+}
+
+/**
+ * Matches free text to a single advisor key, or 'all' for a generic
+ * "advisor briefing" request, or null when the text is not an advisor query.
+ */
+function app_copilot_agent_match_advisor_intent(string $text): ?string
+{
+    $norm = app_copilot_agent_norm($text);
+    $perAdvisor = [
+        'ceo' => ['ceo meslehetcisi', 'ceo hesabati', 'bas direktor meslehetci', 'icraci direktor meslehetci'],
+        'finance' => ['maliyye meslehetcisi', 'maliyye advisor', 'fin meslehetci', 'maliyye meslehetci hesabati'],
+        'noc' => ['noc meslehetcisi', 'sebeke muhendisi meslehetci', 'noc muhendisi meslehetci', 'network advisor'],
+        'techops' => ['texniki emeliyyatlar meneceri', 'techops meslehetci', 'texniki emeliyyat meslehetci'],
+        'marketing' => ['marketinq meslehetcisi', 'marketing advisor', 'marketinq meslehetci hesabati'],
+    ];
+    foreach ($perAdvisor as $key => $stems) {
+        foreach ($stems as $stem) {
+            if (str_contains($norm, app_copilot_agent_norm($stem))) {
+                return $key;
+            }
+        }
+    }
+    if (app_copilot_agent_has_any($text, ['meslehetci hesabati', 'meslehetci briefing', 'agent ekosistemi', 'advisor briefing', 'meslehetcilerin hesabati'])) {
+        return 'all';
+    }
+    return null;
+}
+
+/**
+ * Read-only advisor briefing answer. Routes through the canonical
+ * `app_advisor_council_run()` entry point (advisor-agent-lib.php) so access
+ * gating, prompt-injection handling and the append-only audit record are the
+ * real enforced contract, not just this file's own logic. Never stages or
+ * executes a write — every underlying proposal only carries a `next_action`
+ * describing what a super-admin could do next. Advisors the actor cannot see
+ * are silently omitted rather than reported as denied, so the response never
+ * confirms which private cross-module data exists.
+ */
+function app_copilot_agent_advisor_briefing_answer(string $advisorKey, string $objective, array $actor, PDO $db): array
+{
+    $account = app_copilot_agent_actor_account($actor, $db);
+    $account = is_array($account) ? $account : $actor;
+
+    $council = app_advisor_council_run($db, $account, $objective);
+    if (empty($council['ok'])) {
+        return match ((string) ($council['reason'] ?? '')) {
+            'prompt_injection_blocked' => [
+                'ok' => true,
+                'kind' => 'advisor_injection_blocked',
+                'text' => 'Sorğuda təhlükəsizlik siyasətinə zidd göstəriş aşkarlandı; məsləhətçi hesabatı göstərilmir.',
+            ],
+            default => [
+                'ok' => true,
+                'kind' => 'advisor_unavailable',
+                'text' => 'Məsləhətçi hesabatı hazırda əlçatan deyil (audit qeydi yaradıla bilmədi).',
+            ],
+        };
+    }
+
+    $roster = app_advisor_agent_roster();
+    $requested = $advisorKey === 'all' ? array_keys($roster) : [$advisorKey];
+    $briefings = is_array($council['advisors'] ?? null) ? $council['advisors'] : [];
+    $visible = array_intersect_key($briefings, array_flip($requested));
+
+    if ($visible === []) {
+        return [
+            'ok' => true,
+            'kind' => 'advisor_access_denied',
+            'text' => 'Bu məsləhətçi hesabatına baxmaq üçün lazımi modul icazəniz yoxdur, yalnız super-admin/müvafiq modul sahibi görə bilər.',
+        ];
+    }
+
+    $lines = [];
+    foreach ($visible as $key => $briefing) {
+        $advisor = $briefing['advisor'];
+        $lines[] = '## ' . (string) ($advisor['label'] ?? $key);
+        $lines[] = (string) ($advisor['mission'] ?? '');
+        foreach ($briefing['proposals'] as $proposal) {
+            $lines[] = sprintf(
+                '- [%s/%s] %s (təsdiq sahibi: %s, növbəti addım: %s)',
+                strtoupper((string) ($proposal['risk'] ?? 'medium')),
+                (string) ($proposal['data_status'] ?? 'verified'),
+                (string) ($proposal['summary'] ?? ''),
+                (string) ($proposal['approval_owner'] ?? 'super_admin'),
+                (string) ($proposal['next_action'] ?? 'manual_review')
+            );
+            foreach ($proposal['evidence'] as $evidence) {
+                $lines[] = '  · dəlil: ' . (string) ($evidence['detail'] ?? '') . ' (' . (string) ($evidence['source'] ?? '') . ', ' . (string) ($evidence['observed_at'] ?? '') . ')';
+            }
+        }
+        $lines[] = '';
+    }
+
+    return [
+        'ok' => true,
+        'kind' => 'advisor_briefing',
+        'text' => trim(implode("\n", $lines)),
+        'advisors' => $visible,
+    ];
+}
+
+/**
+ * Warehouse intake (mədaxil): RECEIVE goods into stock. Unlike issue/return,
+ * this does not require the item to pre-exist — it creates/increments stock.
+ * Extracts quantity, item name, unit price and supplier from free text.
+ */
+function app_copilot_agent_intake_flow(string $text, array $actor, PDO $db): array
+{
+    $norm = app_copilot_agent_norm($text);
+
+    $qty = 1;
+    if (preg_match('/(\d+)\s*(?:eded|dene|dənə|denə|ədəd|ed)\b/u', $norm, $m) === 1) {
+        $qty = max(1, (int) $m[1]);
+    }
+    $price = 0.0;
+    if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:azn|manat)/iu', $text, $m) === 1) {
+        $price = (float) str_replace(',', '.', $m[1]);
+    }
+    $supplier = '';
+    if (preg_match('/(?:sirket|şirkət|firma|tedarukcu|təchizatçı)\s+([\p{L}\d .\-]{2,40})/iu', $text, $m) === 1) {
+        $supplier = trim($m[1]);
+    } elseif (preg_match('/geldiyi\s+([\p{L}\d .\-]{2,40})/iu', $text, $m) === 1) {
+        $supplier = trim(preg_replace('/^(?:sirket|şirkət)\s+/iu', '', trim($m[1])) ?? trim($m[1]));
+    }
+    $itemName = '';
+    if (preg_match('/(?:eded|dene|dənə|denə|ədəd)\s+(.+?)\s+(?:qiymet|qiymət|azn|manat|geldi|sirket|şirkət|firma)/iu', $text, $m) === 1) {
+        $itemName = trim($m[1]);
+    }
+    if ($itemName === '') {
+        $itemName = trim((string) preg_replace([
+            '/anbara?\s*/iu', '/\bmal(lar)?\b/iu', '/\bm[əe]daxil\b/iu', '/\bet\b/iu',
+            '/\d+\s*(eded|dene|dənə|ədəd|azn|manat)?/iu', '/qiym[əe]t[i]?/iu', '/geldiyi.*/iu', '/\bsirk[əe]t\b.*/iu',
+        ], ' ', $text));
+        $itemName = trim(preg_replace('/\s+/', ' ', $itemName) ?? $itemName);
+    }
+    if ($itemName === '') {
+        $itemName = 'Anbar malı';
+    }
+    $sku = strtoupper(trim((string) preg_replace('/[^a-z0-9]+/i', '-', app_copilot_agent_norm($itemName)), '-'));
+    if ($sku === '') {
+        $sku = 'INTAKE-' . date('ymdHis');
+    }
+
+    $summary = 'Anbara mədaxil: ' . $qty . ' ədəd ' . $itemName
+        . ($price > 0 ? (' / vahid ' . rtrim(rtrim(number_format($price, 2, '.', ''), '0'), '.') . ' AZN') : '')
+        . ($supplier !== '' ? (' / təchizatçı: ' . $supplier) : '');
+
+    return app_copilot_agent_pending_action([
+        'kind' => 'inventory_movement',
+        'entity_type' => 'inventory',
+        'entity_id' => $sku,
+        'summary' => $summary,
+        'movement' => [
+            'sku' => $sku,
+            'item_name' => $itemName,
+            'category' => 'general',
+            'unit' => 'eded',
+            'quantity' => $qty,
+            'movement_type' => 'in',
+            'unit_price' => $price,
+            'supplier' => $supplier,
+            'note' => 'Superpilot mədaxil: ' . mb_substr($text, 0, 200),
+        ],
+    ], $actor, $db);
+}
+
 function app_copilot_agent_action_from_text(string $text, array $actor, ?PDO $db = null): ?array
 {
     $db = $db instanceof PDO ? $db : app_db();
@@ -841,6 +1258,10 @@ function app_copilot_agent_action_from_text(string $text, array $actor, ?PDO $db
         return null;
     }
     $norm = app_copilot_agent_norm($text);
+
+    if (app_copilot_agent_classify_intent($text)['intent'] === 'customer_create') {
+        return app_copilot_agent_customer_create_flow($text, $actor, $db);
+    }
 
     $ontTarget = app_copilot_agent_extract_ont_control_target($text, $db);
     if (is_array($ontTarget)) {
@@ -935,6 +1356,10 @@ function app_copilot_agent_action_from_text(string $text, array $actor, ?PDO $db
         ], $actor, $db);
     }
 
+    if (app_copilot_agent_has_any($norm, ['medaxil', 'anbara daxil', 'mal daxil', 'mal geldi', 'mallar geldi', 'mal gelib', 'mal aldiq', 'stok artir', 'anbara al'])) {
+        return app_copilot_agent_intake_flow($text, $actor, $db);
+    }
+
     if (app_copilot_agent_has_any($norm, ['mal ver', 'tehvil ver', 'anbardan ver', 'modem ver', 'router ver', 'onu ver', 'geri al', 'tehvil al', 'qaytar'])) {
         $movementType = app_copilot_agent_has_any($norm, ['geri al', 'tehvil al', 'qaytar']) ? 'return' : 'issue';
         $employee = app_copilot_agent_resolve_employee($text, $db);
@@ -1018,6 +1443,32 @@ function app_copilot_agent_handle_message(string $text, array $actor = [], ?PDO 
         return app_copilot_agent_cancel_action((int) $match[2], $actor, $db);
     }
 
+    // Permissions / role query — answered deterministically (never the slow LLM).
+    if (app_copilot_agent_has_any($text, ['selahiyet', 'səlahiyyət', 'icazem', 'icazələrim', 'hansi icaze', 'hansi modul', 'menim rolum', 'rolum nedir', 'hansi huquq', 'nelere icaz', 'nə edə bilərəm', 'ne ede bilerem men'])) {
+        return app_copilot_agent_permissions_answer($actor, $db);
+    }
+
+    // Advisor ecosystem briefing (CEO / Finance / NOC / Techops / Marketing) —
+    // read-only, routed through the canonical app_advisor_council_run() gate
+    // (access, injection handling, audit); never executes a write itself.
+    // Answered deterministically, never the slow LLM.
+    $advisorIntent = app_copilot_agent_match_advisor_intent($text);
+    if ($advisorIntent !== null) {
+        return app_copilot_agent_advisor_briefing_answer($advisorIntent, $text, $actor, $db);
+    }
+
+    // Pure greeting — short deterministic intro instead of a slow LLM reply.
+    $greetNorm = app_copilot_agent_norm($text);
+    if (preg_match('/^(salam(inaleykum|lar)?|salam superpilot|hello|hi|hey)[\s!.,]*$/u', $greetNorm) === 1) {
+        return [
+            'ok' => true,
+            'kind' => 'greeting',
+            'text' => "Salam! Mən Superpilotam — Super Optik Tech daxili köməkçiniz.\n"
+                . "Edə bilərəm: müştəri (yarat/analiz/borc/ödəniş), anbar (mədaxil/təhvil/qalıq), bilet, RADIUS/ONT, hesabat.\n"
+                . "Məsələn: \"2320025 kimdir?\", \"anbara 3 ədəd HG8145 mədaxil et\", \"yeni müştəri yarat\", \"menim səlahiyyətim nədir?\"",
+        ];
+    }
+
     $pending = app_copilot_agent_action_from_text($text, $actor, $db);
     if (is_array($pending)) {
         return $pending;
@@ -1042,7 +1493,7 @@ function app_copilot_agent_handle_message(string $text, array $actor = [], ?PDO 
         'nat fanout',
         'port scan',
     ])) {
-        return app_security_anomaly_answer($text, $db);
+        return app_security_anomaly_answer($text, $db, $actor);
     }
 
     if (app_copilot_agent_has_any($text, [
@@ -1077,13 +1528,66 @@ function app_copilot_agent_handle_message(string $text, array $actor = [], ?PDO 
         ];
     }
 
-    $modemReply = app_mgs_build_modem_search_reply($text, true, $db);
-    if (!empty($modemReply['ok'])) {
-        return $modemReply;
+    $modemQueries = [$text];
+    if (preg_match_all('/(?:[0-9A-Fa-f]{2}[:\-.]){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}|\b[A-Za-z]{2,5}[0-9A-Fa-f]{6,}\b|\b[0-9A-Fa-f]{12}\b/', $text, $tokenMatches) > 0) {
+        $modemQueries = array_merge(array_values(array_unique($tokenMatches[0])), $modemQueries);
+    }
+    $modemReply = ['ok' => false, 'reason' => 'not_found'];
+    foreach ($modemQueries as $modemQuery) {
+        $modemReply = app_mgs_build_modem_search_reply((string) $modemQuery, true, $db, $actor);
+        if (!empty($modemReply['ok'])) {
+            return $modemReply;
+        }
     }
 
+    // On-premise LLM first (local Ollama/OpenAI-compatible runtime). Only falls
+    // back to an external provider if the operator explicitly configured one.
+    $llmReply = app_ai_agent_chat($text);
+    if (!empty($llmReply['ok'])) {
+        return [
+            'ok' => true,
+            'text' => (string) ($llmReply['text'] ?? ''),
+            'kind' => (string) ($llmReply['provider'] ?? '') === 'local' ? 'read_only_local_answer' : 'read_only_external_answer',
+            'analysis' => [
+                'provider' => (string) ($llmReply['provider'] ?? 'local'),
+                'model' => (string) ($llmReply['model'] ?? ''),
+                'metrics' => (array) ($llmReply['metrics'] ?? []),
+            ],
+        ];
+    }
+
+    return app_copilot_agent_guided_fallback($text);
+}
+
+/**
+ * Intent-aware guided response. Never a generic "anlasilmadi": detects the
+ * closest capability family and asks a specific next step, following the
+ * agent spec.
+ */
+function app_copilot_agent_guided_fallback(string $text): array
+{
+    $classification = app_copilot_agent_classify_intent($text);
+    $intent = (string) $classification['intent'];
+
+    $guides = [
+        'customer_show' => 'Müştəri məlumatını göstərmək üçün müştəri kodunu və ya adını yazın. Məsələn: "2320025 kimdir?" və ya "2320025 borcunu göstər".',
+        'customer_edit' => 'Müştəri dəyişikliyi üçün müştəri kodunu və nə dəyişəcəyini yazın. Məsələn: "2320025 tarifini 100Mbit et" və ya "2320025 deaktiv et".',
+        'inventory' => 'Anbar əməliyyatı üçün model/SKU və əməkdaşı yazın. Məsələn: "Əliyə HG8145X6 ver" və ya "20 ədəd HG8145X6 mədaxil et".',
+        'ticket' => 'Tapşırıq/bilet üçün müştəri kodu və problemi yazın. Məsələn: "2320025 üçün bilet aç internet yoxdur".',
+        'report' => 'Hesabat üçün dövrü yazın. Məsələn: "bu ayın satış hesabatını hazırla" və ya "bu həftənin performans hesabatı".',
+        'performance' => 'Performans üçün nəyi görmək istədiyinizi yazın. Məsələn: "ən çox işləyən texnik kimdir?" və ya "bu ay gecikən işçilər".',
+        'analytics' => 'Analiz üçün konkret sual yazın. Məsələn: "hansı rayonda internet problemi çoxdur?" və ya "hansı avadanlıq daha çox sıradan çıxır?".',
+    ];
+
+    if (isset($guides[$intent])) {
+        return ['ok' => false, 'kind' => 'guided_clarify', 'text' => $guides[$intent]];
+    }
+
+    // Truly unrecognised: offer the capability guide, not a generic error.
     return [
         'ok' => false,
-        'text' => "Superpilot sorgunu anlasilmadi.\nDaha genis imkan siyahisi ucun yazin: hansi suallara cavab verirsən\nNumuneler:\n- 2320025 niye qirilir?\n- 2320025 odenisi neye cixib?\n- SN123 kimdedir?\n- Samir Abdullayev adinda hansi mallar var?\n- 2320025 ucun bilet ac internet yoxdur\n- 2320025 radius yenile",
+        'kind' => 'guided_help',
+        'text' => "Nə etmək istədiyinizi bir az dəqiqləşdirim. Bacardıqlarım: müştəri (yarat/göstər/dəyiş), anbar (mədaxil/təhvil/qalıq), tapşırıq/bilet, hesabat, performans və analiz.\n"
+            . "Məsələn:\n- Yeni müştəri: Əli Vəliyev 0501234567 Astara\n- 2320025 kimdir?\n- Əliyə HG8145X6 ver\n- 2320025 üçün bilet aç internet yoxdur\n- bu ayın satış hesabatı",
     ];
 }

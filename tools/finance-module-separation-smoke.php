@@ -147,8 +147,8 @@ if ($mode !== '--queries') {
     $expect($overview['exit_code'] === 0, 'finance_overview_render_failed:' . $overview['stderr']);
     $expect(str_contains($overview['html'], 'data-finance-module'), 'finance_module_marker_missing');
     $expect(str_contains($overview['html'], 'data-finance-tab="overview"'), 'finance_overview_marker_missing');
-    $expect(str_contains($overview['html'],'open=income-create')&&str_contains($overview['html'],'Yeni gelir'),'finance_income_quick_action_missing');
-    $expect(str_contains($overview['html'],'open=counterparty-create')&&str_contains($overview['html'],'Yeni qarsi teref'),'finance_counterparty_quick_action_missing');
+    $expect(str_contains($overview['html'],'open=income-create')&&str_contains($overview['html'],'Yeni gəlir'),'finance_income_quick_action_missing');
+    $expect(str_contains($overview['html'],'open=counterparty-create')&&str_contains($overview['html'],'Yeni qarşı tərəf'),'finance_counterparty_quick_action_missing');
     foreach ([
         'name="action" value="create_finance_entry"',
         'name="action" value="save_asset_depreciation"',

@@ -15,6 +15,7 @@ const outDir = path.resolve(args.get('out') || 'data/legacy-billing');
 const pageSize = Math.max(50, Math.min(6000, Number(args.get('page-size') || 1000)));
 const limit = Math.max(0, Number(args.get('limit') || 0));
 const includeProfiles = args.has('profiles');
+const subscriber = String(args.get('subscriber') || '').trim();
 const profileOffset = Math.max(0, Number(args.get('profile-offset') || 0));
 const profileLimit = Math.max(0, Number(args.get('profile-limit') || 0));
 const appendProfiles = args.has('append-profiles');
@@ -25,7 +26,7 @@ const backendUrl = `${baseUrl}/backend`;
 if (args.has('help') || !email || !password) {
   console.log([
     'Usage:',
-    '  node tools/export-legacy-billing.mjs --email=user --password=pass [--profiles] [--limit=100] [--out=data/legacy-billing]',
+    '  node tools/export-legacy-billing.mjs --email=user --password=pass [--subscriber=2320025] [--profiles] [--limit=100] [--out=data/legacy-billing]',
     '  node tools/export-legacy-billing.mjs --email=user --password=pass --profiles --profile-offset=1000 --profile-limit=1000 --append-profiles',
     '',
     'Outputs:',
@@ -229,6 +230,9 @@ function tableParams(start, length) {
   for (const key of ['router_open_id', 'user_status', 'internet_status', 'internet_paket', 'personal_search', 'personal_a_search', 'personal_ip_search', 'user_borc', 'zone_filter', 'static_ip_filter']) {
     params.set(key, '');
   }
+  if (subscriber !== '') {
+    params.set('personal_search', subscriber);
+  }
   return params;
 }
 
@@ -254,8 +258,14 @@ async function fetchCustomers(cookie) {
     }
     total = Number(json.recordsTotal || json.iTotalRecords || json.iTotalDisplayRecords || 0);
     const rows = Array.isArray(json.data) ? json.data : (Array.isArray(json.aaData) ? json.aaData : []);
-    customers.push(...rows.map(parseCustomerRow));
+    const parsedRows = rows.map(parseCustomerRow);
+    customers.push(...(subscriber === ''
+      ? parsedRows
+      : parsedRows.filter(customer => customer.subscriber_code === subscriber)));
     console.error(`Fetched customers ${customers.length}/${total || '?'}`);
+    if (subscriber !== '') {
+      break;
+    }
     if (limit > 0 && customers.length >= limit) {
       return customers.slice(0, limit);
     }

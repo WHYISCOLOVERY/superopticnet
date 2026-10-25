@@ -1,0 +1,11 @@
+{
+  "exported_at": "2026-07-29T12:08:05.488Z",
+  "customers": 1,
+  "profiles": 1,
+  "profile_offset": 0,
+  "profile_limit": 0,
+  "profile_errors": 0,
+  "out_dir": "D:\\xampp\\htdocs\\superopticnet\\data\\legacy-billing-live-2320025",
+  "base_file": "D:\\xampp\\htdocs\\superopticnet\\data\\legacy-billing-live-2320025\\customers-base.json",
+  "profiles_file": "D:\\xampp\\htdocs\\superopticnet\\data\\legacy-billing-live-2320025\\customers-profiles.jsonl"
+}

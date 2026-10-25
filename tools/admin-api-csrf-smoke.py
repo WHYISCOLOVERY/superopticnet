@@ -1,5 +1,7 @@
 import re
+import os
 import sys
+import time
 
 try:
     import requests
@@ -8,12 +10,12 @@ except ImportError as exc:  # pragma: no cover
     sys.exit(2)
 
 
-BASE_URL = "http://127.0.0.1/superopticnet"
+BASE_URL = os.environ.get("SUPEROPTIC_TEST_BASE_URL", "http://127.0.0.1/superopticnet").rstrip("/")
 LOGIN_URL = f"{BASE_URL}/staff-login.php"
 IMPORT_URL = f"{BASE_URL}/api/import-users.php"
 SYNC_URL = f"{BASE_URL}/api/olt-sync-users.php"
-LOGIN = "serdar@sp.az"
-PASSWORD = "serdar@sp.az"
+LOGIN = os.environ.get("SUPEROPTIC_TEST_LOGIN", "")
+PASSWORD = os.environ.get("SUPEROPTIC_TEST_PASSWORD", "")
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -28,12 +30,30 @@ def csrf_from_html(html: str) -> str:
     return match.group(1)
 
 
+def human_challenge_from_html(html: str) -> dict[str, str]:
+    nonce_match = re.search(r'name="human_nonce"\s+value="([^"]+)"', html)
+    question_match = re.search(r'<strong>\s*(\d+)\s*\+\s*(\d+)\s*=\s*\?\s*</strong>', html)
+    if not nonce_match or not question_match:
+        fail("local human-verification challenge not found", 3)
+    time.sleep(1.1)
+    return {
+        "human_nonce": nonce_match.group(1),
+        "human_answer": str(int(question_match.group(1)) + int(question_match.group(2))),
+        "human_confirm": "1",
+        "website": "",
+    }
+
+
 session = requests.Session()
+if not LOGIN or not PASSWORD:
+    print("Skipped: SUPEROPTIC_TEST_LOGIN and SUPEROPTIC_TEST_PASSWORD are required.")
+    sys.exit(0)
 login_page = session.get(LOGIN_URL, timeout=20)
 if login_page.status_code != 200:
     fail(f"login page status unexpected: {login_page.status_code}", 4)
 
 csrf = csrf_from_html(login_page.text)
+human_challenge = human_challenge_from_html(login_page.text)
 login_response = session.post(
     LOGIN_URL,
     data={
@@ -41,6 +61,7 @@ login_response = session.post(
         "portal_role": "employee",
         "login": LOGIN,
         "password": PASSWORD,
+        **human_challenge,
     },
     allow_redirects=False,
     timeout=20,

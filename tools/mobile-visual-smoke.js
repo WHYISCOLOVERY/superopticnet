@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { chromium } = require('playwright-core');
+const { chromium } = require(path.resolve(__dirname, '..', '.tools', 'node_modules', 'playwright-core'));
 
 const root = path.resolve(__dirname, '..');
 const outDir = path.join(root, 'tmp', 'visual-smoke');
@@ -27,6 +27,7 @@ const pages = [
   ['admin_users', '/admin-users.php?view=table'],
   ['noc_monitor', '/noc-devices.php?view=monitor'],
   ['operations_hr', '/operations-center.php?section=hr'],
+  ['operations_finance', '/operations-center.php?section=finance'],
   ['operations_inventory', '/operations-center.php?section=inventory'],
   ['noc_devices', '/noc-devices.php?view=devices'],
   ['crm', '/crm.php?view=table'],

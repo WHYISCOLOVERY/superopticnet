@@ -1,3 +1,99 @@
+(() => {
+    const current = document.currentScript;
+    if (!current || document.querySelector('script[data-superoptic-design-system]')) {
+        return;
+    }
+    const source = new URL(current.src, window.location.href);
+    const runtime = document.createElement('script');
+    runtime.src = new URL('design-system.js', source).toString();
+    runtime.dataset.superopticDesignSystem = '';
+    runtime.defer = true;
+    document.head.appendChild(runtime);
+})();
+
+window.superopticInitModuleGroupNav = (root = document) => {
+    const navs = [];
+    if (root instanceof Element && root.matches('[data-module-group-nav]')) {
+        navs.push(root);
+    }
+    root.querySelectorAll?.('[data-module-group-nav]').forEach((nav) => navs.push(nav));
+
+    navs.forEach((nav) => {
+        if (nav.dataset.moduleGroupNavReady === '1') {
+            return;
+        }
+        nav.dataset.moduleGroupNavReady = '1';
+
+        const groups = () => Array.from(nav.querySelectorAll('details.billing-nav-group'));
+        const closeAll = (except = null) => {
+            groups().forEach((group) => {
+                if (group !== except) {
+                    group.open = false;
+                }
+            });
+        };
+        const syncPopover = () => {
+            const open = groups().find((group) => group.open);
+            nav.classList.toggle('has-open', Boolean(open));
+            if (!open || window.matchMedia('(max-width: 560px)').matches) {
+                return;
+            }
+
+            const title = open.querySelector('.billing-nav-title');
+            if (!title) {
+                return;
+            }
+            const rect = title.getBoundingClientRect();
+            const width = Math.max(240, Math.min(380, Math.round(rect.width)));
+            const left = Math.max(12, Math.min(window.innerWidth - width - 12, Math.round(rect.left)));
+            const top = Math.max(12, Math.min(window.innerHeight - 80, Math.round(rect.bottom + 8)));
+            nav.style.setProperty('--billing-nav-popover-top', `${top}px`);
+            nav.style.setProperty('--billing-nav-popover-left', `${left}px`);
+            nav.style.setProperty('--billing-nav-popover-width', `${width}px`);
+        };
+
+        groups().forEach((group) => {
+            group.addEventListener('toggle', () => {
+                if (group.open) {
+                    closeAll(group);
+                }
+                window.requestAnimationFrame(syncPopover);
+            });
+        });
+
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+            let leaveTimer = 0;
+            groups().forEach((group) => {
+                group.addEventListener('mouseenter', () => {
+                    closeAll(group);
+                    group.open = true;
+                });
+            });
+            nav.addEventListener('mouseleave', () => {
+                leaveTimer = window.setTimeout(() => closeAll(), 150);
+            });
+            nav.addEventListener('mouseenter', () => {
+                window.clearTimeout(leaveTimer);
+                leaveTimer = 0;
+            });
+        }
+
+        document.addEventListener('click', (event) => {
+            if (!nav.contains(event.target)) {
+                closeAll();
+            }
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeAll();
+            }
+        });
+        window.addEventListener('resize', syncPopover, {passive: true});
+        window.addEventListener('scroll', syncPopover, {passive: true});
+        syncPopover();
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     const topbar = document.querySelector('.portal-topbar');
     const roleButtons = document.querySelectorAll('[data-role-switch]');
@@ -9,12 +105,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const ticketMessages = document.querySelectorAll('[data-ticket-message]');
     const crmLookupRoot = document.querySelector('[data-crm-customer-lookup]');
     const alerts = document.querySelectorAll('[data-autohide-alert]');
-    const billingNavGroups = document.querySelectorAll('.billing-nav-group');
-    const billingShellNav = document.querySelector('.billing-shell-nav');
     const customerProfileNav = document.querySelector('.customer-profile-nav');
     const customerProfileSections = document.querySelectorAll('.mgs-profile-main .customer-profile-section');
     const customerProfileSectionGroups = document.querySelectorAll('.mgs-profile-main .customer-profile-section-group');
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const syncMobileTables = () => {
+        document.querySelectorAll('.portal-table').forEach((table) => {
+            const headers = Array.from(table.querySelectorAll('thead th')).map((header) => header.textContent.trim());
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                Array.from(row.children).forEach((cell, index) => {
+                    if (!cell.dataset.label && headers[index]) {
+                        cell.dataset.label = headers[index];
+                    }
+                });
+            });
+        });
+    };
+    syncMobileTables();
+    const tableObserver = new MutationObserver(() => requestAnimationFrame(syncMobileTables));
+    tableObserver.observe(document.body, {childList: true, subtree: true});
+    document.addEventListener('superoptic:table-refresh', syncMobileTables);
 
     function syncTopbarState() {
         topbar?.classList.toggle('is-scrolled', window.scrollY > 12);
@@ -53,78 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
     syncTopbarState();
     window.addEventListener('scroll', syncTopbarState, { passive: true });
 
-    const syncBillingNavOpenState = () => {
-        if (!billingShellNav) {
-            return;
-        }
-
-        const hasOpenGroup = Array.from(billingNavGroups).some((group) => group.open);
-        billingShellNav.classList.toggle('has-open', hasOpenGroup);
-    };
-
-    const positionBillingNavPopover = (group) => {
-        if (!group?.open || window.matchMedia('(max-width: 560px)').matches) {
-            return;
-        }
-
-        const title = group.querySelector('.billing-nav-title');
-        const links = group.querySelector('.billing-nav-links');
-        if (!title || !links) {
-            return;
-        }
-
-        const rect = title.getBoundingClientRect();
-        const gap = 8;
-        const viewportPadding = 12;
-        const width = Math.max(220, Math.min(rect.width, window.innerWidth - (viewportPadding * 2)));
-        const left = Math.min(
-            Math.max(rect.left, viewportPadding),
-            Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
-        );
-        const top = Math.min(
-            rect.bottom + gap,
-            Math.max(viewportPadding, window.innerHeight - 180),
-        );
-
-        links.style.setProperty('--billing-nav-popover-left', `${left}px`);
-        links.style.setProperty('--billing-nav-popover-top', `${top}px`);
-        links.style.setProperty('--billing-nav-popover-width', `${width}px`);
-    };
-
-    const syncOpenBillingNavPopover = () => {
-        billingNavGroups.forEach((group) => {
-            positionBillingNavPopover(group);
-        });
-    };
-
-    billingNavGroups.forEach((group) => {
-        group.addEventListener('toggle', () => {
-            if (group.open) {
-                billingNavGroups.forEach((other) => {
-                    if (other !== group) {
-                        other.open = false;
-                    }
-                });
-                window.requestAnimationFrame(() => positionBillingNavPopover(group));
-            }
-            syncBillingNavOpenState();
-        });
-    });
-    syncBillingNavOpenState();
-
-    window.addEventListener('resize', syncOpenBillingNavPopover, { passive: true });
-    window.addEventListener('scroll', syncOpenBillingNavPopover, { passive: true });
-
-    document.addEventListener('click', (event) => {
-        if (!(event.target instanceof Element) || event.target.closest('.billing-nav-group')) {
-            return;
-        }
-
-        billingNavGroups.forEach((group) => {
-            group.open = false;
-        });
-        syncBillingNavOpenState();
-    });
+    window.superopticInitModuleGroupNav(document);
 
     if (customerProfileNav && customerProfileSections.length > 0) {
         const navLinks = Array.from(customerProfileNav.querySelectorAll('a[href^="#profile-"]'));
@@ -507,6 +547,168 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    let autoFilterRequest = null;
+    let autoFilterRequestId = 0;
+    let autoFilterTimer = 0;
+
+    const cancelAutoFilterRequest = () => {
+        autoFilterRequestId += 1;
+        if (!autoFilterRequest) return;
+        autoFilterRequest.abort();
+        autoFilterRequest = null;
+    };
+
+    const autoFilterTargets = (form) => String(form.dataset.autoFilterTargets || '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter(Boolean);
+
+    const setAutoFilterStatus = (form, message, isError = false) => {
+        const status = form.querySelector('[data-auto-filter-status]');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle('is-error', isError);
+    };
+
+    const syncAutoFilterForm = (form, parsed) => {
+        if (!form.id) return;
+        const incoming = parsed.getElementById(form.id);
+        if (!incoming) return;
+
+        Array.from(form.elements).forEach((field) => {
+            if (!field.name) return;
+            const matches = Array.from(incoming.elements).filter((candidate) => candidate.name === field.name);
+            if (matches.length === 0) return;
+
+            if (field instanceof HTMLInputElement && ['checkbox', 'radio'].includes(field.type)) {
+                const match = matches.find((candidate) => candidate.value === field.value);
+                field.checked = Boolean(match?.checked);
+                return;
+            }
+            if (field instanceof HTMLSelectElement && field.multiple) {
+                const values = new Set(matches.flatMap((candidate) => Array.from(candidate.selectedOptions || []).map((option) => option.value)));
+                Array.from(field.options).forEach((option) => {
+                    option.selected = values.has(option.value);
+                });
+                return;
+            }
+
+            field.value = matches[0].value;
+        });
+
+        const currentQuickFilters = form.querySelector('.mgs-quick-filters');
+        const incomingQuickFilters = incoming.querySelector('.mgs-quick-filters');
+        if (currentQuickFilters && incomingQuickFilters) {
+            currentQuickFilters.replaceWith(document.importNode(incomingQuickFilters, true));
+        }
+    };
+
+    const loadAutoFilterResults = async (form, targetUrl = null, historyMode = 'replace') => {
+        const keys = autoFilterTargets(form);
+        if (keys.length === 0) return;
+
+        const url = targetUrl instanceof URL
+            ? targetUrl
+            : new URL(form.action || window.location.href, window.location.href);
+        if (!(targetUrl instanceof URL)) {
+            new FormData(form).forEach((value, key) => url.searchParams.set(key, String(value)));
+            url.searchParams.delete('page');
+        }
+
+        cancelAutoFilterRequest();
+        const requestId = autoFilterRequestId;
+        const requestController = new AbortController();
+        autoFilterRequest = requestController;
+        const isCurrentRequest = () => autoFilterRequestId === requestId
+            && autoFilterRequest === requestController
+            && !requestController.signal.aborted;
+        const targets = keys
+            .map((key) => document.querySelector(`[data-auto-filter-results="${CSS.escape(key)}"]`))
+            .filter(Boolean);
+        targets.forEach((target) => target.setAttribute('aria-busy', 'true'));
+        setAutoFilterStatus(form, 'Nəticələr yenilənir...');
+
+        try {
+            const response = await fetch(url, {
+                credentials: 'same-origin',
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+                signal: requestController.signal,
+            });
+            if (!isCurrentRequest()) return;
+            if (!response.ok) throw new Error(`auto_filter_${response.status}`);
+
+            const responseText = await response.text();
+            if (!isCurrentRequest()) return;
+            const parsed = new DOMParser().parseFromString(responseText, 'text/html');
+            if (!isCurrentRequest()) return;
+            syncAutoFilterForm(form, parsed);
+            keys.forEach((key) => {
+                const current = document.querySelector(`[data-auto-filter-results="${CSS.escape(key)}"]`);
+                const replacement = parsed.querySelector(`[data-auto-filter-results="${CSS.escape(key)}"]`);
+                if (!current || !replacement) throw new Error(`auto_filter_target_${key}`);
+                current.replaceWith(document.importNode(replacement, true));
+            });
+
+            const nextLocation = `${url.pathname}${url.search}${url.hash}`;
+            if (historyMode === 'push') history.pushState({autoFilter: true}, '', nextLocation);
+            else if (historyMode !== 'none') history.replaceState({autoFilter: true}, '', nextLocation);
+            setAutoFilterStatus(form, 'Nəticələr yeniləndi.');
+            syncMobileTables();
+            document.dispatchEvent(new CustomEvent('superoptic:auto-filter-loaded', {detail: {url: url.href}}));
+        } catch (error) {
+            if (error?.name === 'AbortError' || !isCurrentRequest()) return;
+            targets.forEach((target) => target.removeAttribute('aria-busy'));
+            setAutoFilterStatus(form, 'Yeniləmə alınmadı. Bir daha cəhd edin.', true);
+        } finally {
+            if (autoFilterRequest === requestController) {
+                autoFilterRequest = null;
+            }
+        }
+    };
+
+    document.addEventListener('submit', (event) => {
+        const form = event.target.closest('form[data-auto-filter]');
+        if (!form) return;
+        event.preventDefault();
+        window.clearTimeout(autoFilterTimer);
+        autoFilterTimer = 0;
+        loadAutoFilterResults(form, null, 'push');
+    });
+
+    document.addEventListener('input', (event) => {
+        const field = event.target.closest('form[data-auto-filter] input[type="text"],form[data-auto-filter] input[type="search"],form[data-auto-filter] textarea');
+        if (!field) return;
+        const form = field.closest('form[data-auto-filter]');
+        window.clearTimeout(autoFilterTimer);
+        cancelAutoFilterRequest();
+        autoFilterTimer = window.setTimeout(() => loadAutoFilterResults(form), 350);
+    });
+
+    document.addEventListener('change', (event) => {
+        const field = event.target.closest('form[data-auto-filter] select,form[data-auto-filter] input[type="date"],form[data-auto-filter] input[type="month"],form[data-auto-filter] input[type="checkbox"],form[data-auto-filter] input[type="radio"]');
+        if (!field) return;
+        window.clearTimeout(autoFilterTimer);
+        autoFilterTimer = 0;
+        cancelAutoFilterRequest();
+        loadAutoFilterResults(field.closest('form[data-auto-filter]'));
+    });
+
+    document.addEventListener('click', (event) => {
+        const link = event.target.closest('[data-auto-filter-results] .portal-pagination a[href],[data-auto-filter-results] .stats-pagination a[href],[data-auto-filter-link][href]');
+        if (!link || link.classList.contains('is-disabled') || link.classList.contains('portal-disabled-link')) return;
+        const owner = link.closest('[data-auto-filter-results]');
+        const formId = owner?.dataset.autoFilterForm || link.dataset.autoFilterForm || '';
+        const form = formId ? document.getElementById(formId) : document.querySelector('form[data-auto-filter]');
+        if (!form) return;
+        event.preventDefault();
+        loadAutoFilterResults(form, new URL(link.href, window.location.href), 'push');
+    });
+
+    window.addEventListener('popstate', () => {
+        const form = document.querySelector('form[data-auto-filter]');
+        if (form) loadAutoFilterResults(form, new URL(window.location.href), 'none');
+    });
+
     if (prefersReducedMotion || !('IntersectionObserver' in window)) {
         revealTargets.forEach((item) => item.classList.add('is-visible'));
         return;
@@ -531,4 +733,52 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     revealTargets.forEach((item) => revealObserver.observe(item));
+});
+
+document.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('[data-table-action]');
+    if (!actionButton) {
+        return;
+    }
+    const action = actionButton.dataset.tableAction;
+    if (action === 'print') {
+        window.print();
+        return;
+    }
+    const toolbar = actionButton.closest('[data-table-toolbar]');
+    const targetId = toolbar?.dataset.targetTable || '';
+    const table = targetId ? document.getElementById(targetId) : null;
+    if (!table) {
+        return;
+    }
+    const rows = Array.from(table.querySelectorAll('tr')).map(
+        (row) => Array.from(row.querySelectorAll('th,td')).map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())
+    );
+    if (action === 'copy') {
+        const text = rows.map((row) => row.join('\t')).join('\n');
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+                const original = actionButton.textContent;
+                actionButton.textContent = 'Kopyalandı';
+                setTimeout(() => { actionButton.textContent = original; }, 1500);
+            }).catch(() => {});
+        }
+        return;
+    }
+    if (action === 'csv' || action === 'excel') {
+        const csvBody = rows.map(
+            (row) => row.map((cell) => '"' + cell.replace(/"/g, '""') + '"').join(',')
+        ).join('\r\n');
+        const isExcel = action === 'excel';
+        const byteOrderMark = String.fromCharCode(0xFEFF);
+        const blob = new Blob([byteOrderMark + csvBody], { type: `${isExcel ? 'application/vnd.ms-excel' : 'text/csv'};charset=utf-8` });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${targetId || 'cedvel'}-${new Date().toISOString().slice(0, 10)}.${isExcel ? 'xls' : 'csv'}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    }
 });

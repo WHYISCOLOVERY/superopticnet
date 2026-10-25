@@ -29,7 +29,7 @@ function audit_process_map(?PDO $db): array
     if (!$db instanceof PDO || !app_mgs_ensure_schema($db)) {
         return [];
     }
-    app_mgs_sync_process_registry($db);
+    app_mgs_sync_process_registry($db, app_noc_system_actor('system-audit-worker'));
     $rows = $db->query('SELECT * FROM mgs_process_registry')->fetchAll() ?: [];
     $map = [];
     foreach ($rows as $row) {
@@ -57,7 +57,9 @@ function audit_add(array &$items, string $area, string $feature, string $status,
 }
 
 $processes = audit_process_map($db);
-$summary = $db instanceof PDO ? app_mgs_summary($db) : ['db' => false];
+$summary = $db instanceof PDO
+    ? app_mgs_summary($db, true, app_noc_system_actor('system-audit-worker'))
+    : ['db' => false];
 $managementPath = app_mgs_management_path_ready();
 
 $counts = [

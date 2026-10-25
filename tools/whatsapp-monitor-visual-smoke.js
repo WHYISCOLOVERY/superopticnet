@@ -121,7 +121,7 @@ async function inspectPage(browser, name, file, viewport, expectations = {}) {
     await inspectPage(browser, 'pairing-mobile', 'pairing', { width: 390, height: 844 });
     const remainingViews = [
       ['overview', '.wa-kpi-groups', 4, 0],
-      ['screen-wall', '.wa-screen-grid', 0, 0],
+      ['screen-wall', '.wa-screen-grid', 0, 2],
       ['numbers', 'form input[name="phone_number"]', 8, 1],
       ['devices', 'form input[name="device_name"]', 7, 1],
       ['cases', 'form select[name="case_type"]', 6, 0],

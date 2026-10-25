@@ -456,6 +456,12 @@ try {
             $db->prepare("DELETE FROM {$table} WHERE username IN ({$codePlaceholders})")->execute($codes);
         }
         $db->prepare("DELETE FROM radacct WHERE username IN ({$codePlaceholders}) OR class = ?")->execute(array_merge($codes, ['radius-cycle-smoke:' . $runId]));
+        $db->prepare("DELETE r FROM billing_payment_reversals r JOIN billing_payment_operations o ON o.id = r.operation_id WHERE o.account_id IN ({$idPlaceholders})")->execute($ids);
+        $db->prepare("DELETE e FROM billing_payment_operation_events e JOIN billing_payment_operations o ON o.id = e.operation_id WHERE o.account_id IN ({$idPlaceholders})")->execute($ids);
+        $db->prepare("DELETE a FROM billing_payment_service_attempts a JOIN billing_payment_service_actions s ON s.id = a.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id IN ({$idPlaceholders})")->execute($ids);
+        $db->prepare("DELETE b FROM billing_payment_outbox b JOIN billing_payment_service_actions s ON s.id = b.service_action_id JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id IN ({$idPlaceholders})")->execute($ids);
+        $db->prepare("DELETE s FROM billing_payment_service_actions s JOIN billing_payment_operations o ON o.id = s.operation_id WHERE o.account_id IN ({$idPlaceholders})")->execute($ids);
+        $db->prepare("DELETE FROM billing_payment_operations WHERE account_id IN ({$idPlaceholders})")->execute($ids);
         $db->prepare("DELETE FROM billing_payments WHERE subscriber_code IN ({$codePlaceholders})")->execute($codes);
         $db->prepare("DELETE FROM billing_radius_services WHERE account_id IN ({$idPlaceholders})")->execute($ids);
         $db->prepare("DELETE FROM ip_assignment_history WHERE customer_id IN ({$idPlaceholders})")->execute($ids);

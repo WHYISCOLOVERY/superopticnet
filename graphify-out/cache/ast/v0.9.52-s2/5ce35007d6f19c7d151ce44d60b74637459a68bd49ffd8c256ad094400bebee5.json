@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_db_migrations_20260819_430_mgs_alarm_state_events_php", "label": "20260819_430_mgs_alarm_state_events.php", "file_type": "code", "source_file": "db/migrations/20260819_430_mgs_alarm_state_events.php", "source_location": "L1"}], "edges": [], "raw_calls": []}

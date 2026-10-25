@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/feature-flags-lib.php';
+// Revenue must match Billing/Finance's own totals for the same window; reuse
+// the canonical sum instead of keeping a third independent copy here.
+require_once __DIR__ . '/billing-module-lib.php';
 
 function app_analytics_table_exists(PDO $db, string $table): bool
 {
@@ -129,7 +132,7 @@ function app_analytics_center_context(PDO $db, array $user = []): array
         'tables' => $tableRows,
         'kpis' => [
             ['label' => 'Odenis qeydi', 'value' => (int) app_analytics_scalar($db, 'SELECT COUNT(*) FROM billing_payments'), 'kind' => 'count'],
-            ['label' => 'Son 30 gun gelir', 'value' => app_analytics_scalar($db, 'SELECT COALESCE(SUM(amount),0) FROM billing_payments WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)'), 'kind' => 'money'],
+            ['label' => 'Son 30 gun gelir', 'value' => app_billing_period_revenue_total($db, date('Y-m-d H:i:s', strtotime('-30 days')), date('Y-m-d H:i:s', strtotime('+1 minute'))), 'kind' => 'money'],
             ['label' => 'Musteri hesabi', 'value' => (int) app_analytics_scalar($db, 'SELECT COUNT(*) FROM portal_accounts WHERE role = "customer"'), 'kind' => 'count'],
             ['label' => 'Aktiv xidmet', 'value' => (int) app_analytics_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services WHERE status = "active"'), 'kind' => 'count'],
             ['label' => '3 gune biten xidmet', 'value' => (int) app_analytics_scalar($db, 'SELECT COUNT(*) FROM billing_radius_services WHERE status = "active" AND expires_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 3 DAY)'), 'kind' => 'count'],

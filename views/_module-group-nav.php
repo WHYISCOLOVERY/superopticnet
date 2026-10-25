@@ -10,14 +10,13 @@ $moduleNavLinkAttribute = in_array((string) ($moduleNavLinkAttribute ?? ''), $al
     ? (string) $moduleNavLinkAttribute
     : '';
 ?>
-<style>
-.module-group-nav.billing-shell-nav{width:100%;margin:10px 0 16px;padding:2px 0 10px;z-index:70}.module-group-nav .billing-nav-group{border-radius:8px}.module-group-nav .billing-nav-links{border-radius:8px}
-@media(max-width:760px){.module-group-nav.billing-shell-nav{width:100%!important;margin:8px 0 14px!important}}
-</style>
 <nav class="billing-shell-nav module-group-nav portal-reveal" data-module-group-nav aria-label="<?= e($moduleNavAria); ?>">
     <?php foreach ($moduleNavGroups as $group): ?>
         <?php
         $links = is_array($group['links'] ?? null) ? $group['links'] : [];
+        if ($links === []) {
+            continue;
+        }
         $isActiveGroup = false;
         foreach ($links as $link) {
             if ((string) ($link['key'] ?? '') === $moduleNavActive) {
@@ -26,17 +25,29 @@ $moduleNavLinkAttribute = in_array((string) ($moduleNavLinkAttribute ?? ''), $al
             }
         }
         ?>
-        <details class="billing-nav-group<?= $isActiveGroup ? ' is-active-group' : ''; ?>" name="<?= e($moduleNavName); ?>" data-module-nav-group>
-            <summary class="billing-nav-title">
-                <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
-                <span><?= e((string) ($group['label'] ?? 'Bolme')); ?></span>
-            </summary>
-            <div class="billing-nav-links">
-                <?php foreach ($links as $link): ?>
-                    <?php $linkKey = (string) ($link['key'] ?? ''); ?>
-                    <a class="<?= $moduleNavActive === $linkKey ? 'is-active' : ''; ?>" href="<?= e((string) ($link['href'] ?? '#')); ?>" data-module-section="<?= e($linkKey); ?>"<?= $moduleNavLinkAttribute !== '' ? ' ' . $moduleNavLinkAttribute : ''; ?>><?= e((string) ($link['label'] ?? 'Ac')); ?></a>
-                <?php endforeach; ?>
-            </div>
-        </details>
+        <?php if (count($links) === 1): ?>
+            <?php $solo = $links[0]; $soloKey = (string) ($solo['key'] ?? ''); ?>
+            <a class="billing-nav-group billing-nav-solo<?= $isActiveGroup ? ' is-active-group' : ''; ?>"
+               href="<?= e((string) ($solo['href'] ?? '#')); ?>"
+               data-module-section="<?= e($soloKey); ?>"<?= $moduleNavLinkAttribute !== '' ? ' ' . $moduleNavLinkAttribute : ''; ?>>
+                <span class="billing-nav-title">
+                    <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
+                    <span><?= e((string) ($group['label'] ?? $solo['label'] ?? 'Bolme')); ?></span>
+                </span>
+            </a>
+        <?php else: ?>
+            <details class="billing-nav-group<?= $isActiveGroup ? ' is-active-group' : ''; ?>" name="<?= e($moduleNavName); ?>" data-module-nav-group>
+                <summary class="billing-nav-title">
+                    <?= billing_nav_icon_svg((string) ($group['icon'] ?? 'fa-circle')); ?>
+                    <span><?= e((string) ($group['label'] ?? 'Bolme')); ?></span>
+                </summary>
+                <div class="billing-nav-links">
+                    <?php foreach ($links as $link): ?>
+                        <?php $linkKey = (string) ($link['key'] ?? ''); ?>
+                        <a class="<?= $moduleNavActive === $linkKey ? 'is-active' : ''; ?>" href="<?= e((string) ($link['href'] ?? '#')); ?>" data-module-section="<?= e($linkKey); ?>"<?= $moduleNavLinkAttribute !== '' ? ' ' . $moduleNavLinkAttribute : ''; ?>><?= e((string) ($link['label'] ?? 'Ac')); ?></a>
+                    <?php endforeach; ?>
+                </div>
+            </details>
+        <?php endif; ?>
     <?php endforeach; ?>
 </nav>

@@ -1,0 +1,203 @@
+/*
+ * Public-site visual bridge for the customer and staff entry points.
+ * portal.css remains responsible for the authenticated portal so auth-only
+ * styling stays isolated and can be deployed without changing app screens.
+ */
+@font-face {
+    font-family: "MulishRegular";
+    src: url("../fonts/Mulish-Regular.ttf");
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "MulishBlack";
+    src: url("../fonts/Mulish-Black.ttf");
+    font-display: swap;
+}
+
+.portal-auth-body {
+    --portal-text: #10233f;
+    --portal-muted: #5b6982;
+    --portal-primary: #0b7b87;
+    --portal-primary-dark: #08565d;
+    --portal-accent: #ff9b52;
+    font-family: "MulishRegular", "Segoe UI", sans-serif;
+    overflow-x: clip;
+    background:
+        radial-gradient(circle at 8% 9%, rgba(11, 123, 135, .13), transparent 28rem),
+        radial-gradient(circle at 92% 3%, rgba(255, 155, 82, .15), transparent 26rem),
+        linear-gradient(180deg, #fbfcff 0%, #f3f7fc 100%);
+}
+
+.portal-auth-topbar {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    left: 50%;
+    display: flex;
+    width: min(1240px, calc(100% - 32px));
+    min-height: 78px;
+    align-items: center;
+    justify-content: space-between;
+    transform: translateX(-50%);
+}
+
+.portal-auth-topbar-brand,
+.portal-auth-topbar-site {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--portal-text);
+    font-weight: 800;
+}
+
+.portal-auth-topbar-brand {
+    font-family: "MulishBlack", sans-serif;
+    letter-spacing: -.025em;
+}
+
+.portal-auth-topbar-brand img {
+    width: 36px;
+    height: 36px;
+}
+
+.portal-auth-topbar-brand b {
+    color: var(--portal-primary);
+}
+
+.portal-auth-topbar-site {
+    min-height: 40px;
+    padding: 0 14px;
+    border: 1px solid rgba(16, 35, 63, .1);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .72);
+    box-shadow: 0 8px 20px rgba(16, 35, 63, .05);
+    color: var(--portal-muted);
+    font-size: .9rem;
+    transition: color .2s ease, border-color .2s ease, background .2s ease, transform .2s ease;
+}
+
+.portal-auth-topbar-site:hover {
+    transform: translateY(-1px);
+    border-color: rgba(11, 123, 135, .3);
+    background: #fff;
+    color: var(--portal-primary-dark);
+}
+
+.portal-auth-shell {
+    padding-top: 104px;
+}
+
+.portal-auth-copy {
+    border-color: rgba(11, 123, 135, .14);
+    background:
+        linear-gradient(135deg, rgba(7, 87, 97, .98), rgba(11, 123, 135, .94) 64%, rgba(20, 143, 153, .94));
+    box-shadow: 0 28px 72px rgba(7, 87, 97, .2);
+    color: #fff;
+}
+
+.portal-auth-copy::after {
+    right: -68px;
+    bottom: -112px;
+    width: 300px;
+    height: 300px;
+    background: radial-gradient(circle, rgba(255, 155, 82, .52), transparent 68%);
+}
+
+.portal-auth-copy .portal-brand {
+    color: #fff;
+}
+
+.portal-auth-copy .portal-brand img {
+    background: #fff;
+    border-radius: 12px;
+    padding: 3px;
+}
+
+.portal-auth-copy .portal-kicker {
+    background: rgba(255, 255, 255, .14);
+    color: #fff;
+}
+
+.portal-auth-copy p {
+    color: rgba(255, 255, 255, .82);
+}
+
+.portal-auth-copy .portal-benefits div {
+    border-color: rgba(255, 255, 255, .14);
+    background: rgba(255, 255, 255, .1);
+    color: rgba(255, 255, 255, .95);
+}
+
+.portal-auth-copy .portal-benefits i {
+    color: #ffd0ac;
+}
+
+.portal-auth-card {
+    position: relative;
+    overflow: hidden;
+    border-color: rgba(16, 35, 63, .09);
+    background: rgba(255, 255, 255, .94);
+}
+
+.portal-auth-card::before {
+    position: absolute;
+    top: 0;
+    left: 28px;
+    right: 28px;
+    height: 4px;
+    border-radius: 0 0 999px 999px;
+    background: linear-gradient(90deg, var(--portal-primary), var(--portal-accent));
+    content: "";
+}
+
+.portal-demo-box {
+    border-color: rgba(11, 123, 135, .12);
+    background: linear-gradient(135deg, rgba(11, 123, 135, .07), rgba(255, 155, 82, .08));
+}
+
+.portal-auth-card .portal-form-row input {
+    min-height: 52px;
+    border-radius: 14px;
+}
+
+.portal-auth-card .portal-submit-btn {
+    width: 100%;
+    min-height: 52px;
+    font-family: "MulishBlack", sans-serif;
+}
+
+.portal-auth-card .portal-form-row input:focus-visible,
+.portal-auth-card .portal-submit-btn:focus-visible,
+.portal-auth-card a:focus-visible,
+.portal-auth-topbar a:focus-visible {
+    outline: 3px solid rgba(255, 155, 82, .64);
+    outline-offset: 3px;
+}
+
+@media (max-width: 840px) {
+    .portal-auth-topbar {
+        position: relative;
+        left: auto;
+        margin: 0 auto;
+        transform: none;
+    }
+
+    .portal-auth-shell {
+        min-height: auto;
+        padding-top: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .portal-auth-topbar-site {
+        width: 40px;
+        padding: 0;
+        justify-content: center;
+        font-size: 0;
+    }
+
+    .portal-auth-topbar-site i {
+        font-size: .9rem;
+    }
+}

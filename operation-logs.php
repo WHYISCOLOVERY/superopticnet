@@ -424,16 +424,27 @@ unset($baseQuery['result'], $baseQuery['error']);
             if (!root) {
                 return;
             }
-            const loadContent = function (url) {
-                fetch(url, {headers: {'X-Requested-With': 'fetch'}})
-                    .then((response) => response.text())
+            let controller = null;
+            let filterTimer = null;
+            const loadContent = function (url, options = {}) {
+                if (controller) {
+                    controller.abort();
+                }
+                controller = new AbortController();
+                const activeController = controller;
+                root.setAttribute('aria-busy', 'true');
+                fetch(url, {headers: {'X-Requested-With': 'fetch'}, signal: activeController.signal})
+                    .then((response) => {
+                        if (!response.ok) {
+                            throw new Error('audit_filter_failed');
+                        }
+                        return response.text();
+                    })
                     .then((html) => {
                         const parsed = new DOMParser().parseFromString(html, 'text/html');
-                        const swaps = [
-                            '[data-audit-tabs]',
-                            '[data-audit-filter-panel]',
-                            '[data-audit-log-content]'
-                        ];
+                        const swaps = options.refreshFilters === false
+                            ? ['[data-audit-log-content]']
+                            : ['[data-audit-tabs]', '[data-audit-filter-panel]', '[data-audit-log-content]'];
                         let changed = false;
                         swaps.forEach((selector) => {
                             const next = parsed.querySelector(selector);
@@ -444,14 +455,44 @@ unset($baseQuery['result'], $baseQuery['error']);
                             }
                         });
                         if (changed) {
-                            history.pushState({}, '', url);
+                            if (options.history === 'replace') {
+                                history.replaceState({audit: true}, '', url);
+                            } else if (options.history !== 'none') {
+                                history.pushState({audit: true}, '', url);
+                            }
                         } else {
                             window.location.href = url;
                         }
                     })
-                    .catch(() => {
-                        window.location.href = url;
+                    .catch((error) => {
+                        if (error.name !== 'AbortError') {
+                            window.location.href = url;
+                        }
+                    })
+                    .finally(() => {
+                        if (controller === activeController) {
+                            root.removeAttribute('aria-busy');
+                        }
                     });
+            };
+            const filterUrl = function (form) {
+                const params = new URLSearchParams(new FormData(form));
+                params.delete('result');
+                params.delete('error');
+                params.set('page', '1');
+                return form.action.split('?')[0] + '?' + params.toString();
+            };
+            const scheduleFilter = function (field, delay) {
+                const form = field.closest('[data-audit-filter]');
+                if (!form || field.disabled) {
+                    return;
+                }
+                window.clearTimeout(filterTimer);
+                filterTimer = window.setTimeout(() => {
+                    if (form.isConnected) {
+                        loadContent(filterUrl(form), {history: 'replace', refreshFilters: false});
+                    }
+                }, delay);
             };
             root.addEventListener('submit', function (event) {
                 const form = event.target.closest('[data-audit-filter]');
@@ -459,11 +500,19 @@ unset($baseQuery['result'], $baseQuery['error']);
                     return;
                 }
                 event.preventDefault();
-                const params = new URLSearchParams(new FormData(form));
-                params.delete('result');
-                params.delete('error');
-                params.set('page', '1');
-                loadContent(form.action.split('?')[0] + '?' + params.toString());
+                loadContent(filterUrl(form), {refreshFilters: false});
+            });
+            root.addEventListener('input', function (event) {
+                const field = event.target.closest('[data-audit-filter] input[type="text"], [data-audit-filter] input[type="search"]');
+                if (field) {
+                    scheduleFilter(field, 350);
+                }
+            });
+            root.addEventListener('change', function (event) {
+                const field = event.target.closest('[data-audit-filter] select, [data-audit-filter] input[type="date"]');
+                if (field) {
+                    scheduleFilter(field, 0);
+                }
             });
             root.addEventListener('click', function (event) {
                 const link = event.target.closest('[data-audit-pagination] a, [data-audit-tabs] a, [data-audit-clear]');
@@ -471,9 +520,14 @@ unset($baseQuery['result'], $baseQuery['error']);
                     return;
                 }
                 event.preventDefault();
-                loadContent(link.href);
+                const refreshFilters = !link.closest('[data-audit-pagination]');
+                loadContent(link.href, {refreshFilters});
+            });
+            window.addEventListener('popstate', function () {
+                loadContent(window.location.href, {history: 'none'});
             });
         })();
     </script>
+    <?php require_once __DIR__ . '/copilot-widget.php'; app_render_copilot_widget(function_exists('app_lang') ? app_lang() : 'az'); ?>
 </body>
 </html>
