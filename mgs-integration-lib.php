@@ -220,6 +220,23 @@ function app_mgs_ensure_schema(?PDO $db = null): bool
             KEY idx_live_olt_ont_seen (last_seen_at),
             KEY idx_live_olt_ont_status (device_key, status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS live_switch_mac_inventory (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            device_key VARCHAR(128) NOT NULL,
+            mac_address VARCHAR(32) NOT NULL,
+            bridge_port INT UNSIGNED NOT NULL DEFAULT 0,
+            if_index INT UNSIGNED NOT NULL DEFAULT 0,
+            if_descr VARCHAR(191) NOT NULL DEFAULT '',
+            vlan_id INT UNSIGNED DEFAULT NULL,
+            status VARCHAR(32) NOT NULL DEFAULT 'learned',
+            discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            raw_source VARCHAR(32) NOT NULL DEFAULT 'snmp_bridge',
+            UNIQUE KEY uq_live_switch_mac (device_key, mac_address, vlan_id),
+            KEY idx_live_switch_mac_mac (mac_address),
+            KEY idx_live_switch_mac_port (device_key, if_index),
+            KEY idx_live_switch_mac_seen (last_seen_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS monitor_map_nodes (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             map_key VARCHAR(64) NOT NULL DEFAULT 'noc-monitor',

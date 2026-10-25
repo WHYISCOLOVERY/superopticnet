@@ -60,6 +60,7 @@ function app_noc_service_action_map(): array
         'security-anomaly-worker' => ['read_security_anomaly', 'run_security_anomaly_scan', 'record_noc_alarm'],
         'ont-telemetry-sync-worker' => ['read_device', 'read_device_sensitive', 'read_ont_live'],
         'olt-inventory-worker' => ['read_device', 'read_device_sensitive', 'read_ont_live'],
+        'switch-inventory-worker' => ['read_device', 'read_device_sensitive'],
         'finance-report-worker' => ['record_noc_alarm'],
         'whatsapp-heartbeat-watcher' => ['record_noc_alarm'],
     ];
